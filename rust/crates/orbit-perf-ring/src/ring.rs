@@ -129,11 +129,13 @@ impl RingBuffer {
         Ok(())
     }
 
-    /// Reads and consumes the record at the tail: the whole record,
-    /// `header.size` bytes, header included.
-    pub fn read_record(&mut self) -> io::Result<Option<Vec<u8>>> {
+    /// Reads and consumes the record at the tail into `buf`, reusing its
+    /// allocation. `false` means the ring had nothing new. A 1 kHz stack
+    /// sample is tens of kilobytes; allocating a fresh `Vec` per record
+    /// fragments the heap for the life of a capture.
+    pub fn read_record_into(&mut self, buf: &mut Vec<u8>) -> io::Result<bool> {
         if !self.has_new_data() {
-            return Ok(None);
+            return Ok(false);
         }
         let mut header_bytes = [0u8; 8];
         self.read_at_offset_from_tail(&mut header_bytes, 0)?;
@@ -141,12 +143,23 @@ impl RingBuffer {
         if size < 8 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "record smaller than header"));
         }
-        let mut record = vec![0u8; size];
-        self.read_at_offset_from_tail(&mut record, 0)?;
+        buf.resize(size, 0);
+        self.read_at_offset_from_tail(buf, 0)?;
         let metadata = self.metadata();
         let tail = metadata.data_tail.load(Ordering::Relaxed);
         metadata.data_tail.store(tail + size as u64, Ordering::Release);
-        Ok(Some(record))
+        Ok(true)
+    }
+
+    /// Reads and consumes the record at the tail: the whole record,
+    /// `header.size` bytes, header included.
+    pub fn read_record(&mut self) -> io::Result<Option<Vec<u8>>> {
+        let mut record = Vec::new();
+        if self.read_record_into(&mut record)? {
+            Ok(Some(record))
+        } else {
+            Ok(None)
+        }
     }
 }
 

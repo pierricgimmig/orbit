@@ -152,6 +152,18 @@ pub fn parse_record_sample(
     flags: SampleFlags,
     copy_stack_related_data: bool,
 ) -> Option<RecordSample> {
+    parse_record_sample_with(bytes, flags, copy_stack_related_data, None)
+}
+
+/// As [`parse_record_sample`]. When `stack_dest` is set, the user stack is
+/// written there (cleared first, capacity kept) instead of a fresh `Vec` on
+/// `stack_data`. The caller owns that buffer and reuses it for the next record.
+pub fn parse_record_sample_with(
+    bytes: &[u8],
+    flags: SampleFlags,
+    copy_stack_related_data: bool,
+    mut stack_dest: Option<&mut Vec<u8>>,
+) -> Option<RecordSample> {
     let mut cursor = Cursor { bytes, offset: 0 };
     let mut sample = RecordSample::default();
 
@@ -236,8 +248,16 @@ pub fn parse_record_sample(
             if used > stack_size {
                 return None;
             }
-            sample.stack_data =
-                Some(cursor.bytes.get(cursor.offset..cursor.offset + used)?.to_vec());
+            let copied = cursor.bytes.get(cursor.offset..cursor.offset + used)?;
+            if let Some(dest) = stack_dest.as_deref_mut() {
+                dest.clear();
+                dest.extend_from_slice(copied);
+            } else {
+                sample.stack_data = Some(copied.to_vec());
+            }
+        } else if let Some(dest) = stack_dest.as_deref_mut() {
+            // A record with no stack must not reuse the previous record's bytes.
+            dest.clear();
         }
         cursor.skip(stack_size)?;
         if sample.stack_size != 0 {
@@ -423,6 +443,21 @@ mod tests {
         let stack = sample.stack_data.unwrap();
         assert_eq!(stack.len(), 24);
         assert_eq!(stack[23], 23);
+    }
+
+    #[test]
+    fn stack_bytes_reuse_one_buffer() {
+        let bytes = stack_sample_bytes(64, 24, 1);
+        let mut buf = Vec::new();
+        let sample = parse_record_sample_with(&bytes, SampleFlags::stack_sample(), true, Some(&mut buf)).unwrap();
+        assert!(sample.stack_data.is_none());
+        assert_eq!(buf.len(), 24);
+        let cap = buf.capacity();
+        let again = stack_sample_bytes(64, 8, 1);
+        let sample = parse_record_sample_with(&again, SampleFlags::stack_sample(), true, Some(&mut buf)).unwrap();
+        assert!(sample.stack_data.is_none());
+        assert_eq!(buf.len(), 8);
+        assert!(buf.capacity() >= cap, "the stack buffer is reused, not reallocated smaller");
     }
 
     #[test]

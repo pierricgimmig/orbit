@@ -72,6 +72,10 @@ pub struct ProbeHit {
     pub ip: u64,
     /// The CPU whose ring reported it.
     pub cpu: u32,
+    /// On x86-64 entry hits, the return address at `[sp]` before the kernel
+    /// swaps in the uretprobe trampoline. 0 when the sample had no stack
+    /// (a return, or a kernel that could not copy it).
+    pub return_address: u64,
 }
 
 /// What the pairing saw over a session: what it dropped, what it discarded,
@@ -148,6 +152,96 @@ pub struct ArmReport {
     pub failures: Vec<String>,
 }
 
+/// One uretprobe hijack of a return slot. Stack samples taken while it is
+/// live (`entry_ns <= sample < exit_ns`) have that slot overwritten with the
+/// trampoline; patching writes `return_address` back before the unwind.
+struct ReturnFrame {
+    sp: u64,
+    return_address: u64,
+    entry_ns: u64,
+    /// `u64::MAX` while the frame is still on the stack.
+    exit_ns: u64,
+}
+
+/// Saved return addresses for the capture's stack samples.
+///
+/// The kernel installs the uretprobe trampoline *after* the entry sample, so
+/// the entry's 8-byte stack dump is still the real return address, and every
+/// later sample of that frame is not. Open frames are timestamped because
+/// uprobe hits are reordered by up to [`REORDER_DELAY_NS`] and samples are
+/// unwound only once those hits have been accepted: a sample is patched with
+/// the frames that were actually live at its timestamp, not with whatever
+/// happens to be open when the rings are drained.
+#[derive(Default)]
+struct LiveReturns {
+    by_tid: HashMap<i32, Vec<ReturnFrame>>,
+}
+
+impl LiveReturns {
+    fn note_entry(&mut self, tid: i32, sp: u64, return_address: u64, entry_ns: u64) {
+        if sp == 0 || return_address == 0 {
+            return;
+        }
+        self.by_tid.entry(tid).or_default().push(ReturnFrame {
+            sp,
+            return_address,
+            entry_ns,
+            exit_ns: u64::MAX,
+        });
+    }
+
+    /// Closes every still-open hijack of `sp`. A tail call reuses the slot,
+    /// so several frames share it; the one `ret` that finally pops the slot
+    /// ends all of them, and applying them in reverse (see [`Self::patch`])
+    /// leaves the original return address in place until then.
+    fn close_sp(&mut self, tid: i32, sp: u64, exit_ns: u64) {
+        let Some(stack) = self.by_tid.get_mut(&tid) else { return };
+        for frame in stack.iter_mut() {
+            if frame.exit_ns == u64::MAX && frame.sp == sp {
+                frame.exit_ns = exit_ns;
+            }
+        }
+    }
+
+    fn has_open(&self) -> bool {
+        self.by_tid.values().any(|stack| stack.iter().any(|f| f.exit_ns == u64::MAX))
+    }
+
+    fn frame_count(&self) -> usize {
+        self.by_tid.values().map(|s| s.len()).sum()
+    }
+
+    fn patch(&self, tid: i32, sample_sp: u64, sample_ns: u64, stack: &mut [u8]) {
+        let Some(frames) = self.by_tid.get(&tid) else { return };
+        // Innermost first, so two hijacks of one slot (tail call) leave the
+        // original return address, matching `UprobesReturnAddressManager`.
+        for frame in frames.iter().rev() {
+            if frame.return_address == 0 || frame.entry_ns > sample_ns || frame.exit_ns <= sample_ns {
+                continue;
+            }
+            if frame.sp < sample_sp {
+                continue;
+            }
+            let offset = (frame.sp - sample_sp) as usize;
+            let Some(end) = offset.checked_add(8) else { continue };
+            if end > stack.len() {
+                continue;
+            }
+            stack[offset..end].copy_from_slice(&frame.return_address.to_le_bytes());
+        }
+    }
+
+    /// Drops frames that closed at or before `horizon`. Samples still held
+    /// are newer than that, so they cannot match a frame that had already
+    /// returned.
+    fn forget_closed_before(&mut self, horizon: u64) {
+        self.by_tid.retain(|_, stack| {
+            stack.retain(|f| f.exit_ns == u64::MAX || f.exit_ns > horizon);
+            !stack.is_empty()
+        });
+    }
+}
+
 pub struct UprobeSession {
     /// The process whose hits count. The probes are per CPU for every
     /// process mapping the file, so records carry other pids too.
@@ -170,6 +264,10 @@ pub struct UprobeSession {
     fds_by_function: HashMap<u64, Vec<i32>>,
     /// Entries per function in the current one-second window.
     rates: HashMap<u64, CallRate>,
+    /// Entry hits since `take_entry_hits`, per function. Completed calls are
+    /// not enough to tell a quiet function from one that was entered and
+    /// never returned.
+    entry_hits: HashMap<u64, u64>,
     /// Functions switched off for firing over the limit, with the rate seen.
     pub auto_unhooked: Vec<(u64, u64)>,
     /// Per thread, the last entry that was let through: `(sp, ip, cpu)`.
@@ -177,10 +275,17 @@ pub struct UprobeSession {
     /// stack. Taken on the next entry and on every return.
     last_entry: HashMap<i32, (u64, u64, u32)>,
     report: HitReport,
+    /// Return addresses hijacked by uretprobes, patched into stack samples.
+    returns: LiveReturns,
     /// Per thread, the stack slot (sp at entry) of every open entry, in
     /// the same order as the call manager's stack: what a return is matched
     /// against, and what an entry is checked against.
     open: HashMap<i32, Vec<u64>>,
+    /// cpu -> position in `rings`, once that CPU has a leader: a hook added
+    /// later attaches to it rather than opening a ring of its own.
+    ring_of_cpu: HashMap<i32, usize>,
+    cpus: Vec<i32>,
+    ring_kb: u64,
 }
 
 impl UprobeSession {
@@ -219,92 +324,132 @@ impl UprobeSession {
             names: hooks.iter().map(|h| (h.function_id, h.name.clone())).collect(),
             fds_by_function: HashMap::new(),
             rates: HashMap::new(),
+            entry_hits: HashMap::new(),
             auto_unhooked: Vec::new(),
             last_entry: HashMap::new(),
             report: HitReport::default(),
             open: HashMap::new(),
+            returns: LiveReturns::default(),
+            ring_of_cpu: HashMap::new(),
+            cpus: online_cpus(),
+            ring_kb: uprobe_ring_kb(),
         };
         let mut report = ArmReport::default();
-        let ring_kb = uprobe_ring_kb();
-        let cpus = online_cpus();
-        // cpu index -> position in `session.rings`, once a leader exists.
-        let mut ring_of_cpu: HashMap<i32, usize> = HashMap::new();
         for hook in hooks.iter().take(MAX_HOOKS) {
-            let mut armed_here = 0usize;
-            // The *first* real reason, not the last. Thread lists are read
-            // from /proc and go stale immediately: a thread that exits before
-            // its probe is opened returns ESRCH, and letting that overwrite
-            // the reason would report a vanished thread instead of, say, the
-            // missing capability that stopped every other thread too.
-            let mut reason = String::new();
-            let mut note = |error: String| {
-                if reason.is_empty() {
-                    reason = error;
+            match session.add_hook(hook) {
+                Ok(probes) => {
+                    report.armed_functions += 1;
+                    report.probe_count += probes;
+                }
+                Err(reason) => report.failures.push(format!("{}: {reason}", hook.name)),
+            }
+        }
+        (session, report)
+    }
+
+    /// Arms one more function's entry and return probes, on the running
+    /// session: attached to each CPU's existing leader, or opening the
+    /// leader when this is the first probe on that CPU. Returns how many
+    /// probes took, or the first reason none did.
+    pub fn add_hook(&mut self, hook: &HookSpec) -> Result<usize, String> {
+        let mut armed_here = 0usize;
+        // The *first* real reason, not the last. Thread lists are read
+        // from /proc and go stale immediately: a thread that exits before
+        // its probe is opened returns ESRCH, and letting that overwrite
+        // the reason would report a vanished thread instead of, say, the
+        // missing capability that stopped every other thread too.
+        let mut reason = String::new();
+        let mut note = |error: String| {
+            if reason.is_empty() {
+                reason = error;
+            }
+        };
+        for is_return in [false, true] {
+            let uprobe = match UprobeAttr::new(&hook.module_path, hook.file_offset, is_return) {
+                Ok(uprobe) => uprobe,
+                Err(error) => {
+                    note(error);
+                    continue;
                 }
             };
-            for is_return in [false, true] {
-                let uprobe =
-                    match UprobeAttr::new(&hook.module_path, hook.file_offset, is_return) {
-                        Ok(uprobe) => uprobe,
-                        Err(error) => {
-                            note(error);
-                            continue;
-                        }
-                    };
-                for cpu in &cpus {
-                    match ring_of_cpu.get(cpu).copied() {
-                        None => match orbit_perf_ring::ring::open_uprobe(&uprobe, -1, *cpu, ring_kb) {
-                            Ok(ring) => {
-                                let id = match orbit_perf_ring::ring::event_id(&ring) {
-                                    Ok(id) => id,
-                                    Err(error) => {
-                                        note(format!("event id: {error}"));
-                                        continue;
-                                    }
-                                };
-                                if let Err(error) = ring.enable() {
-                                    note(format!("enable: {error}"));
+            for cpu in self.cpus.clone() {
+                match self.ring_of_cpu.get(&cpu).copied() {
+                    None => match orbit_perf_ring::ring::open_uprobe(&uprobe, -1, cpu, self.ring_kb) {
+                        Ok(ring) => {
+                            let id = match orbit_perf_ring::ring::event_id(&ring) {
+                                Ok(id) => id,
+                                Err(error) => {
+                                    note(format!("event id: {error}"));
                                     continue;
                                 }
-                                session.by_stream.insert(id, (hook.function_id, is_return));
-                                session.fds_by_function.entry(hook.function_id).or_default().push(ring.fd());
-                                ring_of_cpu.insert(*cpu, session.rings.len());
-                                session.rings.push(CpuRing { ring, attached_fds: Vec::new() });
+                            };
+                            if let Err(error) = ring.enable() {
+                                note(format!("enable: {error}"));
+                                continue;
+                            }
+                            self.by_stream.insert(id, (hook.function_id, is_return));
+                            self.fds_by_function.entry(hook.function_id).or_default().push(ring.fd());
+                            self.ring_of_cpu.insert(cpu, self.rings.len());
+                            self.rings.push(CpuRing { ring, attached_fds: Vec::new() });
+                            armed_here += 1;
+                        }
+                        Err(error) => note(format!("open on cpu {cpu}: {error}")),
+                    },
+                    Some(i) => {
+                        let leader = &self.rings[i].ring;
+                        match orbit_perf_ring::ring::open_uprobe_attached(&uprobe, -1, cpu, leader) {
+                            Ok((fd, id)) => {
+                                if let Err(error) = orbit_perf_ring::ring::enable_fd(fd) {
+                                    note(format!("enable: {error}"));
+                                    orbit_perf_ring::ring::close_fd(fd);
+                                    continue;
+                                }
+                                self.by_stream.insert(id, (hook.function_id, is_return));
+                                self.fds_by_function.entry(hook.function_id).or_default().push(fd);
+                                self.rings[i].attached_fds.push(fd);
                                 armed_here += 1;
                             }
-                            Err(error) => note(format!("open on cpu {cpu}: {error}")),
-                        },
-                        Some(i) => {
-                            let leader = &session.rings[i].ring;
-                            match orbit_perf_ring::ring::open_uprobe_attached(&uprobe, -1, *cpu, leader) {
-                                Ok((fd, id)) => {
-                                    if let Err(error) = orbit_perf_ring::ring::enable_fd(fd) {
-                                        note(format!("enable: {error}"));
-                                        orbit_perf_ring::ring::close_fd(fd);
-                                        continue;
-                                    }
-                                    session.by_stream.insert(id, (hook.function_id, is_return));
-                                    session.fds_by_function.entry(hook.function_id).or_default().push(fd);
-                                    session.rings[i].attached_fds.push(fd);
-                                    armed_here += 1;
-                                }
-                                Err(error) => note(format!("attach on cpu {cpu}: {error}")),
-                            }
+                            Err(error) => note(format!("attach on cpu {cpu}: {error}")),
                         }
                     }
                 }
             }
-            if armed_here == 0 {
-                if reason.is_empty() {
-                    reason = "no cpu accepted the probe".into();
+        }
+        if armed_here == 0 {
+            return Err(if reason.is_empty() { "no cpu accepted the probe".into() } else { reason });
+        }
+        self.names.insert(hook.function_id, hook.name.clone());
+        Ok(armed_here)
+    }
+
+    /// Takes one function's probes off the running session. Return probes are
+    /// closed before entry probes: the other order lets returns land after
+    /// the entry probe is gone, and every one of them is counted as a return
+    /// with no entry. A probe that leads a CPU's ring owns the ring every
+    /// other probe of that CPU writes into, so it is switched off instead.
+    /// Records already in the rings still pair (the stream ids stay known); a
+    /// call open at the time never closes and is counted as unclosed. False
+    /// when the function had no live probes.
+    pub fn remove_hook(&mut self, function_id: u64) -> bool {
+        let Some(fds) = self.fds_by_function.remove(&function_id) else {
+            return false;
+        };
+        // Armed entry-then-return, so reversing closes the returns first.
+        for fd in fds.into_iter().rev() {
+            match self.rings.iter_mut().find(|r| r.ring.fd() == fd) {
+                Some(_) => {
+                    let _ = orbit_perf_ring::ring::disable_fd(fd);
                 }
-                report.failures.push(format!("{}: {reason}", hook.name));
-            } else {
-                report.armed_functions += 1;
-                report.probe_count += armed_here;
+                None => {
+                    for ring in self.rings.iter_mut() {
+                        ring.attached_fds.retain(|f| *f != fd);
+                    }
+                    orbit_perf_ring::ring::close_fd(fd);
+                }
             }
         }
-        (session, report)
+        self.rates.remove(&function_id);
+        true
     }
 
     /// Drains every CPU's ring and returns the calls that can now be closed.
@@ -325,7 +470,14 @@ impl UprobeSession {
             .collect();
         let mut unhooked = Vec::new();
         for (function_id, entries) in offenders {
-            for fd in self.fds_by_function.remove(&function_id).unwrap_or_default() {
+            // Returns before entries, same reason as `remove_hook`.
+            for fd in self
+                .fds_by_function
+                .remove(&function_id)
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+            {
                 let _ = orbit_perf_ring::ring::disable_fd(fd);
             }
             self.rates.remove(&function_id);
@@ -336,7 +488,53 @@ impl UprobeSession {
         unhooked
     }
 
+    /// Entry hits since the last call, and the counter starts over. Auto-profiling
+    /// uses this to tell "nothing called it" from "it was entered and did not return".
+    pub fn take_entry_hits(&mut self) -> HashMap<u64, u64> {
+        std::mem::take(&mut self.entry_hits)
+    }
+
     pub fn poll(&mut self) -> Vec<CompletedCall> {
+        self.ingest_rings();
+        let horizon = self.newest_seen_ns.saturating_sub(REORDER_DELAY_NS);
+        self.drain_up_to(horizon)
+    }
+
+    /// Like [`Self::poll`], but the reorder horizon is the wall clock minus
+    /// the delay. A quiet target would otherwise pin the horizon to the last
+    /// hit. The capture loop calls this before unwinding stack samples, so a
+    /// hit has had time to arrive on every ring before a sample of that call
+    /// is patched.
+    pub fn poll_at(&mut self, now_ns: u64) -> Vec<CompletedCall> {
+        self.ingest_rings();
+        let horizon = now_ns.saturating_sub(REORDER_DELAY_NS);
+        self.drain_up_to(horizon)
+    }
+
+    /// Samples taken while hooks are armed (or a hijacked frame is still
+    /// open) wait out the reorder delay: an entry that has not been paired
+    /// yet is the difference between a trampoline address and the real
+    /// caller. With nothing armed and nothing open, samples unwind immediately.
+    pub fn sample_horizon(&self, now_ns: u64) -> u64 {
+        if self.fds_by_function.is_empty() && self.pending.is_empty() && !self.returns.has_open() {
+            u64::MAX
+        } else {
+            now_ns.saturating_sub(REORDER_DELAY_NS)
+        }
+    }
+
+    /// Writes saved return addresses into a copied user stack before unwind.
+    pub fn patch_user_stack(&self, tid: i32, sp: u64, sample_ns: u64, stack: &mut [u8]) {
+        self.returns.patch(tid, sp, sample_ns, stack);
+    }
+
+    /// Forgets return frames that closed at or before `horizon`, after the
+    /// samples up to that horizon have been patched.
+    pub fn retire_returns_before(&mut self, horizon: u64) {
+        self.returns.forget_closed_before(horizon);
+    }
+
+    fn ingest_rings(&mut self) {
         let flags = uprobe_sample_flags();
         for cpu in self.rings.iter_mut() {
             while let Ok(Some(record)) = cpu.ring.read_record() {
@@ -350,7 +548,8 @@ impl UprobeSession {
                 if { header.kind } != record_type::SAMPLE {
                     continue;
                 }
-                // `true`: keep the register block, it is sp and ip.
+                // `true`: keep the register block (sp, ip) and, on x86-64, the
+                // 8-byte return slot.
                 let Some(sample) = parse_record_sample(&record, flags, true) else {
                     self.report.parse_failures += 1;
                     continue;
@@ -379,6 +578,7 @@ impl UprobeSession {
                     sp,
                     ip,
                     cpu: sample.cpu,
+                    return_address: entry_return_address(&sample, is_return),
                 };
                 self.newest_seen_ns = self.newest_seen_ns.max(hit.timestamp_ns);
                 if let Some(dump) = self.dump.as_mut() {
@@ -398,13 +598,13 @@ impl UprobeSession {
                 self.pending.push(hit);
             }
         }
-        let horizon = self.newest_seen_ns.saturating_sub(REORDER_DELAY_NS);
-        self.drain_up_to(horizon)
     }
 
-    /// Pairs everything still held, whatever its age. For the end of a
-    /// capture, where nothing more is coming to order against.
+    /// Reads whatever is still in the rings and pairs everything still held,
+    /// whatever its age. For the end of a capture, where nothing more is
+    /// coming to order against.
     pub fn flush(&mut self) -> Vec<CompletedCall> {
+        self.ingest_rings();
         self.drain_up_to(u64::MAX)
     }
 
@@ -425,12 +625,22 @@ impl UprobeSession {
     }
 
     /// Closes the thread's top open entry without a return: a later hit
-    /// proved its return will never come.
-    fn discard_top(&mut self, tid: i32) {
+    /// proved its return will never come. `above_sp` is that later hit's
+    /// stack pointer. A frame strictly below it has been popped, so its
+    /// trampoline is gone; a frame at the same slot is a tail call (or the
+    /// same hit seen twice) and its saved return address stays until the
+    /// slot is actually popped.
+    fn discard_top(&mut self, tid: i32, at_ns: u64, above_sp: u64) {
+        let discarded_sp = self.open.get(&tid).and_then(|s| s.last()).copied();
         if let Some(stack) = self.open.get_mut(&tid) {
             stack.pop();
             if stack.is_empty() {
                 self.open.remove(&tid);
+            }
+        }
+        if let Some(sp) = discarded_sp {
+            if sp < above_sp {
+                self.returns.close_sp(tid, sp, at_ns);
             }
         }
         let _ = self.calls.process_function_exit(tid, 0, None);
@@ -458,7 +668,7 @@ impl UprobeSession {
                     // put the wrong span on the timeline, and leave this
                     // return's own entry open as a ghost.
                     while self.open.get(&hit.tid).and_then(|s| s.last()).is_some_and(|&top| top < frame) {
-                        self.discard_top(hit.tid);
+                        self.discard_top(hit.tid, hit.timestamp_ns, frame);
                     }
                     match self.open.get(&hit.tid).and_then(|s| s.last()) {
                         Some(&top) if top == frame => {}
@@ -476,6 +686,9 @@ impl UprobeSession {
                         self.open.remove(&hit.tid);
                     }
                 }
+                // One `ret` pops the slot, so every hijack of it (the original
+                // and any tail call that reused it) closes together.
+                self.returns.close_sp(hit.tid, frame, hit.timestamp_ns);
                 if let Some(call) =
                     self.calls.process_function_exit(hit.tid, hit.timestamp_ns, None)
                 {
@@ -502,22 +715,20 @@ impl UprobeSession {
                     // without a return hit (or is this hit's own duplicate
                     // on the same CPU): it will never close, discard it.
                     while self.open.get(&hit.tid).and_then(|s| s.last()).is_some_and(|&top| top <= hit.sp) {
-                        self.discard_top(hit.tid);
+                        self.discard_top(hit.tid, hit.timestamp_ns, hit.sp);
                     }
                 }
                 self.open.entry(hit.tid).or_default().push(hit.sp);
+                self.returns.note_entry(hit.tid, hit.sp, hit.return_address, hit.timestamp_ns);
                 let rate = self.rates.entry(hit.function_id).or_default();
                 if hit.timestamp_ns.saturating_sub(rate.window_start_ns) >= 1_000_000_000 {
                     rate.window_start_ns = hit.timestamp_ns;
                     rate.entries = 0;
                 }
                 rate.entries += 1;
-                self.calls.process_function_entry(
-                    hit.tid,
-                    hit.function_id,
-                    hit.timestamp_ns,
-                    None,
-                );
+                *self.entry_hits.entry(hit.function_id).or_insert(0) += 1;
+                self.calls
+                    .process_function_entry(hit.tid, hit.function_id, hit.timestamp_ns, None);
             }
         }
         out
@@ -557,12 +768,46 @@ const RETURN_SP_ADJUST: u64 = 8;
 const RETURN_SP_ADJUST: u64 = 0;
 
 
-/// What a uprobe sample carries: who, when, which CPU, and two registers
-/// (sp then ip, the `SAMPLE_REGS_USER_SP_IP` mask). No stack.
+/// What a uprobe sample carries: who, when, which CPU, two registers
+/// (sp then ip, the `SAMPLE_REGS_USER_SP_IP` mask), and on x86-64 the 8-byte
+/// return slot at `[sp]`.
 fn uprobe_sample_flags() -> SampleFlags {
     SampleFlags {
-        sample_type: sample_bits::TID_TIME_STREAMID_CPU | sample_bits::REGS_USER,
+        sample_type: sample_bits::TID_TIME_STREAMID_CPU | sample_bits::REGS_USER | uprobe_stack_bit(),
         regs_user_count: orbit_perf_ring::attr::SAMPLE_REGS_USER_SP_IP.count_ones() as usize,
+    }
+}
+
+fn uprobe_stack_bit() -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        sample_bits::STACK_USER
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        0
+    }
+}
+
+/// The real return address from an entry sample's 8-byte stack dump.
+/// Returns carry none: `ret` has already popped the slot on x86-64.
+fn entry_return_address(sample: &orbit_perf_records::reader::RecordSample, is_return: bool) -> u64 {
+    if is_return {
+        return 0;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        sample
+            .stack_data
+            .as_deref()
+            .and_then(|bytes| bytes.get(..8))
+            .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap()))
+            .unwrap_or(0)
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = sample;
+        0
     }
 }
 
@@ -629,15 +874,20 @@ mod tests {
             names: HashMap::new(),
             fds_by_function: HashMap::new(),
             rates: HashMap::new(),
+            entry_hits: HashMap::new(),
             auto_unhooked: Vec::new(),
             last_entry: HashMap::new(),
             report: HitReport::default(),
             open: HashMap::new(),
+            returns: LiveReturns::default(),
+            ring_of_cpu: HashMap::new(),
+            cpus: vec![0],
+            ring_kb: 64,
         }
     }
 
     fn hit(timestamp_ns: u64, function_id: u64, is_return: bool) -> ProbeHit {
-        ProbeHit { timestamp_ns, tid: 7, function_id, is_return, sp: 0, ip: 0, cpu: 0 }
+        ProbeHit { timestamp_ns, tid: 7, function_id, is_return, sp: 0, ip: 0, cpu: 0, return_address: 0 }
     }
 
     // ---- pairing by stack frame, and the migration rule ----------------
@@ -647,7 +897,7 @@ mod tests {
     // below speak in entry slots and add the adjustment.
 
     fn entry(timestamp_ns: u64, function_id: u64, sp: u64, ip: u64, cpu: u32) -> ProbeHit {
-        ProbeHit { timestamp_ns, tid: 7, function_id, is_return: false, sp, ip, cpu }
+        ProbeHit { timestamp_ns, tid: 7, function_id, is_return: false, sp, ip, cpu, return_address: 0 }
     }
 
     fn ret_from(timestamp_ns: u64, sp_entry: u64) -> ProbeHit {
@@ -659,6 +909,7 @@ mod tests {
             sp: sp_entry.wrapping_add(RETURN_SP_ADJUST),
             ip: 0,
             cpu: 0,
+            return_address: 0,
         }
     }
 
@@ -907,9 +1158,9 @@ mod tests {
     fn threads_do_not_close_each_others_calls() {
         let mut session = empty_session();
         session.pending = vec![
-            ProbeHit { timestamp_ns: 100, tid: 1, function_id: 9, is_return: false, sp: 0, ip: 0, cpu: 0 },
-            ProbeHit { timestamp_ns: 200, tid: 2, function_id: 9, is_return: true, sp: 0, ip: 0, cpu: 0 },
-            ProbeHit { timestamp_ns: 300, tid: 1, function_id: 9, is_return: true, sp: 0, ip: 0, cpu: 0 },
+            ProbeHit { timestamp_ns: 100, tid: 1, function_id: 9, is_return: false, sp: 0, ip: 0, cpu: 0, return_address: 0 },
+            ProbeHit { timestamp_ns: 200, tid: 2, function_id: 9, is_return: true, sp: 0, ip: 0, cpu: 0, return_address: 0 },
+            ProbeHit { timestamp_ns: 300, tid: 1, function_id: 9, is_return: true, sp: 0, ip: 0, cpu: 0, return_address: 0 },
         ];
         let calls = session.flush();
         // Only thread 1's pair closes; thread 2's stray return is dropped.
@@ -957,6 +1208,96 @@ mod tests {
     #[inline(never)]
     pub extern "C" fn orbit_uprobe_test_target(i: u64) -> u64 {
         std::hint::black_box(i).wrapping_mul(2_654_435_761) ^ 0x5bd1_e995
+    }
+
+    /// The function the add/remove test hooks: its own, so the firing test's
+    /// probes, armed in parallel, never land in this session's rings.
+    #[no_mangle]
+    #[inline(never)]
+    pub extern "C" fn orbit_uprobe_test_target_late(i: u64) -> u64 {
+        std::hint::black_box(i).wrapping_mul(40_503) ^ 0x9e37_79b9
+    }
+
+    /// Auto-profiling's path: a session armed with nothing, a hook added
+    /// while a thread is already calling the function, removed, and added
+    /// again -- the last one attaching to a CPU ring whose leader (the first
+    /// hook's probe) is switched off, which must still carry its records.
+    /// Privileged like the firing test above; unprivileged it is skipped.
+    #[test]
+    fn a_hook_added_mid_session_fires_stops_when_removed_and_comes_back() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        use std::sync::Arc;
+        if orbit_perf_ring::attr::uprobe_pmu_type().is_none() {
+            eprintln!("UPROBE TEST SKIPPED: no uprobe PMU on this kernel");
+            return;
+        }
+        let pid = std::process::id() as i32;
+        let index = crate::functions::FunctionIndex::for_pid(pid);
+        let target = index
+            .search("orbit_uprobe_test_target_late", 4)
+            .into_iter()
+            .find(|f| f.name == "orbit_uprobe_test_target_late")
+            .expect("this binary's symbol table names the target function");
+        let hook = HookSpec {
+            function_id: target.id,
+            module_path: target.module_path.clone(),
+            file_offset: target.file_offset,
+            name: target.name.clone(),
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let made = Arc::new(AtomicU64::new(0));
+        let worker = {
+            let (stop, made) = (stop.clone(), made.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    std::hint::black_box(orbit_uprobe_test_target_late(made.load(Ordering::SeqCst)));
+                    made.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_micros(500));
+                }
+            })
+        };
+        let finish = |stop: &AtomicBool| {
+            stop.store(true, Ordering::SeqCst);
+        };
+        let (mut session, report) = UprobeSession::arm(pid, &[], true);
+        assert_eq!(report.probe_count, 0, "armed with nothing");
+        let collect = |session: &mut UprobeSession, ms: u64| {
+            let started = std::time::Instant::now();
+            let mut calls = Vec::new();
+            while started.elapsed() < std::time::Duration::from_millis(ms) {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                calls.extend(session.poll());
+            }
+            calls.extend(session.flush());
+            calls
+        };
+        match session.add_hook(&hook) {
+            Ok(_) => {}
+            Err(reason) => {
+                finish(&stop);
+                let _ = worker.join();
+                assert!(
+                    reason.contains("Permission denied") || reason.contains("Operation not permitted"),
+                    "the probe was refused for a reason other than privilege: {reason}"
+                );
+                eprintln!("UPROBE TEST SKIPPED: needs CAP_SYS_ADMIN ({reason})");
+                return;
+            }
+        }
+        let hooked = collect(&mut session, 800);
+        assert!(hooked.len() > 50, "a hook added mid-session fires: {} calls", hooked.len());
+        assert!(session.remove_hook(target.id));
+        assert!(!session.remove_hook(target.id), "nothing left to remove");
+        // What was already in the rings drains; after that, silence.
+        collect(&mut session, 100);
+        let removed = collect(&mut session, 500);
+        assert!(removed.is_empty(), "no calls after the hook was removed: {}", removed.len());
+        session.add_hook(&hook).expect("the same hook arms again");
+        let again = collect(&mut session, 800);
+        finish(&stop);
+        let _ = worker.join();
+        eprintln!("UPROBE TEST: {} calls hooked, {} after removal, {} re-added", hooked.len(), removed.len(), again.len());
+        assert!(again.len() > 50, "re-added onto a switched-off leader's ring it still fires: {}", again.len());
     }
 
     /// A probe actually fires: this process arms entry and return probes on
@@ -1076,5 +1417,97 @@ mod tests {
         assert_eq!(report.orphan_returns, 0, "every return matched its entry's frame");
         assert_eq!(report.discarded_unclosed, 0, "no entry was left open");
         assert_eq!(report.records_lost, 0);
+    }
+
+    const TRAMPOLINE: u64 = 0xffff_ffff_ffdf_ffff;
+
+    fn word_at(stack: &[u8], offset: usize) -> u64 {
+        u64::from_le_bytes(stack[offset..offset + 8].try_into().unwrap())
+    }
+
+    fn trampoline_at(len: usize, offset: usize) -> Vec<u8> {
+        let mut stack = vec![0u8; len];
+        stack[offset..offset + 8].copy_from_slice(&TRAMPOLINE.to_le_bytes());
+        stack
+    }
+
+    #[test]
+    fn a_sample_during_a_hook_is_patched_and_one_outside_it_is_not() {
+        let mut session = empty_session();
+        let mut enter = entry(1_000, 9, 0x2000, 0x1000, 0);
+        enter.return_address = 0xAAAA;
+        session.pending.push(enter);
+        session.flush();
+        // Sampled inside the call: [sp] of the sample is below the return slot.
+        let mut during = trampoline_at(0x20, 0x10);
+        session.patch_user_stack(7, 0x1FF0, 1_500, &mut during);
+        assert_eq!(word_at(&during, 0x10), 0xAAAA);
+        // Before the entry the slot is still whatever the sample recorded.
+        let mut before = trampoline_at(0x20, 0x10);
+        session.patch_user_stack(7, 0x1FF0, 500, &mut before);
+        assert_eq!(word_at(&before, 0x10), TRAMPOLINE);
+        session.pending.push(ret_from(3_000, 0x2000));
+        session.flush();
+        let mut after = trampoline_at(0x20, 0x10);
+        session.patch_user_stack(7, 0x1FF0, 3_000, &mut after);
+        assert_eq!(word_at(&after, 0x10), TRAMPOLINE);
+        // And a sample taken while it was live still patches after the return
+        // has been paired: the frame is closed at the return, not forgotten.
+        let mut still = trampoline_at(0x20, 0x10);
+        session.patch_user_stack(7, 0x1FF0, 2_000, &mut still);
+        assert_eq!(word_at(&still, 0x10), 0xAAAA);
+        session.retire_returns_before(u64::MAX);
+        assert_eq!(session.returns.frame_count(), 0, "closed frames do not accumulate");
+    }
+
+    #[test]
+    fn nested_hooks_restore_each_caller_and_a_tail_call_keeps_the_original() {
+        let mut session = empty_session();
+        let mut outer = entry(1_000, 1, 0x3000, 0x10, 0);
+        outer.return_address = 0x1111;
+        let mut inner = entry(2_000, 2, 0x2000, 0x20, 0);
+        inner.return_address = 0x2222;
+        session.pending.push(outer);
+        session.pending.push(inner);
+        session.flush();
+        // Dump starts at 0x1FF0. Inner slot at 0x2000 (offset 0x10), outer at 0x3000 (offset 0x1010).
+        let mut stack = vec![0u8; 0x1020];
+        stack[0x10..0x18].copy_from_slice(&TRAMPOLINE.to_le_bytes());
+        stack[0x1010..0x1018].copy_from_slice(&TRAMPOLINE.to_le_bytes());
+        session.patch_user_stack(7, 0x1FF0, 2_500, &mut stack);
+        assert_eq!(word_at(&stack, 0x10), 0x2222);
+        assert_eq!(word_at(&stack, 0x1010), 0x1111);
+
+        // Tail call reuses the inner slot. Both addresses stay live; reverse
+        // application leaves the original.
+        let mut tail = entry(3_000, 3, 0x2000, 0x30, 0);
+        tail.return_address = 0xBBBB;
+        session.pending.push(tail);
+        session.flush();
+        let mut stack = vec![0u8; 0x20];
+        stack[0x10..0x18].copy_from_slice(&TRAMPOLINE.to_le_bytes());
+        session.patch_user_stack(7, 0x1FF0, 3_500, &mut stack);
+        assert_eq!(word_at(&stack, 0x10), 0x2222);
+        // The one ret that pops the slot ends every hijack of it.
+        session.pending.push(ret_from(4_000, 0x2000));
+        session.flush();
+        let mut stack = vec![0u8; 0x20];
+        stack[0x10..0x18].copy_from_slice(&TRAMPOLINE.to_le_bytes());
+        session.patch_user_stack(7, 0x1FF0, 4_000, &mut stack);
+        assert_eq!(word_at(&stack, 0x10), TRAMPOLINE);
+    }
+
+    #[test]
+    fn sample_horizon_waits_only_while_a_hook_can_still_hijack() {
+        let mut session = empty_session();
+        assert_eq!(session.sample_horizon(1_000_000_000), u64::MAX);
+        let mut enter = entry(1_000, 9, 0x2000, 0x1000, 0);
+        enter.return_address = 0xAAAA;
+        session.pending.push(enter);
+        session.flush();
+        assert_eq!(session.sample_horizon(1_000_000_000), 1_000_000_000 - REORDER_DELAY_NS);
+        session.pending.push(ret_from(2_000, 0x2000));
+        session.flush();
+        assert_eq!(session.sample_horizon(1_000_000_000), u64::MAX);
     }
 }

@@ -21,6 +21,11 @@ use serde::{Deserialize, Serialize};
 /// no timeline can show. Ten thousand entries in any 100 ms window trips it.
 pub const DEFAULT_MAX_HOOK_CALLS_PER_S: u64 = 100_000;
 
+/// The auto-profiling budget by default: scopes a second across every
+/// function it hooks. About what a timeline shows usefully at a glance, and
+/// a cost the target does not feel (a microsecond or so per call).
+pub const DEFAULT_AUTO_PROFILE_SCOPES_PER_S: u64 = 1_000;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     /// Switch off a hooked function that fires past `max_hook_calls_per_s`.
@@ -33,6 +38,10 @@ pub struct Settings {
     /// and writes it; the service only keeps it. Empty means no file.
     #[serde(default)]
     pub track_order: String,
+    /// Auto-profiling's budget: the most scopes a second, over every function
+    /// it hooks, it aims for (`auto_profile.rs` in the service).
+    #[serde(default = "default_auto_profile_budget")]
+    pub auto_profile_scopes_per_s: u64,
     /// Keys this build does not know, carried through a load/save cycle.
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
@@ -46,12 +55,17 @@ fn default_limit() -> u64 {
     DEFAULT_MAX_HOOK_CALLS_PER_S
 }
 
+fn default_auto_profile_budget() -> u64 {
+    DEFAULT_AUTO_PROFILE_SCOPES_PER_S
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             auto_unhook: true,
             max_hook_calls_per_s: DEFAULT_MAX_HOOK_CALLS_PER_S,
             track_order: String::new(),
+            auto_profile_scopes_per_s: DEFAULT_AUTO_PROFILE_SCOPES_PER_S,
             other: Default::default(),
         }
     }
