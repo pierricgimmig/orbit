@@ -126,6 +126,31 @@ fn selection_after_process_refresh(selected: Option<u32>, incoming: &[ProcessJso
     selected.filter(|pid| incoming.iter().any(|p| p.pid == *pid))
 }
 
+/// Demo convenience: the first process list may select pid 1. Never before
+/// the service has spoken, and never while a capture is running or already
+/// names a target — that race used to select systemd (pid 1) and the viewer
+/// then asked the service to swap its symbol index off the captured process.
+/// A real service (`hooks`) does not get the demo default either.
+fn default_pid_for_first_list(
+    got_status: bool,
+    hooks: bool,
+    capturing: bool,
+    target_pid: u32,
+    has_pid_one: bool,
+) -> Option<u32> {
+    if !got_status || hooks || capturing || target_pid > 0 || !has_pid_one {
+        None
+    } else {
+        Some(1)
+    }
+}
+
+/// While a capture is on a known target, selecting another pid must not ask
+/// the service to reload symbols. That reload replaces the capture's index.
+fn capture_blocks_symbol_load(capturing: bool, target_pid: u32, selected: u32) -> bool {
+    capturing && target_pid > 0 && selected != target_pid
+}
+
 /// A capture that names a target (status `target_pid`, or a CaptureStarted
 /// frame) picks that process when nothing is picked -- but only once per
 /// target. The process refresh drops a pid that has exited; if the next
@@ -632,6 +657,9 @@ pub struct OrbitLiveApp {
     service_timeline: Option<TimelineJson>,
     service_frame: Option<ServiceFrame>,
     got_status: bool,
+    /// The first process list arrived before status. Apply the idle demo
+    /// default (pid 1) only once status says this is not a live capture.
+    defer_default_pid: bool,
     http_ok: bool,
     ws_ok: bool,
     /// egui time at the start of this frame, for anything that needs "now"
@@ -1545,6 +1573,7 @@ impl OrbitLiveApp {
             service_timeline: None,
             service_frame: None,
             got_status: false,
+            defer_default_pid: false,
             http_ok: false,
             ws_ok: false,
             now_s: 0.0,
@@ -2493,6 +2522,13 @@ impl OrbitLiveApp {
             self.selected_pid = selected;
             self.adopted_target_pid = adopted;
         }
+        if self.defer_default_pid {
+            self.defer_default_pid = false;
+            if self.selected_pid.is_none() && self.static_capture.is_none() {
+                let has_one = self.processes.iter().any(|p| p.pid == 1);
+                self.selected_pid = default_pid_for_first_list(true, s.hooks, s.capturing, s.target_pid, has_one);
+            }
+        }
         self.ring_bytes = s.ring_bytes.to_string();
         if let Some(p) = &s.spill_path {
             self.spill_path = p.clone();
@@ -2554,9 +2590,20 @@ impl OrbitLiveApp {
         self.merge_trace_processes();
         sort_processes_by_cpu(&mut self.processes);
         // Demo convenience on the first list only. A pid that exited stays unset.
-        if was_empty && self.selected_pid.is_none() && !self.status.hooks {
-            if self.processes.iter().any(|p| p.pid == 1) {
-                self.selected_pid = Some(1);
+        // If status has not arrived yet, wait: `hooks` defaults to false and
+        // would otherwise select pid 1 (systemd) during a live capture.
+        if was_empty && self.selected_pid.is_none() {
+            let has_one = self.processes.iter().any(|p| p.pid == 1);
+            match default_pid_for_first_list(
+                self.got_status,
+                self.status.hooks,
+                self.status.capturing,
+                self.status.target_pid,
+                has_one,
+            ) {
+                Some(pid) => self.selected_pid = Some(pid),
+                None if !self.got_status && has_one => self.defer_default_pid = true,
+                None => {}
             }
         }
     }
@@ -2703,8 +2750,18 @@ impl OrbitLiveApp {
                     });
                 }
             }
-            if seeded_into_empty && self.selected_pid.is_none() && !self.status.hooks {
-                self.selected_pid = Some(1);
+            if seeded_into_empty && self.selected_pid.is_none() {
+                match default_pid_for_first_list(
+                    self.got_status,
+                    self.status.hooks,
+                    self.status.capturing,
+                    self.status.target_pid,
+                    true,
+                ) {
+                    Some(pid) => self.selected_pid = Some(pid),
+                    None if !self.got_status => self.defer_default_pid = true,
+                    None => {}
+                }
             }
         }
         self.merge_trace_processes();
@@ -3644,12 +3701,9 @@ impl OrbitLiveApp {
             // Which functions are hooked lives in the Functions view (every
             // symbol of the process, a hooked column), as in C++ Orbit, and
             // in the sampling report's right-click. This line only counts.
-            let n = self.selected_hooks.len();
-            let text = match n {
-                0 => "no functions hooked".to_string(),
-                1 => "1 function hooked".to_string(),
-                n => format!("{n} functions hooked"),
-            };
+            let manual = self.selected_hooks.len();
+            let auto = auto_hooked_count(&self.status.auto_profile_status);
+            let text = format_hooked_count(manual, auto);
             ui.label(RichText::new(text).font(FontId::monospace(10.5)).color(theme::MUTED()));
             if pill(ui, "Functions", self.report_open && self.report_tab == ReportTab::Functions)
                 .on_hover_text("Every function of the selected process, with a hooked column")
@@ -3659,7 +3713,7 @@ impl OrbitLiveApp {
                 self.report_collapsed = false;
                 self.report_tab = ReportTab::Functions;
             }
-            if n > 0 && pill(ui, "Unhook all", false).clicked() {
+            if manual > 0 && pill(ui, "Unhook all", false).clicked() {
                 self.selected_hooks.clear();
             }
             // What actually happened to the hooked functions. Uprobes need
@@ -4005,7 +4059,8 @@ impl OrbitLiveApp {
 
     fn tick_capture_net(&mut self, now: f64) {
         if let Some(pid) = self.selected_pid {
-            if self.status.hooks && self.loaded_symbol_pid != Some(pid) {
+            let blocked = capture_blocks_symbol_load(self.status.capturing, self.status.target_pid, pid);
+            if self.status.hooks && self.loaded_symbol_pid != Some(pid) && !blocked {
                 if self.loaded_symbol_pid.is_some() {
                     self.selected_hooks.clear();
                     self.report_selection.clear();
@@ -4025,6 +4080,7 @@ impl OrbitLiveApp {
                 self.net.load_symbols(pid);
             }
             if self.status.hooks
+                && !blocked
                 && now - self.last_symbol_poll > 0.4
                 && matches!(self.symbols.status.as_str(), "loading" | "idle" | "")
             {
@@ -7994,14 +8050,12 @@ impl OrbitLiveApp {
     fn hooked_hint(&self, ui: &mut Ui) {
         // Always one line, so hooking a row does not shift the rows under
         // it: with nothing hooked the line says so, in the muted colour.
-        let n = self.selected_hooks.len();
-        let (text, color) = if n == 0 {
-            ("no functions hooked — tick a row to instrument it on the next Record".to_string(), theme::MUTED())
-        } else if self.status.capturing {
-            (format!("{n} function(s) hooked — they arm on the next Record"), theme::ACCENT())
-        } else {
-            (format!("{n} function(s) hooked — press Record to instrument them"), theme::ACCENT())
-        };
+        let (text, accent) = hooked_hint_line(
+            self.selected_hooks.len(),
+            auto_hooked_count(&self.status.auto_profile_status),
+            self.status.capturing,
+        );
+        let color = if accent { theme::ACCENT() } else { theme::MUTED() };
         ui.label(RichText::new(text).color(color).size(self.ui_tweaks.report_font - 0.5));
     }
 
@@ -9016,7 +9070,11 @@ impl OrbitLiveApp {
                     let message = ui.label(&self.presets.message);
                     note_ui_rect("preset:error", message.rect);
                 }
-                let count = ui.label(format!("{} loaded preset(s) · {} functions hooked", self.presets.loaded.len(), self.selected_hooks.len()));
+                let count = ui.label(format!(
+                    "{} loaded preset(s) · {}",
+                    self.presets.loaded.len(),
+                    format_hooked_count(self.selected_hooks.len(), auto_hooked_count(&self.status.auto_profile_status)),
+                ));
                 note_ui_rect("preset:count", count.rect);
                 egui::ScrollArea::vertical().max_height(350.0).show(ui, |ui| {
                     for report in &self.presets.reports {
@@ -12122,6 +12180,39 @@ fn capture_timer_slot_w(ui: &Ui, font: &FontId) -> f32 {
     ui.fonts(|f| f.glyph_width(font, '0')) * 8.0
 }
 
+/// How many functions auto-profiling currently has armed, from the status
+/// object's `hooked` array. Manual hooks live in the viewer's selection and
+/// are counted separately.
+fn auto_hooked_count(status: &serde_json::Value) -> usize {
+    status.get("hooked").and_then(|h| h.as_array()).map(|a| a.len()).unwrap_or(0)
+}
+
+/// One line for every place that says whether anything is hooked. Auto-profile
+/// hooks are not in `selected_hooks`; counting only those made the settings
+/// row and the top-down hint say "no functions hooked" while ten were armed.
+fn format_hooked_count(manual: usize, auto: usize) -> String {
+    match (manual, auto) {
+        (0, 0) => "no functions hooked".to_string(),
+        (0, 1) => "1 auto-profile function hooked".to_string(),
+        (0, n) => format!("{n} auto-profile functions hooked"),
+        (1, 0) => "1 function hooked".to_string(),
+        (n, 0) => format!("{n} functions hooked"),
+        (m, a) => format!("{m} manual, {a} auto-profile hooked"),
+    }
+}
+
+fn hooked_hint_line(manual: usize, auto: usize, capturing: bool) -> (String, bool) {
+    if manual == 0 && auto == 0 {
+        ("no functions hooked — tick a row to instrument it on the next Record".to_string(), false)
+    } else if manual == 0 {
+        (format!("{} during this capture", format_hooked_count(0, auto)), true)
+    } else if capturing {
+        (format!("{} — they arm on the next Record", format_hooked_count(manual, auto)), true)
+    } else {
+        (format!("{} — press Record to instrument them", format_hooked_count(manual, auto)), true)
+    }
+}
+
 /// The hover text of the status line while auto-profiling: what is hooked,
 /// what each costs, and what it did last. Empty when it has not run.
 fn auto_profile_summary(status: &serde_json::Value) -> String {
@@ -12277,6 +12368,45 @@ mod tests {
         assert_eq!(selection_after_process_refresh(Some(20), &list), Some(20));
         assert_eq!(selection_after_process_refresh(Some(99), &list), None);
         assert_eq!(selection_after_process_refresh(None, &list), None);
+    }
+
+    #[test]
+    fn the_first_process_list_does_not_guess_pid_1_during_a_capture() {
+        assert_eq!(default_pid_for_first_list(false, false, false, 0, true), None);
+        assert_eq!(default_pid_for_first_list(true, true, true, 4242, true), None);
+        assert_eq!(default_pid_for_first_list(true, true, true, 0, true), None);
+        assert_eq!(default_pid_for_first_list(true, true, false, 4242, true), None);
+        // Idle real service: the operator picks. Demo (no hooks) still gets pid 1.
+        assert_eq!(default_pid_for_first_list(true, true, false, 0, true), None);
+        assert_eq!(default_pid_for_first_list(true, false, false, 0, true), Some(1));
+        assert_eq!(default_pid_for_first_list(true, false, false, 0, false), None);
+        assert!(capture_blocks_symbol_load(true, 4242, 1));
+        assert!(!capture_blocks_symbol_load(true, 4242, 4242));
+        assert!(!capture_blocks_symbol_load(false, 4242, 1));
+    }
+
+    #[test]
+    fn hooked_counts_include_auto_profile_hooks() {
+        assert_eq!(format_hooked_count(0, 0), "no functions hooked");
+        assert_eq!(format_hooked_count(0, 1), "1 auto-profile function hooked");
+        assert_eq!(format_hooked_count(0, 10), "10 auto-profile functions hooked");
+        assert_eq!(format_hooked_count(2, 0), "2 functions hooked");
+        assert_eq!(format_hooked_count(2, 10), "2 manual, 10 auto-profile hooked");
+        let status = serde_json::json!({
+            "hooked": [
+                {"name": "run_frame", "per_s": 60.0},
+                {"name": "dispatch_game_systems", "per_s": 60.0}
+            ]
+        });
+        assert_eq!(auto_hooked_count(&status), 2);
+        assert_eq!(auto_hooked_count(&serde_json::Value::Null), 0);
+        let (empty, accent) = hooked_hint_line(0, 0, false);
+        assert!(!accent);
+        assert!(empty.contains("no functions hooked"));
+        let (auto, accent) = hooked_hint_line(0, 10, true);
+        assert!(accent);
+        assert!(!auto.contains("no functions hooked"));
+        assert!(auto.contains("10 auto-profile"));
     }
 
     #[test]
