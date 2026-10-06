@@ -339,7 +339,7 @@ pre { max-width: 100%; }
 /* ---- manual ---- */
 .manual {
   display: grid;
-  grid-template-columns: 14rem minmax(0, var(--measure));
+  grid-template-columns: 14rem minmax(0, 1fr);
   gap: 2.2rem;
   justify-content: center;
   align-items: start;
@@ -348,7 +348,7 @@ pre { max-width: 100%; }
   padding: 1.25rem 1.5rem 4rem;
 }
 .manual-doc {
-  max-width: none;
+  max-width: var(--measure);
   margin: 0;
   padding: 0.4rem 0 3rem;
 }
@@ -420,5 +420,6 @@ aside.toc a[aria-current="page"] { color: var(--ink); background: var(--accent-w
   aside.toc .toc-label { display: none; }
   aside.toc nav { flex-direction: row; gap: 0.35rem; }
   aside.toc a { white-space: nowrap; padding: 0.35rem 0.65rem; }
-  .manual-doc { padding: 1.1rem 1.1rem 3rem; }
+  .manual-doc { max-width: none; padding: 1.1rem 1.1rem 3rem; }
+  .manual-doc h2, .manual-doc h3 { scroll-margin-top: 8rem; }
 }
