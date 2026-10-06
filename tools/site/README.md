@@ -2,7 +2,8 @@
 
 `build_site.py` assembles a static directory: the viewer pack, one capture
 the front page opens with no service behind it, the manual (rendered from
-`docs/manual/*.md`), the blog, the screenshots and the latest e2e report.
+`docs/manual/*.md` except the agent catalogue `features.md`), the blog,
+the screenshots and the latest e2e report.
 `serve.py` serves it with the cross-origin isolation headers the viewer's
 worker pool needs. Standard library only.
 

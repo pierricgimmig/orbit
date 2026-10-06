@@ -185,6 +185,6 @@ OrbitService --http_port 44766 --ring_buffer_bytes 67108864 --spill_path /tmp/or
 
 Open `http://<host>:44766/`. Build, protocol, renderer choice, tests and
 benches: [`src/OrbitLiveViewer/README.md`](src/OrbitLiveViewer/README.md).
-Run book: [`docs/manual/live-viewer.md`](docs/manual/live-viewer.md).
+Run book: [`docs/manual/index.md`](docs/manual/index.md).
 
 [orbit_youtube_presentation]: contrib/logos/orbit_presentation_youtube.png

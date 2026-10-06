@@ -71,6 +71,7 @@
     <header class="section-head">
       <h2>Capture</h2>
       <p class="sub">Attach to a process that is already running. The service decides which functions to hook.</p>
+      <p class="manual-link"><a href="manual/capture.html">In the manual</a></p>
     </header>
 
     <article class="feature">
@@ -103,7 +104,7 @@
       </figure>
       <div class="copy">
         <h3>The service picks what to hook</h3>
-        <p>Auto-profiling chooses functions from the samples. The status line counts hooked functions and scopes per second against the budget until the set converges, and the Functions view lists what was hooked.</p>
+        <p>Auto-profiling chooses functions from the samples. The status line counts hooked functions and scopes per second against the budget until the set converges, and the Functions view lists what was hooked. It ships with <a href="https://github.com/pierricgimmig/orbit/pull/97">pull request #97</a>, not in the service on main yet.</p>
       </div>
     </article>
   </section>
@@ -112,6 +113,7 @@
     <header class="section-head">
       <h2>Explore the timeline</h2>
       <p class="sub">Move through a live capture, and light up a scope by name.</p>
+      <p class="manual-link"><a href="manual/timeline.html">In the manual</a></p>
     </header>
 
     <article class="feature">
@@ -153,6 +155,7 @@
     <header class="section-head">
       <h2>Where time goes</h2>
       <p class="sub">From a sampling flame graph down to the instructions in the running binary.</p>
+      <p class="manual-link"><a href="manual/time.html">In the manual</a></p>
     </header>
 
     <article class="feature">
@@ -245,6 +248,7 @@
     <header class="section-head">
       <h2>Systems view</h2>
       <p class="sub">Where the thread ran, and what the profiler itself is doing.</p>
+      <p class="manual-link"><a href="manual/systems.html">In the manual</a></p>
     </header>
 
     <article class="feature">
@@ -286,6 +290,7 @@
     <header class="section-head">
       <h2>Works everywhere</h2>
       <p class="sub">The same capture, in another colour scheme, on a phone, or from a Chrome trace.</p>
+      <p class="manual-link"><a href="manual/everywhere.html">In the manual</a></p>
     </header>
 
     <article class="feature">
@@ -344,6 +349,7 @@
     <header class="section-head">
       <h2>How it works</h2>
       <p class="sub">A service captures the target. A live stream carries it to the viewer.</p>
+      <p class="manual-link"><a href="manual/index.html#what-runs-where">In the manual</a></p>
     </header>
     <ol class="pipeline">
       <li>
@@ -354,7 +360,7 @@
       <li>
         <p class="kicker">orbit-service</p>
         <h3>Uprobes, sampling, scheduler</h3>
-        <p>Dynamic instrumentation through uprobes, call stacks at 1&nbsp;kHz, and scheduler, context-switch and thread-state tracks. Auto-profile picks what to hook and prunes it to a scopes-per-second budget.</p>
+        <p>Dynamic instrumentation through uprobes, call stacks at 1&nbsp;kHz, and scheduler, context-switch and thread-state tracks. Auto-profile, in <a href="https://github.com/pierricgimmig/orbit/pull/97">pull request #97</a>, picks what to hook and prunes it to a scopes-per-second budget.</p>
       </li>
       <li>
         <p class="kicker">Web viewer</p>
@@ -392,14 +398,14 @@ curl -fsSL https://orbitprofiler.dev/install.sh | sh
 
 orbit-service --serve 44766
 # http://127.0.0.1:44766/</code></pre>
-        <p>Sampling needs <code>perf_event_paranoid</code> at −1 or <code>CAP_PERFMON</code>. Uprobe instrumentation needs <code>CAP_SYS_ADMIN</code>.</p>
-        <a class="more" href="manual/index.html#1-getting-started">Getting started in the manual</a>
+        <p>Sampling this process works at <code>perf_event_paranoid</code> 2 or below. The scheduler needs 0 or below. Root, <code>CAP_PERFMON</code> or <code>CAP_SYS_ADMIN</code> bypass the sysctl. Uprobes still need <code>CAP_SYS_ADMIN</code>.</p>
+        <a class="more" href="manual/index.html#quick-start">Quick start in the manual</a>
       </div>
       <div class="card">
         <h3>Where it runs</h3>
         <p>Linux on x86-64 and arm64 today, as one static binary. The viewer runs wherever there is a browser, and a saved capture opens as a file, like the one above.</p>
         <p>Manual instrumentation — one header, Rust, C, C++ and Python — is in the manual, alongside the HTTP API.</p>
-        <a class="more" href="manual/index.html">Read the manual</a>
+        <a class="more" href="manual/index.html#instrument-your-code">Instrumentation and the HTTP API</a>
       </div>
     </div>
   </section>
@@ -413,106 +419,8 @@ orbit-service --serve 44766
   <a href="blog/index.html">Blog</a>
   <a href="e2e/report.html">Test report</a>
 </footer>
+<script src="clips.js"></script>
 <script>
-(function () {
-  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
-  var videos = [];
-
-  function sync(v) {
-    var btn = v._btn;
-    if (!btn) return;
-    var playing = !v.paused && !v.ended;
-    var verb = playing ? "Pause" : "Play";
-    btn.textContent = verb;
-    btn.setAttribute("aria-label", verb + ": " + (v.getAttribute("aria-label") || "clip"));
-  }
-
-  function arm(v) {
-    if (v.getAttribute("src")) return;
-    v.muted = true;
-    v.defaultMuted = true;
-    v.playsInline = true;
-    v.src = v.getAttribute("data-src");
-  }
-
-  function play(v) {
-    arm(v);
-    var pending = v.play();
-    if (pending && pending.catch) pending.catch(function () { sync(v); });
-  }
-
-  function visibleEnough(el) {
-    var r = el.getBoundingClientRect();
-    if (r.width < 8 || r.height < 8) return false;
-    var vh = window.innerHeight || document.documentElement.clientHeight;
-    var shown = Math.min(r.bottom, vh) - Math.max(r.top, 0);
-    return shown >= Math.min(180, r.height * 0.35);
-  }
-
-  document.querySelectorAll("figure.stage").forEach(function (fig) {
-    var v = fig.querySelector("video");
-    var btn = fig.querySelector(".clip-toggle");
-    if (!v || !btn) return;
-    v._btn = btn;
-    videos.push(v);
-    v.addEventListener("play", function () { sync(v); });
-    v.addEventListener("playing", function () { v.classList.add("is-playing"); sync(v); });
-    v.addEventListener("pause", function () { sync(v); });
-    btn.addEventListener("click", function () {
-      if (v.paused || v.ended) {
-        delete v.dataset.hold;
-        play(v);
-      } else {
-        v.dataset.hold = "1";
-        v.pause();
-      }
-    });
-    sync(v);
-  });
-
-  function consider(v, on) {
-    var stage = v.closest("figure");
-    if (!on || !visibleEnough(stage || v)) {
-      if (!v.paused) v.pause();
-      return;
-    }
-    if (reduce.matches || v.dataset.hold) return;
-    play(v);
-  }
-
-  if ("IntersectionObserver" in window) {
-    var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) {
-        var stage = e.target;
-        var v = stage.querySelector("video");
-        if (v) consider(v, e.isIntersecting);
-      });
-    }, { rootMargin: "80px 0px", threshold: [0, 0.25, 0.6] });
-    document.querySelectorAll("figure.stage").forEach(function (fig) { io.observe(fig); });
-  } else if (!reduce.matches) {
-    videos.forEach(function (v) { if (visibleEnough(v.closest("figure") || v)) play(v); });
-  }
-
-  document.addEventListener("visibilitychange", function () {
-    if (document.hidden) {
-      videos.forEach(function (v) {
-        if (!v.paused) { v.dataset.wasPlaying = "1"; v.pause(); }
-      });
-      return;
-    }
-    videos.forEach(function (v) {
-      if (!v.dataset.wasPlaying) return;
-      delete v.dataset.wasPlaying;
-      if (!v.dataset.hold && !reduce.matches && visibleEnough(v)) play(v);
-    });
-  });
-
-  if (reduce.addEventListener) {
-    reduce.addEventListener("change", function () {
-      if (reduce.matches) videos.forEach(function (v) { if (!v.paused) v.pause(); });
-    });
-  }
-})();
 (function () {
   var b = document.getElementById("theme-toggle");
   if (!b) return;

@@ -1,11 +1,9 @@
 # Orbit feature catalogue
 
-This is the source list for the user manual. It is written for an agent (or
-a person) who will turn it into manual chapters: every feature the Rust Orbit
-service and its live viewer have, how to reach it, what it does, and which
-e2e screenshot shows it. `docs/e2e/report.md` is the companion: it is written
-by `tools/e2e/orbit_e2e.py` on every run, with the measured numbers and the
-screenshot index, from the binaries built at that commit.
+The published user guide is [`index.md`](index.md) and the pages beside it.
+This file stays the agent catalogue: how to reach each feature, and which
+e2e screenshot shows it. `docs/e2e/report.md` is the companion, written by
+`tools/e2e/orbit_e2e.py` on every run. It is not built into the site.
 
 The [landing page](../index.html) is the site root. It introduces the viewer
 with short recordings of a live capture.
@@ -30,8 +28,10 @@ Instructions for the manual writer:
   another machine on the network. `--host` picks the bind address (default
   `0.0.0.0`); `--wire raw|packed|deflate` (env `ORBIT_LIVE_WIRE`) picks the
   WebSocket encoding, default `packed`. Screenshot: `01-viewer-idle.png`.
-- **Privileges.** Sampling and scheduling need `perf_event_paranoid` at -1
-  or `CAP_PERFMON`; the process row says "CSW needs root" otherwise.
+- **Privileges.** Sampling this process needs `perf_event_paranoid` <= 2.
+  System-wide scheduling (the CSW track) needs `perf_event_paranoid` <= 0.
+  Root, `CAP_PERFMON` or `CAP_SYS_ADMIN` bypass the sysctl. The process
+  row says "CSW needs root" otherwise.
   Uprobe-based dynamic instrumentation always needs `CAP_SYS_ADMIN`:
   the kernel's uprobe PMU checks that capability and no other
   (`perf_uprobe_event_init`), so `CAP_PERFMON`, which every other perf
@@ -141,11 +141,12 @@ opens on first load with a service and closes with its ×. Its rows:
   from that pass on, as C++ Orbit reacts to PERF_RECORD_FORK. A slow
   scan of the thread list is the safety net and logs if it ever finds
   a thread no fork record announced.
-- **UNWIND** is a two-way switch, DWARF or FP. **HOOKS** is another:
-  **Uprobes** (the default) arms kernel uprobes on the hooked functions and
-  needs `CAP_PERFMON`; **User-space** is the trampoline mechanism, not
-  ported yet, and choosing it also arms uprobes and says so. **Dedupe**
-  (on by default) is what keeps a lost or doubled probe hit from becoming
+- **UNWIND** is a two-way switch, **DWARF** or **FP**. **HOOKS** is another:
+  **Frida** (the default) or **Uprobes**. Frida's note reads "requires
+  permission to attach to the target". Uprobes reads "requires Linux
+  uprobe permissions" and needs `CAP_SYS_ADMIN`; `CAP_PERFMON` alone is
+  refused with EACCES. **Dedupe**, shown only while Uprobes is selected
+  (on by default), is what keeps a lost or doubled probe hit from becoming
   a ghost scope. Every hit carries its stack pointer, so entries and
   returns are paired by stack frame: an entry at or above an open frame
   means that frame's return was lost (the open entry is discarded), a
@@ -260,7 +261,8 @@ opens on first load with a service and closes with its ×. Its rows:
   its bar (C++ Orbit's per-thread callstack selection), with the report
   scoped to the thread. A **right-drag anywhere** -- the ruler, a bar, or
   empty space -- selects every thread's samples in the window, drawn
-  full-height. Ctrl+drag zooms to the window instead. Several drags
+  full-height. Ctrl+drag (or ⌘+drag) draws a marquee over scopes and
+  copies a text report; it does not zoom. Several drags
   accumulate (Shift adds).
 - **Hook from the report.** Right-clicking a function in the Flat report
   or in a call tree offers "Hook function for dynamic instrumentation"

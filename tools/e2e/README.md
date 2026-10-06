@@ -82,8 +82,8 @@ Every run writes `docs/e2e/report.md` (`--report` to move it): the verdict
 and note of each scenario, the numbers the scenarios measured (bundle and
 slice sizes, socket rate, the viewer's phase totals under headless
 SwiftShader), and an index of the screenshots. `docs/manual/features.md`
-lists every feature with its screenshot; the two together are what an agent
-reads to write the manual.
+lists every feature with its screenshot. The user guide is
+`docs/manual/index.md`.
 
 ## The shared capture
 
