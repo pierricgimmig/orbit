@@ -36,6 +36,9 @@ of a job is visualized. Additional GPU data, such as Vulkan debug markers can be
 retrieved using Orbit's Vulkan layer. Memory consumption and page-fault
 information is visualized as well.
 
+Recordings of the live viewer are on the project site, built from
+[tools/site](tools/site/README.md).
+
 An introduction to Orbit's key features can be found in the following YouTube
 video:
 [![Orbit Presentation][orbit_youtube_presentation]](https://www.youtube.com/watch?v=8V-EPBPGZPs)

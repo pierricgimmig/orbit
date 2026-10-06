@@ -7,6 +7,9 @@ e2e screenshot shows it. `docs/e2e/report.md` is the companion: it is written
 by `tools/e2e/orbit_e2e.py` on every run, with the measured numbers and the
 screenshot index, from the binaries built at that commit.
 
+The [landing page](../index.html) is the site root. It introduces the viewer
+with short recordings of a live capture.
+
 Instructions for the manual writer:
 
 - Describe each feature from this list and its screenshot. Do not invent
@@ -500,9 +503,11 @@ in the URL opens a tab on load.
   open). `tools/e2e/orbit_e2e.py` clicks by label through these.
 
 - **The web site.** `python3 tools/site/build_site.py` builds a static
-  directory (viewer, a capture on the front page, this manual, the blog,
-  screenshots, the e2e report); `python3 tools/site/serve.py --dir site
-  --port 8081` serves it on the LAN. Screenshot: `22-website.png`.
+  directory: the [landing page](../index.html) (recordings of the live
+  viewer), a capture embedded on that page, this manual, the blog,
+  screenshots and the e2e report. `python3 tools/site/serve.py --dir site
+  --port 8081` serves it on the LAN. Regenerate the recordings with
+  `tools/media-kit` (see `tools/site/README.md`). Screenshot: `22-website.png`.
 
 - **Benchmark.** More ▸ Benchmark (F3) opens a window that asks the service
   for fake scopes as fast as you like: `threads` (16) threads of nested call

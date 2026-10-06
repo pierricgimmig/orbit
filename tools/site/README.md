@@ -39,6 +39,23 @@ works, with the viewer's lane walk running single-threaded.
 
 `site/` is ignored by git; the inputs are.
 
+## Landing-page recordings
+
+The front page (`index.html`) plays short clips of the live viewer from
+`tools/site/media/`. Those files are published from the media kit; they are
+not edited by hand.
+
+```bash
+cd tools/media-kit
+./generate.sh --ref <git-ref> --out /tmp/orbit-media   # service + VM + scenes
+python3 publish_site_media.py --from /tmp/orbit-media  # MP4 + JPEG posters
+```
+
+`publish_site_media.py` writes into `tools/site/media/` (H.264, no audio, max
+width 1280, JPEG posters). It leaves GIFs, WebM and the kit's `raw/` directory
+behind. Do not point `generate.sh --out` at `tools/site/media`. Then rebuild
+this site as usual. The kit's own README is `tools/media-kit/README.md`.
+
 
 ## Served by orbit-service (dev only)
 

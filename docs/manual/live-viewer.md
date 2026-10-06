@@ -3,7 +3,7 @@
 This is the run-book for the viewer served **by Orbit Service itself**.
 Architecture context for capture/producers lives in the hosted manual
 (`docs/manual/` on the architecture-manual branch). This page is only the
-live viewer.
+live viewer. Recordings of it are on the [landing page](../index.html).
 
 ## One binary, one HTTP port
 

@@ -141,7 +141,8 @@ def page(title, body, root=".", nav=True):
             .replace("{{nav}}", NAV.replace("{{root}}", root) if nav else ""))
 
 
-NAV = ('<nav class="site"><a class="brand" href="{{root}}/index.html"><img src="{{root}}/logo.png" alt="Orbit"></a>'
+NAV = ('<nav class="site" aria-label="Site"><a class="brand" href="{{root}}/index.html"><img src="{{root}}/logo.png" alt="Orbit"></a>'
+       '<a href="{{root}}/index.html">Home</a>'
        '<a href="{{root}}/manual/index.html">Manual</a>'
        '<a href="{{root}}/blog/index.html">Blog</a>'
        '<a href="{{root}}/e2e/report.html">Test report</a>'
@@ -197,6 +198,9 @@ def build(out, stream_path, bundle, name, port, service=False):
         shutil.copytree(VIEWER_DIST, os.path.join(out, "viewer"), dirs_exist_ok=True)
     for asset in ("site.css", "logo.png", "favicon.png"):
         shutil.copy(os.path.join(HERE, asset), os.path.join(out, asset))
+    media_src = os.path.join(HERE, "media")
+    if os.path.isdir(media_src):
+        shutil.copytree(media_src, os.path.join(out, "media"), dirs_exist_ok=True)
     # The curl installer, served at the site root: `curl .../install.sh | sh`.
     shutil.copy(os.path.join(REPO, "tools/install/install.sh"), os.path.join(out, "install.sh"))
     # The front-page capture.
