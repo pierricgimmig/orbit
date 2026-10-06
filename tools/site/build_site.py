@@ -144,9 +144,10 @@ def page(title, body, root=".", nav=True):
 NAV = ('<nav class="site" aria-label="Site"><a class="brand" href="{{root}}/index.html"><img src="{{root}}/logo.png" alt="Orbit"></a>'
        '<a href="{{root}}/index.html">Home</a>'
        '<a href="{{root}}/manual/index.html">Manual</a>'
-       '<a href="{{root}}/blog/index.html">Blog</a>'
-       '<a href="{{root}}/e2e/report.html">Test report</a>'
+       '<a class="nav-more" href="{{root}}/blog/index.html">Blog</a>'
+       '<a class="nav-more" href="{{root}}/e2e/report.html">Test report</a>'
        '<span class="spacer"></span>'
+       '<button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>'
        '<a class="cta" href="{{root}}/viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the viewer</a></nav>')
 
 

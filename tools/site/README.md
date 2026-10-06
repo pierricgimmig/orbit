@@ -53,7 +53,8 @@ python3 publish_site_media.py --from /tmp/orbit-media  # MP4 + JPEG posters
 
 `publish_site_media.py` writes into `tools/site/media/` (H.264, no audio, max
 width 1280, JPEG posters). It leaves GIFs, WebM and the kit's `raw/` directory
-behind. Do not point `generate.sh --out` at `tools/site/media`. Then rebuild
+behind, and it crops and trims each clip from the table in that script.
+Do not point `generate.sh --out` at `tools/site/media`. Then rebuild
 this site as usual. The kit's own README is `tools/media-kit/README.md`.
 
 

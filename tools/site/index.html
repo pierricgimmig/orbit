@@ -22,9 +22,10 @@
   <a class="brand" href="index.html"><img src="logo.png" alt="Orbit"></a>
   <a href="#capture">Features</a>
   <a href="manual/index.html">Manual</a>
-  <a href="blog/index.html">Blog</a>
-  <a href="https://github.com/pierricgimmig/orbit" rel="noopener noreferrer">GitHub</a>
+  <a class="nav-more" href="blog/index.html">Blog</a>
+  <a class="nav-more" href="https://github.com/pierricgimmig/orbit" rel="noopener noreferrer">GitHub</a>
   <span class="spacer"></span>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
   <a class="cta" href="#viewer">Live viewer</a>
 </nav>
 <main class="wide" id="main">
@@ -48,8 +49,8 @@
 
   <figure class="stage hero-stage">
     <div class="stage-frame">
-      <img class="poster" alt="" src="media/00-hero.jpg" width="1280" height="800">
-      <video id="clip-hero" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/00-hero.jpg" data-src="media/00-hero.mp4" aria-label="Montage of attaching to a process, auto-profiling, the timeline, scheduler, flame graph, live table, disassembly and colour schemes"></video>
+      <img class="poster" alt="" src="media/00-hero.jpg" width="1280" height="448">
+      <video id="clip-hero" width="1280" height="448" muted loop playsinline webkit-playsinline preload="none" poster="media/00-hero.jpg" data-src="media/00-hero.mp4" aria-label="Timeline beside the sampling flame graph, then the scheduler and nested scopes"></video>
     </div>
     <figcaption>
       <span>Hero montage · game_loop</span>
@@ -75,8 +76,8 @@
     <article class="feature">
       <figure class="stage">
         <div class="stage-frame">
-          <img class="poster" alt="" src="media/01-attach-record.jpg" width="1280" height="800">
-          <video id="clip-01" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/01-attach-record.jpg" data-src="media/01-attach-record.mp4" aria-label="Picking a process, switching hooks to uprobes, turning on auto profile, and hitting Record"></video>
+          <img class="poster" alt="" src="media/01-attach-record.jpg" width="1280" height="416">
+          <video id="clip-01" width="1280" height="416" muted loop playsinline webkit-playsinline preload="none" poster="media/01-attach-record.jpg" data-src="media/01-attach-record.mp4" aria-label="The live timeline just after Record, with scheduler lanes and the capture timer"></video>
         </div>
         <figcaption>
           <span>Attach &amp; record</span>
@@ -93,7 +94,7 @@
       <figure class="stage">
         <div class="stage-frame">
           <img class="poster" alt="" src="media/03-auto-profile.jpg" width="1280" height="800">
-          <video id="clip-03" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/03-auto-profile.jpg" data-src="media/03-auto-profile.mp4" aria-label="Auto-profiling converging on a set of hooked functions against a scopes-per-second budget"></video>
+          <video id="clip-03" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/03-auto-profile.jpg" data-src="media/03-auto-profile.mp4" aria-label="The Functions view listing the functions auto-profile hooked during the capture"></video>
         </div>
         <figcaption>
           <span>Auto-profiling</span>
@@ -116,8 +117,8 @@
     <article class="feature">
       <figure class="stage">
         <div class="stage-frame">
-          <img class="poster" alt="" src="media/02-timeline-navigation.jpg" width="1280" height="480">
-          <video id="clip-02" width="1280" height="480" muted loop playsinline webkit-playsinline preload="none" poster="media/02-timeline-navigation.jpg" data-src="media/02-timeline-navigation.mp4" aria-label="Cursor-anchored zoom, pan, and tooltips on nested hooked scopes"></video>
+          <img class="poster" alt="" src="media/02-timeline-navigation.jpg" width="1280" height="416">
+          <video id="clip-02" width="1280" height="416" muted loop playsinline webkit-playsinline preload="none" poster="media/02-timeline-navigation.jpg" data-src="media/02-timeline-navigation.mp4" aria-label="Cursor-anchored zoom, pan, and tooltips on nested hooked scopes"></video>
         </div>
         <figcaption>
           <span>Live timeline</span>
@@ -133,8 +134,8 @@
     <article class="feature">
       <figure class="stage">
         <div class="stage-frame">
-          <img class="poster" alt="" src="media/11-scope-search.jpg" width="1280" height="480">
-          <video id="clip-11" width="1280" height="480" muted loop playsinline webkit-playsinline preload="none" poster="media/11-scope-search.jpg" data-src="media/11-scope-search.mp4" aria-label="Scope search keeping matching scopes lit and greying out the rest"></video>
+          <img class="poster" alt="" src="media/11-scope-search.jpg" width="1280" height="416">
+          <video id="clip-11" width="1280" height="416" muted loop playsinline webkit-playsinline preload="none" poster="media/11-scope-search.jpg" data-src="media/11-scope-search.mp4" aria-label="Scope search keeping matching scopes lit and greying out the rest"></video>
         </div>
         <figcaption>
           <span>Scope search</span>
@@ -157,8 +158,8 @@
     <article class="feature">
       <figure class="stage">
         <div class="stage-frame">
-          <img class="poster" alt="" src="media/05-flame-graph.jpg" width="1280" height="800">
-          <video id="clip-05" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/05-flame-graph.jpg" data-src="media/05-flame-graph.mp4" aria-label="Sampling flame graph: click to highlight a function, double-click to zoom into a subtree"></video>
+          <img class="poster" alt="" src="media/05-flame-graph.jpg" width="1280" height="688">
+          <video id="clip-05" width="1280" height="688" muted loop playsinline webkit-playsinline preload="none" poster="media/05-flame-graph.jpg" data-src="media/05-flame-graph.mp4" aria-label="Sampling flame graph filling the report beside the timeline"></video>
         </div>
         <figcaption>
           <span>Sampling flame graph</span>
@@ -174,8 +175,8 @@
     <article class="feature">
       <figure class="stage">
         <div class="stage-frame">
-          <img class="poster" alt="" src="media/06-callstacks.jpg" width="1280" height="800">
-          <video id="clip-06" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/06-callstacks.jpg" data-src="media/06-callstacks.mp4" aria-label="Top-down call tree with inclusive and self percentages, then the bottom-up tree"></video>
+          <img class="poster" alt="" src="media/06-callstacks.jpg" width="1280" height="768">
+          <video id="clip-06" width="1280" height="768" muted loop playsinline webkit-playsinline preload="none" poster="media/06-callstacks.jpg" data-src="media/06-callstacks.mp4" aria-label="Top-down call tree with inclusive and self percentages, then the bottom-up tree"></video>
         </div>
         <figcaption>
           <span>Top-down &amp; bottom-up</span>
@@ -208,8 +209,8 @@
     <article class="feature">
       <figure class="stage">
         <div class="stage-frame">
-          <img class="poster" alt="" src="media/08-selection-report.jpg" width="1280" height="800">
-          <video id="clip-08" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/08-selection-report.jpg" data-src="media/08-selection-report.mp4" aria-label="Right-drag selecting a time range so the report recomputes for that window"></video>
+          <img class="poster" alt="" src="media/08-selection-report.jpg" width="1280" height="768">
+          <video id="clip-08" width="1280" height="768" muted loop playsinline webkit-playsinline preload="none" poster="media/08-selection-report.jpg" data-src="media/08-selection-report.mp4" aria-label="Right-drag selecting a time range so the report recomputes for that window"></video>
         </div>
         <figcaption>
           <span>Time-range selection</span>
@@ -249,8 +250,8 @@
     <article class="feature">
       <figure class="stage">
         <div class="stage-frame">
-          <img class="poster" alt="" src="media/04-scheduler.jpg" width="1280" height="480">
-          <video id="clip-04" width="1280" height="480" muted loop playsinline webkit-playsinline preload="none" poster="media/04-scheduler.jpg" data-src="media/04-scheduler.mp4" aria-label="Scheduler track with one lane per core, thread focus, and Running and Sleeping states"></video>
+          <img class="poster" alt="" src="media/04-scheduler.jpg" width="1280" height="416">
+          <video id="clip-04" width="1280" height="416" muted loop playsinline webkit-playsinline preload="none" poster="media/04-scheduler.jpg" data-src="media/04-scheduler.mp4" aria-label="Scheduler track with one lane per core, thread focus, and Running and Sleeping states"></video>
         </div>
         <figcaption>
           <span>Scheduler &amp; thread states</span>
@@ -266,8 +267,8 @@
     <article class="feature">
       <figure class="stage">
         <div class="stage-frame">
-          <img class="poster" alt="" src="media/09-service-health.jpg" width="1280" height="800">
-          <video id="clip-09" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/09-service-health.jpg" data-src="media/09-service-health.mp4" aria-label="orbit-service profiling itself: CPU, RSS, events per pass and ring lanes"></video>
+          <img class="poster" alt="" src="media/09-service-health.jpg" width="1280" height="768">
+          <video id="clip-09" width="1280" height="768" muted loop playsinline webkit-playsinline preload="none" poster="media/09-service-health.jpg" data-src="media/09-service-health.mp4" aria-label="orbit-service profiling itself: CPU, RSS, events per pass and ring lanes"></video>
         </div>
         <figcaption>
           <span>Service self-profile</span>
@@ -308,7 +309,7 @@
       <figure class="stage phone">
         <div class="stage-frame">
           <img class="poster" alt="" src="media/13-mobile-compact.jpg" width="488" height="1000">
-          <video id="clip-13" width="488" height="1000" muted loop playsinline webkit-playsinline preload="none" poster="media/13-mobile-compact.jpg" data-src="media/13-mobile-compact.mp4" aria-label="The live viewer in a 390 pixel wide layout, zooming the timeline and opening the flame graph"></video>
+          <video id="clip-13" width="488" height="1000" muted loop playsinline webkit-playsinline preload="none" poster="media/13-mobile-compact.jpg" data-src="media/13-mobile-compact.mp4" aria-label="The live viewer at phone width, with the report and flame graph open"></video>
         </div>
         <figcaption>
           <span>Phone layout</span>
@@ -324,8 +325,8 @@
     <article class="feature">
       <figure class="stage">
         <div class="stage-frame">
-          <img class="poster" alt="" src="media/14-chrome-trace-import.jpg" width="1280" height="800">
-          <video id="clip-14" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/14-chrome-trace-import.jpg" data-src="media/14-chrome-trace-import.mp4" aria-label="Opening a Chrome Trace Event JSON file onto the Orbit timeline"></video>
+          <img class="poster" alt="" src="media/14-chrome-trace-import.jpg" width="1280" height="512">
+          <video id="clip-14" width="1280" height="512" muted loop playsinline webkit-playsinline preload="none" poster="media/14-chrome-trace-import.jpg" data-src="media/14-chrome-trace-import.mp4" aria-label="Opening a Chrome Trace Event JSON file onto the Orbit timeline"></video>
         </div>
         <figcaption>
           <span>Chrome trace</span>
@@ -412,7 +413,6 @@ orbit-service --serve 44766
   <a href="blog/index.html">Blog</a>
   <a href="e2e/report.html">Test report</a>
 </footer>
-<button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
 <script>
 (function () {
   var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");

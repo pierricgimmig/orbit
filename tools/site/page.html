@@ -17,7 +17,6 @@
 {{body}}
 </main>
 <footer class="site"><span>Orbit &middot; the Rust port</span><a href="{{root}}/index.html">Home</a></footer>
-<button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
 <script>(function(){var b=document.getElementById("theme-toggle");if(!b)return;function cur(){return document.documentElement.getAttribute("data-theme")||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
 </body>
 </html>

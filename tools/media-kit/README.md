@@ -10,8 +10,10 @@ python3 publish_site_media.py --from /tmp/orbit-media
 ```
 
 `publish_site_media.py` writes H.264 MP4 and JPEG posters to `tools/site/media/`
-(max width 1280, no audio, no GIF, no WebM, no `raw/`). Rebuild with
-`python3 tools/site/build_site.py`. See `tools/site/README.md`.
+(max width 1280, no audio, no GIF, no WebM, no `raw/`). It also applies the
+per-clip crop rects and trims in that script, so a regenerated 1600×1000 set
+is framed the same way. Rebuild with `python3 tools/site/build_site.py`.
+See `tools/site/README.md`.
 
 A single command builds `orbit-service` (with the viewer embedded) from a git ref, boots a Debian VM under QEMU **TCG**,
 runs a dummy `game_loop` workload plus `orbit-service` inside it, drives one headful Chrome with Playwright through
