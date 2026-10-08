@@ -3,181 +3,437 @@
 <head>
 <script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 <meta charset="utf-8">
-<title>Orbit</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Orbit: dynamic instrumentation coupled with sampling profiling, for native applications, across processes, machines and platforms. A real capture, right here in the page.">
+<title>Orbit — profile a running program</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Orbit is a low-overhead native profiler. It instruments a running process with uprobes, samples call stacks at 1 kHz, and streams the capture live to a browser.">
+<meta property="og:title" content="Orbit">
+<meta property="og:description" content="A low-overhead native profiler that streams a live capture to the browser.">
+<meta property="og:image" content="media/00-hero.jpg">
 <link rel="icon" type="image/png" href="favicon.png">
+<link rel="preload" as="image" href="media/00-hero.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="site.css">
 </head>
 <body>
-<nav class="site">
+<a class="skip" href="#main">Skip to content</a>
+<nav class="site" aria-label="Site">
   <a class="brand" href="index.html"><img src="logo.png" alt="Orbit"></a>
+  <a href="#capture">Features</a>
   <a href="manual/index.html">Manual</a>
-  <a href="blog/index.html">Blog</a>
-  <a href="e2e/report.html">Test report</a>
+  <a class="nav-more" href="blog/index.html">Blog</a>
+  <a class="nav-more" href="https://github.com/pierricgimmig/orbit" rel="noopener noreferrer">GitHub</a>
   <span class="spacer"></span>
-  <a class="cta" href="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the viewer</a>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+  <a class="cta" href="#viewer">Live viewer</a>
 </nav>
-<main class="wide">
+<main class="wide" id="main">
   <div class="hero">
-    <h1>Hook a running program. <em>Watch every call.</em></h1>
-    <p class="lede">Orbit is a profiler for native applications. Hook the functions you care about on a running
-      process, without recompiling, and see every call as a scope on a timeline that draws a million of them at the
-      screen's refresh rate, with a sampling profile underneath that says where the rest of the time went.</p>
+    <p class="kicker">Native profiler</p>
+    <h1>Profile a running program. <em>Watch it live.</em></h1>
+    <p class="lede">Orbit is a low-overhead profiler for native code. It instruments a process with uprobes, samples call stacks at 1&nbsp;kHz, and streams the capture to a browser.</p>
     <div class="actions">
-      <a class="btn primary" href="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the capture</a>
-      <a class="btn" href="manual/index.html">Read the manual</a>
+      <a class="btn primary" href="#start">Get started</a>
+      <a class="btn" href="#viewer">Try the live viewer</a>
+      <a class="btn" href="https://github.com/pierricgimmig/orbit" rel="noopener noreferrer">GitHub</a>
     </div>
+    <ul class="chips">
+      <li>Uprobes</li>
+      <li>Auto-profile</li>
+      <li>1 kHz sampling</li>
+      <li>Scheduler</li>
+      <li>Web viewer</li>
+    </ul>
   </div>
 
-  <div class="embed">
-    <iframe src="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler" title="Orbit viewer"
-            allow="fullscreen"></iframe>
-  </div>
-  <p class="caption">
-    <span>A real capture: Box3D, three physics threads, sampled at 1 kHz with scheduling and the service's own lanes.
-      Nothing is running behind it.</span>
-    <span>Drag to pan &middot; wheel over the ruler to zoom &middot; click a thread &middot; right-click a scope
-      &middot; Home to fit</span>
-  </p>
-  <p class="facts">{{facts}}</p>
-
-  <section class="section">
-    <h2>Python on one side, native + CUDA on the other &mdash; one timeline</h2>
-    <p class="sub">The one thing no other profiler does: dynamic instrumentation on <em>both</em> sides of the
-      Python boundary, in a single capture. Your Python functions, the C extension they call into, and the GPU
-      kernel it launches &mdash; aligned on one timeline.</p>
-
-    <div class="card" style="padding:1.25rem;">
-      <svg viewBox="0 0 900 250" role="img"
-           aria-label="One timeline with three aligned lanes: a Python function train_step, the C-extension matmul it calls, and the CUDA sgemm kernel that launches, each nested under the previous."
-           style="width:100%;height:auto;font-family:var(--mono);font-size:13px;">
-        <!-- time axis -->
-        <line x1="150" y1="28" x2="880" y2="28" stroke="var(--line)"/>
-        <text x="150" y="20" fill="var(--muted)">t</text>
-        <text x="864" y="20" fill="var(--muted)">&rarr;</text>
-
-        <!-- lane labels -->
-        <text x="16" y="66"  fill="var(--ink-soft)">Python</text>
-        <text x="16" y="122" fill="var(--ink-soft)">C&nbsp;extension</text>
-        <text x="16" y="178" fill="var(--ink-soft)">GPU&nbsp;(CUDA)</text>
-        <text x="16" y="230" fill="var(--muted)" font-size="11">source</text>
-
-        <!-- Python function scope (USDT / out-of-process) -->
-        <rect x="150" y="46" width="700" height="34" rx="4" fill="var(--accent-wash)" stroke="var(--accent)"/>
-        <text x="164" y="68" fill="var(--accent-deep)">train_step()  &mdash;  Python function (USDT probe)</text>
-
-        <!-- C extension scope (native dynamic instrumentation) -->
-        <rect x="250" y="102" width="520" height="34" rx="4" fill="#f6e6cf" stroke="#d98a2b"/>
-        <text x="264" y="124" fill="#8a5212">at::matmul  &mdash;  C extension (native hook)</text>
-
-        <!-- CUDA kernel (GPU) -->
-        <rect x="330" y="158" width="360" height="34" rx="4" fill="#dcf0dc" stroke="#3f9d3f"/>
-        <text x="344" y="180" fill="#256b25">sgemm&lt;&lt;&lt;&gt;&gt;&gt;  &mdash;  CUDA kernel</text>
-
-        <!-- alignment guides -->
-        <line x1="250" y1="80" x2="250" y2="102" stroke="var(--line)" stroke-dasharray="3 3"/>
-        <line x1="330" y1="136" x2="330" y2="158" stroke="var(--line)" stroke-dasharray="3 3"/>
-        <line x1="690" y1="192" x2="690" y2="136" stroke="var(--line)" stroke-dasharray="3 3"/>
-      </svg>
+  <figure class="stage hero-stage">
+    <div class="stage-frame">
+      <img class="poster" alt="" src="media/00-hero.jpg" width="1280" height="448">
+      <video id="clip-hero" width="1280" height="448" muted loop playsinline webkit-playsinline preload="none" poster="media/00-hero.jpg" data-src="media/00-hero.mp4" aria-label="Timeline beside the sampling flame graph, then the scheduler and nested scopes"></video>
     </div>
+    <figcaption>
+      <span>Hero montage · game_loop</span>
+      <button type="button" class="clip-toggle" aria-controls="clip-hero">Play</button>
+    </figcaption>
+  </figure>
 
-    <div class="cards" style="margin-top:1.25rem;">
-      <div class="card primary">
-        <p class="kicker">Zero code</p>
-        <h3>Attach and see it</h3>
-        <p>CPython built <code>--with-dtrace</code> carries USDT probes Orbit reads from outside the process &mdash;
-          your Python functions become scopes with no imports, no decorators, no restart. Where a build omits the
-          per-function probes, Orbit says so and falls back to sampling.</p>
+  <nav class="jumps" aria-label="On this page">
+    <a href="#capture">Capture</a>
+    <a href="#timeline">Timeline</a>
+    <a href="#time">Where time goes</a>
+    <a href="#systems">Systems</a>
+    <a href="#everywhere">Everywhere</a>
+    <a href="#how">How it works</a>
+  </nav>
+
+  <section class="section" id="capture">
+    <header class="section-head">
+      <h2>Capture</h2>
+      <p class="sub">Attach to a process that is already running. The service decides which functions to hook.</p>
+      <p class="manual-link"><a href="manual/capture.html">In the manual</a></p>
+    </header>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/01-attach-record.jpg" width="1280" height="416">
+          <video id="clip-01" width="1280" height="416" muted loop playsinline webkit-playsinline preload="none" poster="media/01-attach-record.jpg" data-src="media/01-attach-record.mp4" aria-label="The live timeline just after Record, with scheduler lanes and the capture timer"></video>
+        </div>
+        <figcaption>
+          <span>Attach &amp; record</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-01">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>Hit Record, and the timeline starts</h3>
+        <p>Pick the process, switch hooks to uprobes and turn on auto profile, then hit Record. The timeline streams live and the capture timer ticks.</p>
       </div>
-      <div class="card">
-        <p class="kicker">The half everyone misses</p>
-        <h3>Into the C extension</h3>
-        <p>The Python probes stop at the C boundary &mdash; and in AI workloads that is where the time goes. Orbit's
-          native instrumentation catches NumPy, PyTorch and the CUDA kernels they launch, so one capture shows the
-          whole stack: Python wrapper &rarr; C extension &rarr; GPU.</p>
+    </article>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/03-auto-profile.jpg" width="1280" height="800">
+          <video id="clip-03" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/03-auto-profile.jpg" data-src="media/03-auto-profile.mp4" aria-label="The Functions view listing the functions auto-profile hooked during the capture"></video>
+        </div>
+        <figcaption>
+          <span>Auto-profiling</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-03">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>The service picks what to hook</h3>
+        <p>Auto-profiling chooses functions from the samples. The status line counts hooked functions and scopes per second against the budget until the set converges, and the Functions view lists what was hooked. It ships with <a href="https://github.com/pierricgimmig/orbit/pull/97">pull request #97</a>, not in the service on main yet.</p>
       </div>
-      <div class="card">
-        <p class="kicker">For AI work</p>
-        <h3>One machine or a cluster</h3>
-        <p>Profile a training loop end to end &mdash; framework overhead, the native kernels, and the GPU &mdash;
-          on a single box or across a cluster on one timeline. The differentiator for ML performance work.</p>
-      </div>
-    </div>
+    </article>
   </section>
 
-  <section class="section">
-    <h2>What it does</h2>
-    <p class="sub">One timeline, three sources of truth about where the time goes.</p>
-    <div class="cards">
-      <div class="card primary">
-        <p class="kicker">The mode</p>
-        <h3>Dynamic instrumentation</h3>
-        <p>Pick a function in the sampling report, or search for it, and hook it: entry and exit become a scope on
-          the thread that called it, with its duration, count and distribution in the Live tab. Kernel uprobes, no
-          rebuild of the target.</p>
-        <a class="more" href="manual/index.html#5-selection-and-focus">Hook from the report &rarr;</a>
+  <section class="section" id="timeline">
+    <header class="section-head">
+      <h2>Explore the timeline</h2>
+      <p class="sub">Move through a live capture, and light up a scope by name.</p>
+      <p class="manual-link"><a href="manual/timeline.html">In the manual</a></p>
+    </header>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/02-timeline-navigation.jpg" width="1280" height="416">
+          <video id="clip-02" width="1280" height="416" muted loop playsinline webkit-playsinline preload="none" poster="media/02-timeline-navigation.jpg" data-src="media/02-timeline-navigation.mp4" aria-label="Cursor-anchored zoom, pan, and tooltips on nested hooked scopes"></video>
+        </div>
+        <figcaption>
+          <span>Live timeline</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-02">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>Zoom from the cursor</h3>
+        <p>Ctrl+wheel zooms around the cursor, drag pans, and W, S, A and D do the same from the keyboard. Hover a scope for a tooltip on the nested hooked functions.</p>
       </div>
-      <div class="card">
-        <p class="kicker">Underneath it</p>
-        <h3>Sampling</h3>
-        <p>Callstacks at a fixed rate on every thread, DWARF or frame-pointer unwound, symbolized from the binaries
-          and their debug files. Flat report, top-down and bottom-up trees, a flame graph, and reports scoped to a
-          selection, a thread, or every instance of one scope.</p>
-        <a class="more" href="manual/index.html#6-the-report-panel">The report panel &rarr;</a>
+    </article>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/11-scope-search.jpg" width="1280" height="416">
+          <video id="clip-11" width="1280" height="416" muted loop playsinline webkit-playsinline preload="none" poster="media/11-scope-search.jpg" data-src="media/11-scope-search.mp4" aria-label="Scope search keeping matching scopes lit and greying out the rest"></video>
+        </div>
+        <figcaption>
+          <span>Scope search</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-11">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>Keep one name lit</h3>
+        <p>Typing in the scope search box leaves every matching scope lit and greys out the rest. Escape clears the search.</p>
       </div>
-      <div class="card">
-        <p class="kicker">When you know the name</p>
-        <h3>Manual instrumentation</h3>
-        <p>One header, one static library: <code>orbit_start</code> / <code>orbit_stop</code>, async spans, links,
-          values. Rust, C, C++ and Python. Anything that can run a command uses <code>orbit-scope</code>.</p>
-        <a class="more" href="manual/index.html#8-manual-instrumentation">The API &rarr;</a>
-      </div>
-    </div>
+    </article>
   </section>
 
-  <section class="section">
-    <h2>Processes, machines, platforms</h2>
-    <p class="sub">Every process the service sees, on one timeline with the scheduler under them. A machine row per
-      service, from any host on the network. The service is one static binary; the viewer is a web page.</p>
+  <section class="section" id="time">
+    <header class="section-head">
+      <h2>Where time goes</h2>
+      <p class="sub">From a sampling flame graph down to the instructions in the running binary.</p>
+      <p class="manual-link"><a href="manual/time.html">In the manual</a></p>
+    </header>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/05-flame-graph.jpg" width="1280" height="688">
+          <video id="clip-05" width="1280" height="688" muted loop playsinline webkit-playsinline preload="none" poster="media/05-flame-graph.jpg" data-src="media/05-flame-graph.mp4" aria-label="Sampling flame graph filling the report beside the timeline"></video>
+        </div>
+        <figcaption>
+          <span>Sampling flame graph</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-05">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>See the stack, then zoom into it</h3>
+        <p>The sampling flame graph names the frames. Click a frame to highlight that function on the timeline. Double-click to zoom into its subtree.</p>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/06-callstacks.jpg" width="1280" height="768">
+          <video id="clip-06" width="1280" height="768" muted loop playsinline webkit-playsinline preload="none" poster="media/06-callstacks.jpg" data-src="media/06-callstacks.mp4" aria-label="Top-down call tree with inclusive and self percentages, then the bottom-up tree"></video>
+        </div>
+        <figcaption>
+          <span>Top-down &amp; bottom-up</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-06">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>Inclusive time, then the hottest leaves</h3>
+        <p>The top-down tree shows inclusive, self and of-parent percentages — run_frame at about 88% inclusive — and can collapse or expand all. The bottom-up tree walks from the hottest leaves back to their callers.</p>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/07-live-table.jpg" width="1280" height="800">
+          <video id="clip-07" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/07-live-table.jpg" data-src="media/07-live-table.mp4" aria-label="Live statistics table updating during capture, then a duration histogram for simulate_physics"></video>
+        </div>
+        <figcaption>
+          <span>Live statistics</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-07">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>Numbers that move while you record</h3>
+        <p>The Live table updates as events stream in: count, total, average, min, max and standard deviation for each scope. Click a row, such as simulate_physics, for its duration histogram and a highlight on the timeline.</p>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/08-selection-report.jpg" width="1280" height="768">
+          <video id="clip-08" width="1280" height="768" muted loop playsinline webkit-playsinline preload="none" poster="media/08-selection-report.jpg" data-src="media/08-selection-report.mp4" aria-label="Right-drag selecting a time range so the report recomputes for that window"></video>
+        </div>
+        <figcaption>
+          <span>Time-range selection</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-08">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>A report for just that window</h3>
+        <p>Right-drag selects a time range across every thread, and the flame graph and top-down tree recompute for that window. Left-drag on a thread’s sample bar limits the report to that thread.</p>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/10-code-view.jpg" width="1280" height="800">
+          <video id="clip-10" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/10-code-view.jpg" data-src="media/10-code-view.mp4" aria-label="Disassembly of simulate_physics interleaved with game_loop.c source"></video>
+        </div>
+        <figcaption>
+          <span>Disassembly &amp; source</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-10">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>Source and disassembly, together</h3>
+        <p>Right-click a function and open disassembly and source. The service disassembles it from the running binary and interleaves the source lines. Switch among Source, Disassembly and Both.</p>
+      </div>
+    </article>
+  </section>
+
+  <section class="section" id="systems">
+    <header class="section-head">
+      <h2>Systems view</h2>
+      <p class="sub">Where the thread ran, and what the profiler itself is doing.</p>
+      <p class="manual-link"><a href="manual/systems.html">In the manual</a></p>
+    </header>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/04-scheduler.jpg" width="1280" height="416">
+          <video id="clip-04" width="1280" height="416" muted loop playsinline webkit-playsinline preload="none" poster="media/04-scheduler.jpg" data-src="media/04-scheduler.mp4" aria-label="Scheduler track with one lane per core, thread focus, and Running and Sleeping states"></video>
+        </div>
+        <figcaption>
+          <span>Scheduler &amp; thread states</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-04">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>One lane per core</h3>
+        <p>The scheduler track shows the process’s slices on each core, with a tooltip on a slice. Click a thread to focus it — the others grey out — and the thread-state strip shows Running and Sleeping.</p>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/09-service-health.jpg" width="1280" height="768">
+          <video id="clip-09" width="1280" height="768" muted loop playsinline webkit-playsinline preload="none" poster="media/09-service-health.jpg" data-src="media/09-service-health.mp4" aria-label="orbit-service profiling itself: CPU, RSS, events per pass and ring lanes"></video>
+        </div>
+        <figcaption>
+          <span>Service self-profile</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-09">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>The profiler, profiling itself</h3>
+        <p>orbit-service instruments itself. CPU percent, RSS, events per pass and the ring lanes sit with its own scopes, and a cursor line reads them across the capture.</p>
+      </div>
+    </article>
+  </section>
+
+  <section class="section" id="everywhere">
+    <header class="section-head">
+      <h2>Works everywhere</h2>
+      <p class="sub">The same capture, in another colour scheme, on a phone, or from a Chrome trace.</p>
+      <p class="manual-link"><a href="manual/everywhere.html">In the manual</a></p>
+    </header>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/12-themes.jpg" width="1280" height="800">
+          <video id="clip-12" width="1280" height="800" muted loop playsinline webkit-playsinline preload="none" poster="media/12-themes.jpg" data-src="media/12-themes.mp4" aria-label="Switching the viewer colour scheme through Dracula, Solarized Light and Nord"></video>
+        </div>
+        <figcaption>
+          <span>Colour schemes</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-12">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>Recolour the whole viewer</h3>
+        <p>More, then Color scheme, changes the viewer, the timeline and the flame graph together. The recording shows Dracula, Solarized Light and Nord.</p>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="stage phone">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/13-mobile-compact.jpg" width="488" height="1000">
+          <video id="clip-13" width="488" height="1000" muted loop playsinline webkit-playsinline preload="none" poster="media/13-mobile-compact.jpg" data-src="media/13-mobile-compact.mp4" aria-label="The live viewer at phone width, with the report and flame graph open"></video>
+        </div>
+        <figcaption>
+          <span>Phone layout</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-13">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>The same viewer, at phone width</h3>
+        <p>At 390 pixels wide the layout tightens: zoom and pan the timeline, then open the report panel and its flame graph.</p>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/14-chrome-trace-import.jpg" width="1280" height="512">
+          <video id="clip-14" width="1280" height="512" muted loop playsinline webkit-playsinline preload="none" poster="media/14-chrome-trace-import.jpg" data-src="media/14-chrome-trace-import.mp4" aria-label="Opening a Chrome Trace Event JSON file onto the Orbit timeline"></video>
+        </div>
+        <figcaption>
+          <span>Chrome trace</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-14">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>Open a trace you already have</h3>
+        <p>Open a Chrome Trace Event JSON file — Perfetto traces too. Processes, threads, nested slices, counters and flows land on the same timeline.</p>
+      </div>
+    </article>
+  </section>
+
+  <section class="section" id="how">
+    <header class="section-head">
+      <h2>How it works</h2>
+      <p class="sub">A service captures the target. A live stream carries it to the viewer.</p>
+      <p class="manual-link"><a href="manual/index.html#what-runs-where">In the manual</a></p>
+    </header>
+    <ol class="pipeline">
+      <li>
+        <p class="kicker">Target process</p>
+        <h3>Already running</h3>
+        <p>A native binary. Orbit does not rebuild it and does not relaunch it.</p>
+      </li>
+      <li>
+        <p class="kicker">orbit-service</p>
+        <h3>Uprobes, sampling, scheduler</h3>
+        <p>Dynamic instrumentation through uprobes, call stacks at 1&nbsp;kHz, and scheduler, context-switch and thread-state tracks. Auto-profile, in <a href="https://github.com/pierricgimmig/orbit/pull/97">pull request #97</a>, picks what to hook and prunes it to a scopes-per-second budget.</p>
+      </li>
+      <li>
+        <p class="kicker">Web viewer</p>
+        <h3>Live, in the browser</h3>
+        <p>A Rust and WASM page (egui, wgpu). Timeline, flame graph, call trees, live table, selection reports, and disassembly next to source.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="section" id="viewer">
+    <header class="section-head">
+      <h2>Try the live viewer</h2>
+      <p class="sub">A saved capture, opened in the page. Nothing is running behind it.</p>
+    </header>
+    <div class="embed">
+      <iframe loading="lazy" src="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler" title="Orbit live viewer with a saved capture" allow="fullscreen"></iframe>
+    </div>
+    <p class="caption">
+      <span>Drag to pan · wheel over the ruler to zoom · click a thread · right-click a scope · Home to fit</span>
+      <a href="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open it on its own</a>
+    </p>
+    <p class="facts">{{facts}}</p>
+  </section>
+
+  <section class="section" id="start">
+    <header class="section-head">
+      <h2>Get started</h2>
+      <p class="sub">One static binary serves the viewer and the API. The manual covers privileges, capture files and instrumentation.</p>
+    </header>
     <div class="two">
       <div class="card">
         <h3>Run it</h3>
-        <pre><code># install (Linux / macOS, no package manager)
+        <pre><code># install (Linux / macOS)
 curl -fsSL https://orbitprofiler.dev/install.sh | sh
 
 orbit-service --serve 44766
-# Orbit live viewer: http://127.0.0.1:44766/
-#                    http://192.168.1.10:44766/</code></pre>
-        <p>The banner prints the LAN address; open it from any machine. Sampling needs
-          <code>perf_event_paranoid</code> at -1 or <code>CAP_PERFMON</code>; dynamic instrumentation needs
-          <code>CAP_PERFMON</code>.</p>
-        <a class="more" href="manual/live-viewer.html">Serving the viewer &rarr;</a>
+# http://127.0.0.1:44766/</code></pre>
+        <p>Sampling this process works at <code>perf_event_paranoid</code> 2 or below. The scheduler needs 0 or below. Root, <code>CAP_PERFMON</code> or <code>CAP_SYS_ADMIN</code> bypass the sysctl. Uprobes still need <code>CAP_SYS_ADMIN</code>.</p>
+        <a class="more" href="manual/index.html#quick-start">Quick start in the manual</a>
       </div>
       <div class="card">
         <h3>Where it runs</h3>
-        <p>Linux on x86-64 and arm64 today, as one static binary. Windows and macOS capture are in progress. The
-          viewer runs wherever there is a browser, and a saved capture opens as a file, like the one above.</p>
-        <p>Captures are Parquet in a zip; a slice of one is cut on disk without reading the rest, and pandas opens
-          them with nothing to install.</p>
-        <a class="more" href="manual/index.html#7-capture-files">Capture files &rarr;</a>
+        <p>Linux on x86-64 and arm64 today, as one static binary. The viewer runs wherever there is a browser, and a saved capture opens as a file, like the one above.</p>
+        <p>Manual instrumentation — one header, Rust, C, C++ and Python — is in the manual, alongside the HTTP API.</p>
+        <a class="more" href="manual/index.html#instrument-your-code">Instrumentation and the HTTP API</a>
       </div>
     </div>
   </section>
 
-  <p class="keys">Site built {{date}} at commit {{commit}}. The embedded capture is a <code>.orbit.stream</code>: the
-    frames a connecting viewer would receive, saved as a file.</p>
+  <p class="keys">Site built {{date}} at commit {{commit}}. Recordings are of the live viewer at <code>da8aa05c</code>, profiling <code>game_loop</code>. The embedded capture is a <code>.orbit.stream</code>.</p>
 </main>
 <footer class="site">
-  <span>Orbit &middot; the Rust port</span>
-  <a href="blog/index.html">Dev blog</a>
-  <a href="e2e/report.html">Latest test report</a>
-  <a href="todo.html">Roadmap</a>
+  <span>Orbit</span>
+  <a href="manual/index.html">Manual</a>
+  <a href="https://github.com/pierricgimmig/orbit" rel="noopener noreferrer">GitHub</a>
+  <a href="blog/index.html">Blog</a>
+  <a href="e2e/report.html">Test report</a>
 </footer>
-<button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
-<script>(function(){var b=document.getElementById("theme-toggle");if(!b)return;function cur(){return document.documentElement.getAttribute("data-theme")||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
+<script src="clips.js"></script>
+<script>
+(function () {
+  var b = document.getElementById("theme-toggle");
+  if (!b) return;
+  function cur() { return document.documentElement.getAttribute("data-theme") || "light"; }
+  function lab() { b.textContent = cur() === "dark" ? "Light" : "Dark"; }
+  lab();
+  b.addEventListener("click", function () {
+    var n = cur() === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", n);
+    try { localStorage.setItem("orbit-theme", n); } catch (e) {}
+    lab();
+  });
+})();
+</script>
 </body>
 </html>

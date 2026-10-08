@@ -2265,7 +2265,8 @@ def main():
 def write_report(path, results, perf, shots_dir):
     """The run as a Markdown page: results, the numbers the scenarios
     measured, and every screenshot with the scenario that took it. This and
-    docs/manual/features.md are what an agent reads to write the manual."""
+    docs/manual/features.md are the catalogue beside the user guide in
+    docs/manual/index.md."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     stamp = time.strftime("%Y-%m-%d %H:%M")
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO,

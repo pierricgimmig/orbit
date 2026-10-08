@@ -31,6 +31,10 @@ third_party/py-spy/
 # The built web site (tools/site/build_site.py)
 /site/
 
+# Media-kit build cache and the local Playwright install
+tools/media-kit/.cache/
+tools/media-kit/node/node_modules/
+
 # Packaged macOS service and manual instrumentation SDK
 /dist/macos/
 /dist/macos-universal/

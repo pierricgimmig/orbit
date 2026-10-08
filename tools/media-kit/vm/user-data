@@ -1,0 +1,8 @@
+#cloud-config
+users:
+  - name: tester
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPqZzeP4hRoxm5Bw4NfkGPq5mDiKkbpfwc0FCEYcNxET autoinstr-vm
+ssh_pwauth: false
