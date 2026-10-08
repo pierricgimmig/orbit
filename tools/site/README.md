@@ -47,7 +47,9 @@ and `Cross-Origin-Embedder-Policy: require-corp`. `serve.py` sends them.
 GitHub Pages cannot, so every document loads `coi-serviceworker.js`, which
 adds the headers and reloads once. If the worker cannot install, the viewer
 stays on its sequential lane walk and still draws the capture. A page that
-is already isolated does not register the worker.
+is already isolated does not register the worker. Pages that do not already
+name an icon get a relative `favicon.png` link; without one, the browser
+requests `/favicon.ico` from the host root and 404s on a project site.
 
 `.github/workflows/pages.yml` builds the viewer pack, then this script with
 the saved stream `docs/blog/captures/ghosts-on.orbit.stream` (CI has no

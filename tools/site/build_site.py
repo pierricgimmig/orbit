@@ -197,38 +197,47 @@ def capture_stream(bundle, port):
 # ---------------------------------------------------------------------- site
 
 
-def coi_src_for(page_path, out):
-    """Script URL of the isolation worker relative to an HTML file."""
+def site_href(page_path, out, filename):
+    """A URL for a site-root file, relative to this page. Works under
+    /orbit/ and at a domain root; a root-relative /favicon.ico does not,
+    and without a link the browser asks the host root for one."""
     rel_dir = os.path.dirname(os.path.relpath(page_path, out))
     if rel_dir in ("", "."):
-        return "coi-serviceworker.js"
+        return filename
     depth = rel_dir.count(os.sep) + 1
-    return "../" * depth + "coi-serviceworker.js"
+    return "../" * depth + filename
 
 
-def inject_coi(html, src):
-    if "coi-serviceworker.js" in html:
-        return html
-    tag = f'<script src="{src}"></script>\n'
-    # Before </head>, so a theme prepaint script already in <head> stays first.
+def inject_before_head_end(html, snippet):
     at = html.lower().find("</head>")
     if at == -1:
         return html
-    return html[:at] + tag + html[at:]
+    return html[:at] + snippet + html[at:]
 
 
 def stamp_coi(out):
-    """Every document registers the isolation worker. Generated pages, the
-    copied blog and essays, and the viewer all get the same tag, with a
-    relative src so it resolves under /orbit/ and at a domain root."""
+    """Every document registers the isolation worker and names the site
+    icon. Generated pages, the copied blog and essays, and the viewer all
+    get relative URLs, so they resolve under /orbit/ and at a domain root.
+    The icon link is what stops the browser requesting /favicon.ico from
+    the host root (a 404 on a project site)."""
+    has_icon = re.compile(r"""rel\s*=\s*["'](?:shortcut icon|icon|apple-touch-icon)["']""", re.IGNORECASE)
     for root, _dirs, files in os.walk(out):
         for fn in files:
             if not fn.endswith(".html"):
                 continue
             path = os.path.join(root, fn)
-            html = open(path, encoding="utf-8").read()
-            updated = inject_coi(html, coi_src_for(path, out))
-            if updated != html:
+            html_text = open(path, encoding="utf-8").read()
+            updated = html_text
+            if "coi-serviceworker.js" not in updated:
+                src = site_href(path, out, "coi-serviceworker.js")
+                updated = inject_before_head_end(updated, f'<script src="{src}"></script>\n')
+            if not has_icon.search(updated):
+                src = site_href(path, out, "favicon.png")
+                updated = inject_before_head_end(
+                    updated, f'<link rel="icon" type="image/png" href="{src}">\n'
+                )
+            if updated != html_text:
                 open(path, "w", encoding="utf-8").write(updated)
 
 
