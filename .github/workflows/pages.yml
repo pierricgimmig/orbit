@@ -1,0 +1,89 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Publishes tools/site to GitHub Pages (Source: GitHub Actions).
+# The tree uses relative URLs, so it works at /<repo>/ and at a domain root.
+# configure-pages' base_path is intentionally unused: baking /orbit/ in
+# would break a later custom domain. No CNAME is written.
+
+name: pages
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'tools/site/**'
+      - 'tools/install/install.sh'
+      - 'docs/**'
+      - 'src/OrbitLiveViewer/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time. Do not cancel a deploy that has already started.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build site
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Rust toolchains
+        uses: actions/cache@v4
+        with:
+          path: ~/.rustup/toolchains
+          key: rustup-pages-${{ runner.os }}-${{ runner.arch }}-1.88.0-nightly-2025-11-15
+
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/OrbitLiveViewer/crates/orbit-live-viewer
+          prefix-key: pages-wasm-nightly-2025-11-15
+          cache-on-failure: true
+
+      - name: Cache wasm-bindgen-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-0.2.100-${{ runner.os }}-${{ runner.arch }}
+
+      # Nightly + build-std + wasm-bindgen, into viewer-dist/. The stable
+      # wasm32 compile in live-viewer.yml does not produce this pack.
+      - name: Build viewer pack
+        run: src/OrbitLiveViewer/build_wasm.sh
+
+      # No live Box3D capture in CI. The saved stream is the front-page
+      # capture and one of the blog clips.
+      - name: Build site
+        run: python3 tools/site/build_site.py --stream docs/blog/captures/ghosts-on.orbit.stream
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -11,6 +11,12 @@ cross-origin isolation headers. This adds them, the right MIME type for
 `.wasm`, byte ranges (so a phone can play the landing-page videos), and no
 caching, so a rebuilt site shows up on reload.
 
+GitHub Pages cannot send those headers. The built site's
+`coi-serviceworker.js` adds them and reloads once. This server already
+isolates the document, so the worker sees `crossOriginIsolated` and does
+not register. Either way the pool starts when the browser allows it, and
+the viewer stays single-threaded when it does not.
+
     python3 tools/site/serve.py --dir site --port 8081
 """
 
