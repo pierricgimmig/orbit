@@ -1,3 +1,7 @@
+<!-- Copyright (c) 2026 The Orbit Authors. All rights reserved.
+     Use of this source code is governed by a BSD-style license that can be
+     found in the LICENSE file. -->
+
 # The project web site
 
 `build_site.py` assembles a static directory: the viewer pack, one capture
@@ -32,10 +36,22 @@ Open, Clear, Save, the process row, Modules, and hooking.
 
 ## Hosting
 
-The output is plain files. Any static host works; a host that cannot set
-`Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: require-corp` (GitHub Pages, for one) still
-works, with the viewer's lane walk running single-threaded.
+The output is plain files. Links and asset URLs are relative, so the same
+tree works at a domain root and under a project-site prefix (`/orbit/` on
+GitHub Pages). Nothing is baked as `/manual/...` or `/viewer/...`, and there
+is no `CNAME`: a custom domain can be pointed at Pages later without a
+rebuild.
+
+The viewer's worker pool needs `Cross-Origin-Opener-Policy: same-origin`
+and `Cross-Origin-Embedder-Policy: require-corp`. `serve.py` sends them.
+GitHub Pages cannot, so every document loads `coi-serviceworker.js`, which
+adds the headers and reloads once. If the worker cannot install, the viewer
+stays on its sequential lane walk and still draws the capture. A page that
+is already isolated does not register the worker.
+
+`.github/workflows/pages.yml` builds the viewer pack, then this script with
+the saved stream `docs/blog/captures/ghosts-on.orbit.stream` (CI has no
+process to capture), and deploys the `site/` tree to Pages.
 
 `site/` is ignored by git; the inputs are.
 

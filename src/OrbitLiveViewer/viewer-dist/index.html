@@ -1,4 +1,7 @@
 <!DOCTYPE html>
+<!-- Copyright (c) 2026 The Orbit Authors. All rights reserved.
+     Use of this source code is governed by a BSD-style license that can be
+     found in the LICENSE file. -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -100,6 +103,10 @@
     // going away; on a static site with no service the request just fails.
     function relayLog(level, message) {
       try {
+        // A static capture (?capture=) has no service. /api/log would 404,
+        // and the leading slash would leave a project-site prefix (/orbit/)
+        // and hit the host root.
+        if (new URLSearchParams(location.search).get("capture")) return;
         const text = String((message && (message.stack || message.message)) || message).slice(0, 4000);
         const body = JSON.stringify({ page: "js", lines: [{ t_ms: Date.now(), level, target: "index.html", message: text }] });
         navigator.sendBeacon("/api/log", body);

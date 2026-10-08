@@ -34,6 +34,15 @@ sys.path.insert(0, os.path.join(REPO, "tools", "e2e"))
 
 VIEWER_DIST = os.path.join(REPO, "src/OrbitLiveViewer/viewer-dist")
 
+# Blog posts link up out of docs/blog/ (../rust-port-plan.html and the
+# others). Copied to the site root, those relative links still resolve.
+ESSAYS = (
+    "rust-port-plan.html",
+    "rust-service-port.html",
+    "bazel-port.html",
+    "uprobe-stop.html",
+)
+
 
 # ------------------------------------------------------------------ markdown
 
@@ -188,6 +197,69 @@ def capture_stream(bundle, port):
 # ---------------------------------------------------------------------- site
 
 
+def coi_src_for(page_path, out):
+    """Script URL of the isolation worker relative to an HTML file."""
+    rel_dir = os.path.dirname(os.path.relpath(page_path, out))
+    if rel_dir in ("", "."):
+        return "coi-serviceworker.js"
+    depth = rel_dir.count(os.sep) + 1
+    return "../" * depth + "coi-serviceworker.js"
+
+
+def inject_coi(html, src):
+    if "coi-serviceworker.js" in html:
+        return html
+    tag = f'<script src="{src}"></script>\n'
+    # Before </head>, so a theme prepaint script already in <head> stays first.
+    at = html.lower().find("</head>")
+    if at == -1:
+        return html
+    return html[:at] + tag + html[at:]
+
+
+def stamp_coi(out):
+    """Every document registers the isolation worker. Generated pages, the
+    copied blog and essays, and the viewer all get the same tag, with a
+    relative src so it resolves under /orbit/ and at a domain root."""
+    for root, _dirs, files in os.walk(out):
+        for fn in files:
+            if not fn.endswith(".html"):
+                continue
+            path = os.path.join(root, fn)
+            html = open(path, encoding="utf-8").read()
+            updated = inject_coi(html, coi_src_for(path, out))
+            if updated != html:
+                open(path, "w", encoding="utf-8").write(updated)
+
+
+_ROOT_RELATIVE = re.compile(
+    r"""(?:href|src|srcset|action)\s*=\s*(['"])/(?!/)"""
+    r"""|url\(\s*(['"]?)/(?!/)""",
+    re.IGNORECASE,
+)
+
+
+def assert_no_root_relative(out):
+    """A root-relative URL (/manual/...) is the host root on a custom domain
+    and the user/org root on a project site. Neither is this site."""
+    bad = []
+    for root, _dirs, files in os.walk(out):
+        for fn in files:
+            if not fn.endswith((".html", ".css")):
+                continue
+            path = os.path.join(root, fn)
+            text = open(path, encoding="utf-8", errors="replace").read()
+            for i, line in enumerate(text.splitlines(), 1):
+                if _ROOT_RELATIVE.search(line):
+                    rel = os.path.relpath(path, out)
+                    bad.append(f"{rel}:{i}: {line.strip()[:180]}")
+    if bad:
+        raise SystemExit(
+            "root-relative URLs in the site (they break /orbit/ and a domain root):\n"
+            + "\n".join(bad)
+        )
+
+
 def build(out, stream_path, bundle, name, port, service=False):
     os.makedirs(out, exist_ok=True)
     # The viewer pack, as built (build_wasm.sh). Skipped in --service mode:
@@ -195,8 +267,11 @@ def build(out, stream_path, bundle, name, port, service=False):
     # there instead of bundling a second 8+ MB copy.
     if not service:
         shutil.copytree(VIEWER_DIST, os.path.join(out, "viewer"), dirs_exist_ok=True)
-    for asset in ("site.css", "logo.png", "favicon.png"):
+    for asset in ("site.css", "logo.png", "favicon.png", "coi-serviceworker.js"):
         shutil.copy(os.path.join(HERE, asset), os.path.join(out, asset))
+    # Actions deploys the artifact as-is. .nojekyll is a no-op there and
+    # keeps a later switch to the branch source from dropping files.
+    open(os.path.join(out, ".nojekyll"), "w").close()
     # The curl installer, served at the site root: `curl .../install.sh | sh`.
     shutil.copy(os.path.join(REPO, "tools/install/install.sh"), os.path.join(out, "install.sh"))
     # The front-page capture.
@@ -213,6 +288,10 @@ def build(out, stream_path, bundle, name, port, service=False):
     # Blog, screenshots, manual, test report.
     shutil.copytree(os.path.join(REPO, "docs/blog"), os.path.join(out, "blog"), dirs_exist_ok=True)
     shutil.copytree(os.path.join(REPO, "docs/screenshots"), os.path.join(out, "screenshots"), dirs_exist_ok=True)
+    for name_html in ESSAYS:
+        src = os.path.join(REPO, "docs", name_html)
+        if os.path.exists(src):
+            shutil.copy(src, os.path.join(out, name_html))
     os.makedirs(os.path.join(out, "manual"), exist_ok=True)
     os.makedirs(os.path.join(out, "e2e"), exist_ok=True)
     pages = [
@@ -247,7 +326,12 @@ def build(out, stream_path, bundle, name, port, service=False):
     with open(os.path.join(out, "index.html"), "w") as handle:
         handle.write(index)
     if service:
+        # The service serves this tree at /site and its own viewer at /.
+        # Those embeds are origin-root on purpose; the Pages build is not.
         _point_embeds_at_service(out)
+    stamp_coi(out)
+    if not service:
+        assert_no_root_relative(out)
     return capture_file, facts
 
 
@@ -287,6 +371,7 @@ def main():
         raise SystemExit(f"no viewer pack in {VIEWER_DIST}: run src/OrbitLiveViewer/build_wasm.sh first")
     capture_file, facts = build(args.out, args.stream, args.bundle, args.name, args.port, args.service)
     print(f"site in {args.out}: front page opens captures/{capture_file} ({facts})")
+    print("isolation: coi-serviceworker.js adds COOP/COEP; sequential if it cannot")
     print(f"serve it:  python3 tools/site/serve.py --dir {args.out} --port 8081")
 
 
