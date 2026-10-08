@@ -2,7 +2,8 @@
 
 `build_site.py` assembles a static directory: the viewer pack, one capture
 the front page opens with no service behind it, the manual (rendered from
-`docs/manual/*.md`), the blog, the screenshots and the latest e2e report.
+`docs/manual/*.md` except the agent catalogue `features.md`), the blog,
+the screenshots and the latest e2e report.
 `serve.py` serves it with the cross-origin isolation headers the viewer's
 worker pool needs. Standard library only.
 
@@ -38,6 +39,24 @@ The output is plain files. Any static host works; a host that cannot set
 works, with the viewer's lane walk running single-threaded.
 
 `site/` is ignored by git; the inputs are.
+
+## Landing-page recordings
+
+The front page (`index.html`) plays short clips of the live viewer from
+`tools/site/media/`. Those files are published from the media kit; they are
+not edited by hand.
+
+```bash
+cd tools/media-kit
+./generate.sh --ref <git-ref> --out /tmp/orbit-media   # service + VM + scenes
+python3 publish_site_media.py --from /tmp/orbit-media  # MP4 + JPEG posters
+```
+
+`publish_site_media.py` writes into `tools/site/media/` (H.264, no audio, max
+width 1280, JPEG posters). It leaves GIFs, WebM and the kit's `raw/` directory
+behind, and it crops and trims each clip from the table in that script.
+Do not point `generate.sh --out` at `tools/site/media`. Then rebuild
+this site as usual. The kit's own README is `tools/media-kit/README.md`.
 
 
 ## Served by orbit-service (dev only)

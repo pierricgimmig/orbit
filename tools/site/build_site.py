@@ -60,6 +60,21 @@ def render_markdown(text):
 
     while i < len(lines):
         line = lines[i]
+        if line.startswith("@clip "):
+            flush_para()
+            close_list()
+            out.append(clip_html(line[6:].strip()))
+            i += 1
+            continue
+        if line.startswith(">"):
+            flush_para()
+            close_list()
+            bits = []
+            while i < len(lines) and lines[i].startswith(">"):
+                bits.append(lines[i][1:].strip())
+                i += 1
+            out.append(f'<aside class="callout"><p>{inline(" ".join(bits))}</p></aside>')
+            continue
         if line.startswith("```"):
             flush_para()
             close_list()
@@ -120,6 +135,53 @@ def render_markdown(text):
     return "\n".join(out)
 
 
+# Short clips already published under tools/site/media/. Width and height
+# are the files' pixel size; the poster holds the box at that aspect.
+CLIP_SIZE = {
+    "01-attach-record": (1280, 416),
+    "02-timeline-navigation": (1280, 416),
+    "03-auto-profile": (1280, 800),
+    "04-scheduler": (1280, 416),
+    "05-flame-graph": (1280, 688),
+    "06-callstacks": (1280, 768),
+    "07-live-table": (1280, 800),
+    "08-selection-report": (1280, 768),
+    "09-service-health": (1280, 768),
+    "10-code-view": (1280, 800),
+    "11-scope-search": (1280, 416),
+    "12-themes": (1280, 800),
+    "13-mobile-compact": (488, 1000),
+    "14-chrome-trace-import": (1280, 512),
+}
+
+
+def clip_html(spec):
+    """`@clip stem | caption | aria label` → the landing page's stage."""
+    parts = [p.strip() for p in spec.split("|")]
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        raise SystemExit(f"@clip needs 'stem | caption': {spec}")
+    stem, caption = parts[0], parts[1]
+    label = parts[2] if len(parts) > 2 and parts[2] else caption
+    if stem not in CLIP_SIZE:
+        raise SystemExit(f"unknown @clip {stem}")
+    width, height = CLIP_SIZE[stem]
+    phone = " phone" if stem.startswith("13-") else ""
+    vid = f"clip-{stem}"
+    src = f"../media/{stem}"
+    return (
+        f'<figure class="stage{phone}">'
+        f'<div class="stage-frame">'
+        f'<img class="poster" alt="" src="{src}.jpg" width="{width}" height="{height}">'
+        f'<video id="{vid}" width="{width}" height="{height}" muted loop playsinline '
+        f'webkit-playsinline preload="none" poster="{src}.jpg" data-src="{src}.mp4" '
+        f'aria-label="{html.escape(label)}"></video>'
+        f'</div>'
+        f'<figcaption><span>{html.escape(caption)}</span>'
+        f'<button type="button" class="clip-toggle" aria-controls="{vid}">Play</button>'
+        f'</figcaption></figure>'
+    )
+
+
 def slug(text):
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
@@ -133,6 +195,48 @@ def inline(text):
     return text
 
 
+MANUAL_NAV = [
+    ("index.html", "Quick start"),
+    ("capture.html", "Capture"),
+    ("timeline.html", "Timeline"),
+    ("time.html", "Where time goes"),
+    ("systems.html", "Systems"),
+    ("everywhere.html", "Everywhere"),
+    ("troubleshooting.html", "Troubleshooting"),
+    ("keys.html", "Keys and mouse"),
+]
+
+
+def manual_toc(current):
+    rows = []
+    for href, label in MANUAL_NAV:
+        current_attr = ' aria-current="page"' if href == current else ""
+        rows.append(f'<a href="{href}"{current_attr}>{html.escape(label)}</a>')
+    return "\n".join(rows)
+
+
+def on_this_page(body):
+    heads = re.findall(r'<h2 id="([^"]+)">(.*?)</h2>', body)
+    if not heads:
+        return ""
+    links = []
+    for anchor, title in heads:
+        text = re.sub(r"<[^>]+>", "", title)
+        links.append(f'<a href="#{anchor}">{text}</a>')
+    return '<nav class="onpage" aria-label="On this page">' + "".join(links) + "</nav>"
+
+
+def manual_page(title, body, current):
+    template = open(os.path.join(HERE, "manual.html")).read()
+    if "</h1>" in body:
+        body = body.replace("</h1>", "</h1>\n" + on_this_page(body), 1)
+    return (template.replace("{{title}}", html.escape(title))
+            .replace("{{root}}", "..")
+            .replace("{{body}}", body)
+            .replace("{{toc}}", manual_toc(current))
+            .replace("{{nav}}", NAV.replace("{{root}}", "..")))
+
+
 def page(title, body, root=".", nav=True):
     template = open(os.path.join(HERE, "page.html")).read()
     return (template.replace("{{title}}", html.escape(title))
@@ -141,11 +245,13 @@ def page(title, body, root=".", nav=True):
             .replace("{{nav}}", NAV.replace("{{root}}", root) if nav else ""))
 
 
-NAV = ('<nav class="site"><a class="brand" href="{{root}}/index.html"><img src="{{root}}/logo.png" alt="Orbit"></a>'
+NAV = ('<nav class="site" aria-label="Site"><a class="brand" href="{{root}}/index.html"><img src="{{root}}/logo.png" alt="Orbit"></a>'
+       '<a href="{{root}}/index.html">Home</a>'
        '<a href="{{root}}/manual/index.html">Manual</a>'
-       '<a href="{{root}}/blog/index.html">Blog</a>'
-       '<a href="{{root}}/e2e/report.html">Test report</a>'
+       '<a class="nav-more" href="{{root}}/blog/index.html">Blog</a>'
+       '<a class="nav-more" href="{{root}}/e2e/report.html">Test report</a>'
        '<span class="spacer"></span>'
+       '<button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>'
        '<a class="cta" href="{{root}}/viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the viewer</a></nav>')
 
 
@@ -195,8 +301,11 @@ def build(out, stream_path, bundle, name, port, service=False):
     # there instead of bundling a second 8+ MB copy.
     if not service:
         shutil.copytree(VIEWER_DIST, os.path.join(out, "viewer"), dirs_exist_ok=True)
-    for asset in ("site.css", "logo.png", "favicon.png"):
+    for asset in ("site.css", "logo.png", "favicon.png", "clips.js"):
         shutil.copy(os.path.join(HERE, asset), os.path.join(out, asset))
+    media_src = os.path.join(HERE, "media")
+    if os.path.isdir(media_src):
+        shutil.copytree(media_src, os.path.join(out, "media"), dirs_exist_ok=True)
     # The curl installer, served at the site root: `curl .../install.sh | sh`.
     shutil.copy(os.path.join(REPO, "tools/install/install.sh"), os.path.join(out, "install.sh"))
     # The front-page capture.
@@ -216,10 +325,19 @@ def build(out, stream_path, bundle, name, port, service=False):
     os.makedirs(os.path.join(out, "manual"), exist_ok=True)
     os.makedirs(os.path.join(out, "e2e"), exist_ok=True)
     pages = [
-        ("docs/manual/features.md", "manual/index.html", "Orbit manual: every feature", ".."),
-        ("docs/manual/live-viewer.md", "manual/live-viewer.html", "Orbit manual: the live viewer", ".."),
         ("docs/e2e/report.md", "e2e/report.html", "Orbit e2e report", ".."),
         ("docs/TODO.md", "todo.html", "Orbit TODO", "."),
+    ]
+    manual_pages = [
+        ("docs/manual/index.md", "index.html", "Quick start — Orbit manual"),
+        ("docs/manual/capture.md", "capture.html", "Capture — Orbit manual"),
+        ("docs/manual/timeline.md", "timeline.html", "Timeline — Orbit manual"),
+        ("docs/manual/time.md", "time.html", "Where time goes — Orbit manual"),
+        ("docs/manual/systems.md", "systems.html", "Systems — Orbit manual"),
+        ("docs/manual/everywhere.md", "everywhere.html", "Everywhere — Orbit manual"),
+        ("docs/manual/troubleshooting.md", "troubleshooting.html", "Troubleshooting — Orbit manual"),
+        ("docs/manual/keys.md", "keys.html", "Keys and mouse — Orbit manual"),
+        ("docs/manual/live-viewer.md", "live-viewer.html", "Live viewer — Orbit manual"),
     ]
     for src, dst, title, root in pages:
         path = os.path.join(REPO, src)
@@ -233,6 +351,17 @@ def build(out, stream_path, bundle, name, port, service=False):
         body = re.sub(r"<code>(\d\d-[^<]+\.png)</code>", r'<a href="../screenshots/\1"><code>\1</code></a>', body)
         with open(os.path.join(out, dst), "w") as handle:
             handle.write(page(title, body, root).replace("{{capture}}", capture_file))
+    for src, dst, title in manual_pages:
+        path = os.path.join(REPO, src)
+        text = open(path, encoding="utf-8").read()
+        body = render_markdown(text)
+        body = re.sub(
+            r'href="([A-Za-z0-9./_-]+)\.md(#[^"]*)?"',
+            lambda m: f'href="{m.group(1)}.html{m.group(2) or ""}"',
+            body,
+        )
+        with open(os.path.join(out, "manual", dst), "w", encoding="utf-8") as handle:
+            handle.write(manual_page(title, body, dst).replace("{{capture}}", capture_file))
     # The front page.
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()
     facts = f"{len(data) / 1024 / 1024:.1f} MB stream"
