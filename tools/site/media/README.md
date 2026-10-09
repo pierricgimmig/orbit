@@ -1,6 +1,6 @@
 # Landing-page media
 
-Clips for `tools/site/index.html`, published by
+Clips for `tools/site/index.html` and `tools/site/features.html`, published by
 `tools/media-kit/publish_site_media.py`.
 Do not edit the videos by hand.
 

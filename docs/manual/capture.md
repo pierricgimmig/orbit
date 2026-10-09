@@ -1,6 +1,6 @@
 # Capture
 
-Pick a process, choose what to record, and press Record. The timeline starts streaming and the capture timer ticks.
+Pick a process, choose what to record, and press Record. The timeline starts streaming and the capture timer ticks. Attach and record is on the [home page](../index.html#capture). Auto-profiling is on the [features page](../features.html#auto-profiling).
 
 @clip 01-attach-record | Attach and record | The live timeline just after Record, with scheduler lanes and the capture timer
 

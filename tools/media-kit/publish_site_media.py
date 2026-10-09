@@ -235,7 +235,7 @@ def publish(src, dest):
     with open(readme, "w", encoding="utf-8") as handle:
         handle.write(
             "# Landing-page media\n\n"
-            "Clips for `tools/site/index.html`, published by\n"
+            "Clips for `tools/site/index.html` and `tools/site/features.html`, published by\n"
             "`tools/media-kit/publish_site_media.py`.\n"
             "Do not edit the videos by hand.\n\n"
             f"{note}\n\n"

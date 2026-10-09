@@ -1,6 +1,6 @@
 # Timeline
 
-Zoom from the cursor, pan, and light up one scope name. An empty timeline prints the same reminders: ruler wheel zoom, Ctrl+wheel zoom, WASD, Ctrl+drag to select scopes, Home or a double-click on the ruler to fit, space to follow.
+Zoom from the cursor, pan, and light up one scope name. An empty timeline prints the same reminders: ruler wheel zoom, Ctrl+wheel zoom, WASD, Ctrl+drag to select scopes, Home or a double-click on the ruler to fit, space to follow. Navigation is on the [home page](../index.html#timeline). Scope search is on the [features page](../features.html#scope-search).
 
 @clip 02-timeline-navigation | Live timeline | Cursor-anchored zoom, pan, and tooltips on nested hooked scopes
 

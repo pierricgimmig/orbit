@@ -1,6 +1,6 @@
 # Systems
 
-Where the thread ran, and what the profiler itself is doing.
+Where the thread ran, and what the profiler itself is doing. The scheduler is on the [home page](../index.html#systems). The service’s own lanes are on the [features page](../features.html#service).
 
 ## Scheduler and thread state
 

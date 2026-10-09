@@ -1,6 +1,6 @@
 # Everywhere
 
-The same capture, in another colour scheme, on a phone, or loaded from a trace file.
+The same capture, in another colour scheme, on a phone, or loaded from a trace file. The recordings are on the [features page](../features.html#everywhere).
 
 ## Colour schemes
 

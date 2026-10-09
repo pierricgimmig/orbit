@@ -5,9 +5,9 @@
 # The project web site
 
 `build_site.py` assembles a static directory: the viewer pack, one capture
-the front page opens with no service behind it, the manual (rendered from
-`docs/manual/*.md` except the agent catalogue `features.md`), the blog,
-the screenshots and the latest e2e report.
+the front page opens with no service behind it, the features page, the
+manual (rendered from `docs/manual/*.md` except the agent catalogue
+`features.md`), the blog, the screenshots and the latest e2e report.
 `serve.py` serves it with the cross-origin isolation headers the viewer's
 worker pool needs. Standard library only.
 
@@ -60,8 +60,10 @@ process to capture), and deploys the `site/` tree to Pages.
 
 ## Landing-page recordings
 
-The front page (`index.html`) plays short clips of the live viewer from
-`tools/site/media/`. Those files are published from the media kit; they are
+The front page (`index.html`) opens a saved capture in the viewer, then
+plays four clips: attach, the timeline, the flame graph and the scheduler.
+`features.html` plays the rest, including the hero montage. The files live
+in `tools/site/media/`. They are published from the media kit; they are
 not edited by hand.
 
 ```bash

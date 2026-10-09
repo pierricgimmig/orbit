@@ -5,8 +5,10 @@ This file stays the agent catalogue: how to reach each feature, and which
 e2e screenshot shows it. `docs/e2e/report.md` is the companion, written by
 `tools/e2e/orbit_e2e.py` on every run. It is not built into the site.
 
-The [landing page](../index.html) is the site root. It introduces the viewer
-with short recordings of a live capture.
+The [landing page](../index.html) is the site root. It opens a saved
+capture in the viewer, then four recordings: attach, the timeline, the
+flame graph and the scheduler. The [features page](../features.html) has
+the rest of the recordings.
 
 Instructions for the manual writer:
 
@@ -505,9 +507,9 @@ in the URL opens a tab on load.
   open). `tools/e2e/orbit_e2e.py` clicks by label through these.
 
 - **The web site.** `python3 tools/site/build_site.py` builds a static
-  directory: the [landing page](../index.html) (recordings of the live
-  viewer), a capture embedded on that page, this manual, the blog,
-  screenshots and the e2e report. `python3 tools/site/serve.py --dir site
+  directory: the [landing page](../index.html) (a capture embedded in
+  the page, then four recordings), the [features page](../features.html),
+  this manual, the blog, screenshots and the e2e report. `python3 tools/site/serve.py --dir site
   --port 8081` serves it on the LAN. Regenerate the recordings with
   `tools/media-kit` (see `tools/site/README.md`). Screenshot: `22-website.png`.
 

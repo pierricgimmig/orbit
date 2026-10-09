@@ -82,6 +82,7 @@ nav.site a.cta {
   color: #fff; background: var(--accent); padding: 0.4rem 0.95rem; border-radius: 999px;
 }
 nav.site a.cta:hover { background: var(--accent-deep); }
+nav.site a[aria-current="page"] { color: var(--ink); }
 
 main.doc { max-width: var(--measure); margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
 main.wide { max-width: var(--wide); margin: 0 auto; padding: 0 1.5rem 5rem; }
@@ -94,6 +95,17 @@ footer.site a { color: var(--muted); }
 
 /* landing */
 .hero { text-align: center; max-width: 56rem; margin: 3.4rem auto 1.6rem; }
+.hero.compact { margin: 0.85rem auto 0.65rem; max-width: 46rem; }
+.hero.compact h1 {
+  font-size: clamp(1.6rem, 2.8vw, 2.2rem);
+  margin: 0 auto 0.35rem;
+}
+.hero.compact .lede {
+  font-size: 1.05rem;
+  line-height: 1.45;
+  margin: 0 auto;
+  max-width: 36rem;
+}
 .hero h1 {
   font-size: clamp(2rem, 3.4vw, 2.75rem); font-weight: 400; margin: 0 auto 1rem;
   letter-spacing: -0.02em; max-width: 18em; text-wrap: balance;
@@ -117,6 +129,13 @@ footer.site a { color: var(--muted); }
   border: 1px solid var(--line);
 }
 .embed iframe { display: block; width: 100%; height: min(70vh, 720px); min-height: 420px; border: 0; }
+/* The home-page demo is the first thing under the headline. Size it to the
+   leftover viewport so the capture is on screen before any scroll. */
+.demo { margin: 0; }
+.demo .embed iframe {
+  height: min(720px, calc(100svh - 11.25rem));
+  min-height: 280px;
+}
 .caption {
   display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
   font-size: 0.9rem; color: var(--muted); margin: 0.7rem 0.2rem 0;
@@ -143,6 +162,10 @@ footer.site a { color: var(--muted); }
 @media (max-width: 720px) {
   .two { grid-template-columns: 1fr; }
   .embed iframe { height: 70vh; min-height: 360px; }
+  .demo .embed iframe {
+    height: min(640px, calc(100svh - 10.5rem));
+    min-height: 260px;
+  }
 }
 .keys { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); text-align: center; margin: 2.5rem 0 0; }
 
@@ -205,6 +228,7 @@ footer.site { padding-bottom: 3rem; }
   nav.site { gap: 0.55rem; font-size: 0.84rem; }
   nav.site a.nav-more { display: none; }
   nav.site a.cta { padding: 0.35rem 0.7rem; }
+  .hero.compact { margin: 0.65rem auto 0.45rem; }
 }
 @media (max-width: 450px) {
   .hero h1 { font-size: 1.3rem; max-width: none; }
@@ -299,6 +323,16 @@ main.wide { overflow-x: clip; }
   margin: 0 0 0.55rem;
 }
 .feature .copy p { margin: 0; color: var(--ink-soft); font-size: 1.02rem; }
+.feature .copy .manual-link { margin: 0.75rem 0 0; }
+.more-features {
+  text-align: center;
+  max-width: 40rem;
+  margin: 2.75rem auto 0;
+  color: var(--ink-soft);
+  font-size: 1.05rem;
+}
+.more-features a { font-weight: 500; }
+.feature[id] { scroll-margin-top: 4.5rem; }
 
 .pipeline {
   list-style: none; padding: 0; margin: 0;
