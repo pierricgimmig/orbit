@@ -2,6 +2,7 @@
 
 pub mod bench;
 pub mod demo;
+mod sharing;
 pub mod http;
 pub mod ingest;
 pub mod settings;
@@ -179,6 +180,9 @@ pub struct LiveService {
     pub capture_export: Mutex<
         Option<std::sync::Arc<dyn Fn(&str, Option<(u64, u64)>) -> Result<Vec<u8>, String> + Send + Sync>>,
     >,
+    /// The archive and browser stream encoded from one snapshot.
+    #[allow(clippy::type_complexity)]
+    pub capture_share_export: Mutex<Option<Arc<dyn Fn(Option<(u64, u64)>) -> Result<(Vec<u8>, Vec<u8>), String> + Send + Sync>>>,
     /// Optional: opens a self-contained capture (`.orbit.zip` bytes) as the
     /// current capture, replacing what the ring holds. Returns a short JSON
     /// summary. Set by the service, which owns the decoder.
@@ -337,6 +341,7 @@ impl LiveService {
             sampling_tree_scope: Mutex::new(None),
             modules_json: Mutex::new(None),
             capture_export: Mutex::new(None),
+            capture_share_export: Mutex::new(None),
             capture_import: Mutex::new(None),
             capture_open: Mutex::new(None),
             capture_clear: Mutex::new(None),
@@ -728,7 +733,7 @@ impl LiveService {
     /// receives when it connects, ended by `CaptureFinished` so a viewer
     /// opening it from a file fits the view. A static web page serves this
     /// next to the viewer pack and needs no service. With `window`, only the
-    /// events starting inside it.
+    /// events overlapping it, kept whole.
     pub fn capture_stream(&self, window: Option<(u64, u64)>) -> Vec<u8> {
         let mut out = Vec::new();
         for frame in self.hello_and_snapshot_frames_in(window) {
@@ -747,7 +752,8 @@ impl LiveService {
         frames.extend(self.names_and_status_frames());
         let (_, mut events) = self.ring().snapshot();
         if let Some((a, b)) = window {
-            events.retain(|e| e.start_ns >= a && e.start_ns <= b);
+            let (a, b) = (a.min(b), a.max(b));
+            events.retain(|e| e.start_ns <= b && e.end_ns() >= a);
         }
         if !events.is_empty() {
             // Chunk so one WS message stays reasonable.

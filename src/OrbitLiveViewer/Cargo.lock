@@ -747,6 +747,7 @@ dependencies = [
  "orbit-live-render",
  "orbit-live-ring",
  "parking_lot",
+ "rand",
  "serde",
  "serde_json",
  "tokio",

@@ -70,7 +70,13 @@ fn overlapping_groups(
         .filter(|&i| {
             let rg = meta.row_group(i);
             let Some((min_start, max_start)) = column_range(rg, start) else { return true };
-            let max_dur = duration.and_then(|d| column_range(rg, d)).map(|(_, mx)| mx).unwrap_or(0);
+            let max_dur = match duration {
+                Some(d) => match column_range(rg, d) {
+                    Some((_, max)) => max,
+                    None => return true, // An unknown duration may straddle the window.
+                },
+                None => 0,
+            };
             min_start <= t1 && max_start.saturating_add(max_dur) >= t0
         })
         .collect()
@@ -79,6 +85,7 @@ fn overlapping_groups(
 /// Reads the events overlapping `[t0, t1]` from an events Parquet table,
 /// touching only the row groups that can hold one.
 pub fn slice_events_parquet(table: Bytes, t0: u64, t1: u64) -> Result<(Vec<EventRow>, usize, usize), CaptureError> {
+    let (t0, t1) = (t0.min(t1), t0.max(t1));
     let builder = ParquetRecordBatchReaderBuilder::try_new(table)?;
     let total = builder.metadata().num_row_groups();
     let groups = overlapping_groups(&builder, "start_ns", Some("duration_ns"), t0, t1);
@@ -95,6 +102,7 @@ pub fn slice_events_parquet(table: Bytes, t0: u64, t1: u64) -> Result<(Vec<Event
 
 /// Reads the samples inside `[t0, t1]` from a samples Parquet table.
 pub fn slice_samples_parquet(table: Bytes, t0: u64, t1: u64) -> Result<(Vec<SampleRow>, usize, usize), CaptureError> {
+    let (t0, t1) = (t0.min(t1), t0.max(t1));
     let builder = ParquetRecordBatchReaderBuilder::try_new(table)?;
     let total = builder.metadata().num_row_groups();
     let groups = overlapping_groups(&builder, "timestamp_ns", None, t0, t1);
@@ -120,6 +128,7 @@ pub fn slice_bundle_file(path: impl AsRef<Path>, t0: u64, t1: u64) -> Result<(Ca
 
 /// As [`slice_bundle_file`] over the bundle's bytes.
 pub fn slice_bundle_bytes(file: Bytes, t0: u64, t1: u64) -> Result<(CaptureBundle, SliceStats), CaptureError> {
+    let (t0, t1) = (t0.min(t1), t0.max(t1));
     let entries = match stored_entry_ranges(&file) {
         Ok(e) => e,
         Err(ZipError::Unsupported(_)) => {
@@ -174,6 +183,35 @@ mod tests {
     use super::*;
     use crate::{FrameRow, ProcessName, ThreadName, CHUNK_ROWS};
     use orbit_live_event::{kind, LiveEvent};
+
+    #[test]
+    fn missing_duration_statistics_never_discard_straddling_events() {
+        use parquet::arrow::ArrowWriter;
+        use parquet::file::properties::{WriterProperties, EnabledStatistics};
+        use parquet::schema::types::ColumnPath;
+        use std::sync::Arc;
+        let event = big_bundle(1).events[0].event;
+        let props = WriterProperties::builder()
+            .set_column_statistics_enabled(ColumnPath::from("duration_ns"), EnabledStatistics::None).build();
+        let mut bytes = Vec::new();
+        let mut writer = ArrowWriter::try_new(&mut bytes, Arc::new(crate::events_schema()), Some(props)).unwrap();
+        for batch in crate::events_batches(&[event], |_| "scope".into()).unwrap() { writer.write(&batch).unwrap(); }
+        writer.close().unwrap();
+        let (events, _, groups) = slice_events_parquet(Bytes::from(bytes), event.start_ns + 100, event.start_ns + 200).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(groups, 1);
+    }
+
+    #[test]
+    fn byte_and_table_slices_normalize_reversed_bounds() {
+        let bundle = big_bundle(20);
+        let expected = bundle.slice(1_005_000, 1_015_000);
+        let (actual, _) = slice_bundle_bytes(Bytes::from(bundle.to_zip().unwrap()), 1_015_000, 1_005_000).unwrap();
+        assert_eq!(actual, expected);
+        let table = crate::write_events_parquet_to_vec(&bundle.events.iter().map(|r| r.event).collect::<Vec<_>>(), |id| format!("scope{}", id - 1)).unwrap();
+        let (events, _, _) = slice_events_parquet(Bytes::from(table), 1_015_000, 1_005_000).unwrap();
+        assert_eq!(events, expected.events);
+    }
 
     /// A bundle of `n` events a microsecond apart on two threads, with a
     /// sample every tenth event.

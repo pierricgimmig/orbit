@@ -147,5 +147,24 @@
       showFallback(e);
     }
   </script>
+<script>
+    // Shared captures carry a separately downloadable, complete archive.
+    const archive = new URLSearchParams(location.search).get('download');
+    if (archive) {
+      try {
+        const url = new URL(archive);
+        if (url.protocol === 'https:') {
+          const link = document.createElement('a');
+          link.href = url.href;
+          link.textContent = 'Download complete capture';
+          link.download = 'capture.orbit.zip';
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:20;color:#64B5F6;background:#14181e;padding:6px 10px;border-radius:5px;font:12px system-ui';
+          document.body.append(link);
+        }
+      } catch (_) { /* Invalid download URLs do not affect the viewer. */ }
+    }
+  </script>
 </body>
 </html>

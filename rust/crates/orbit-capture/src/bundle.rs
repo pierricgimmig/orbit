@@ -172,6 +172,42 @@ impl CaptureBundle {
         })
     }
 
+    /// Browser wire stream from this exact bundle. The archive remains the
+    /// authoritative source of frame addresses and module metadata. Sampled
+    /// stacks are rebuilt from sample rows, not inferred from retained spans.
+    pub fn to_stream(&self) -> Vec<u8> {
+        use orbit_live_event::{kind, extra, LIVE_EVENT_SIZE};
+        use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
+        let mut out = encode_frame(&LiveFrame::Hello { version: VERSION, event_size: LIVE_EVENT_SIZE as u16 });
+        let mut append = |frame| out.extend_from_slice(&encode_frame(&frame));
+        for (id, text) in self.names() { append(LiveFrame::InternedString { id, text }); }
+        for f in &self.frames { append(LiveFrame::InternedString { id: f.id, text: f.name.clone() }); }
+        for p in &self.processes { append(LiveFrame::ProcessName { pid: p.pid, name: p.name.clone() }); }
+        for t in &self.threads { append(LiveFrame::ThreadName { pid: t.pid, tid: t.tid, name: t.name.clone() }); }
+        let start = self.slice_ns.or(self.time_bounds()).map(|(a, _)| a).unwrap_or(0);
+        append(LiveFrame::CaptureStarted { pid: self.target_pid, start_ns: start });
+        let mut events: Vec<LiveEvent> = self.events.iter().map(|r| r.event)
+            .filter(|e| e.kind != kind::SAMPLE && !(e.kind == kind::FUNCTION_CALL && e.extra == extra::SAMPLED_FRAME)).collect();
+        let periods: HashMap<(u32, u64), u64> = self.events.iter()
+            .filter(|r| r.event.kind == kind::SAMPLE)
+            .map(|r| ((r.event.tid, r.event.start_ns), r.event.duration_ns)).collect();
+        let thread_pids: HashMap<u32, u32> = self.threads.iter().map(|t| (t.tid, t.pid)).collect();
+        for sample in &self.samples {
+            let pid = thread_pids.get(&sample.tid).copied().unwrap_or(self.target_pid);
+            let period = periods.get(&(sample.tid, sample.timestamp_ns)).copied().unwrap_or(1);
+            let event = LiveEvent { start_ns: sample.timestamp_ns, duration_ns: period, tid: sample.tid, pid,
+                kind: kind::SAMPLE, depth: 0, extra: 0, _pad: 0, name_id: sample.frames.first().copied().unwrap_or(0) };
+            events.push(event);
+            for (depth, id) in sample.frames.iter().rev().enumerate() {
+                events.push(LiveEvent { kind: kind::FUNCTION_CALL, extra: extra::SAMPLED_FRAME, depth: depth.min(255) as u8, name_id: *id, ..event });
+            }
+        }
+        events.sort_unstable_by_key(|e| e.start_ns);
+        for chunk in events.chunks(2048) { append(LiveFrame::EventBatch { events: chunk.to_vec() }); }
+        append(LiveFrame::CaptureFinished);
+        out
+    }
+
     /// The bundle as one `.orbit.zip`: Parquet tables, stored.
     pub fn to_zip(&self) -> Result<Vec<u8>, CaptureError> {
         self.to_zip_with_level(None)
@@ -258,6 +294,42 @@ impl CaptureBundle {
 mod tests {
     use super::*;
     use orbit_live_event::kind;
+
+    #[test]
+    fn browser_stream_uses_exact_sample_rows_and_keeps_boundary_scopes() {
+        use orbit_live_protocol::{decode_all, LiveFrame};
+        let source = sample_bundle();
+        let slice = source.slice(110, 220);
+        let decoded = decode_all(&slice.to_stream()).unwrap();
+        let events: Vec<_> = decoded.iter().filter_map(|f| match f {
+            LiveFrame::EventBatch { events } => Some(events.clone()), _ => None,
+        }).flatten().collect();
+        for row in &slice.events { assert!(events.contains(&row.event)); }
+        let sample_times: Vec<_> = events.iter().filter(|e| e.kind == kind::SAMPLE).map(|e| e.start_ns).collect();
+        assert_eq!(sample_times, slice.samples.iter().map(|s| s.timestamp_ns).collect::<Vec<_>>());
+        for frame in &slice.frames {
+            assert!(decoded.iter().any(|f| matches!(f, LiveFrame::InternedString { id, text } if *id == frame.id && *text == frame.name)));
+        }
+        assert!(matches!(decoded.last(), Some(LiveFrame::CaptureFinished)));
+    }
+
+    #[test]
+    fn browser_samples_ignore_crossing_old_flame_spans_and_restore_sample_only_stacks() {
+        use orbit_live_protocol::{decode_all, LiveFrame};
+        let mut bundle = sample_bundle();
+        let mut old = ev(100, 100, 7, 70, 1, "main");
+        old.event.kind = kind::FUNCTION_CALL;
+        old.event.extra = orbit_live_event::extra::SAMPLED_FRAME;
+        bundle.events.push(old); // The old flame span crosses the left edge.
+        let slice = bundle.slice(110, 220);
+        let events: Vec<_> = decode_all(&slice.to_stream()).unwrap().into_iter().filter_map(|f| match f {
+            LiveFrame::EventBatch { events } => Some(events), _ => None,
+        }).flatten().collect();
+        let stacks: Vec<_> = events.iter().filter(|e| e.kind == kind::FUNCTION_CALL && e.extra == orbit_live_event::extra::SAMPLED_FRAME).collect();
+        assert_eq!(stacks.len(), 3); // Two frames at 120; one at 210, no stack at 100.
+        assert!(stacks.iter().all(|e| e.start_ns == 120 || e.start_ns == 210));
+        assert_eq!(events.iter().filter(|e| e.kind == kind::SAMPLE).count(), 2);
+    }
 
     fn ev(start: u64, dur: u64, pid: u32, tid: u32, name_id: u32, name: &str) -> EventRow {
         EventRow {
