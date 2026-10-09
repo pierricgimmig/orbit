@@ -256,6 +256,7 @@ def page(title, body, root=".", nav=True):
 
 NAV = ('<nav class="site" aria-label="Site"><a class="brand" href="{{root}}/index.html"><img src="{{root}}/logo.png" alt="Orbit"></a>'
        '<a href="{{root}}/index.html">Home</a>'
+       '<a href="{{root}}/features.html">Features</a>'
        '<a href="{{root}}/manual/index.html">Manual</a>'
        '<a class="nav-more" href="{{root}}/blog/index.html">Blog</a>'
        '<a class="nav-more" href="{{root}}/e2e/report.html">Test report</a>'
@@ -382,7 +383,7 @@ def build(out, stream_path, bundle, name, port, service=False):
     # there instead of bundling a second 8+ MB copy.
     if not service:
         shutil.copytree(VIEWER_DIST, os.path.join(out, "viewer"), dirs_exist_ok=True)
-    for asset in ("site.css", "logo.png", "favicon.png", "coi-serviceworker.js", "clips.js"):
+    for asset in ("site.css", "logo.png", "favicon.png", "coi-serviceworker.js", "clips.js", "features.html"):
         shutil.copy(os.path.join(HERE, asset), os.path.join(out, asset))
     # Actions deploys the artifact as-is. .nojekyll is a no-op there and
     # keeps a later switch to the branch source from dropping files.

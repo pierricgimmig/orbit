@@ -2,6 +2,8 @@
 
 Press **R**, or More → “Report   R”, to open the report. The tabs are **Flat**, **Top-down**, **Bottom-up**, **Modules**, **Live**, **Flame**, **Functions**, **Code**, **Inspector** and **Selection**. `?report=` opens one of them: `flat`, `top_down`, `bottom_up`, `modules`, `live`, `flame`, `functions`, `code`, `inspector`, `selection`.
 
+The flame graph is on the [home page](../index.html#time). Call trees, the live table, selection and the code view are on the [features page](../features.html#time).
+
 The filter box reads “filter functions”, or “filter modules” on the Modules tab. Escape clears it. **I** opens Inspector. The trees have **Expand all** and **Collapse all**.
 
 ## Flame graph

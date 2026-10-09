@@ -2,6 +2,8 @@
 
 Orbit profiles a process that is already running. `orbit-service` captures it and serves the viewer on the same port. This guide matches the viewer and the service on main, plus [auto-profiling](capture.html#auto-profiling), which is not on main yet.
 
+The [home page](../index.html) opens a saved capture in the viewer. Attach, the timeline, the flame graph and the scheduler are there. The [features page](../features.html) has the rest of the recordings.
+
 ## Install
 
 ```
