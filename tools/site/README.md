@@ -35,6 +35,12 @@ are computed in the viewer from the sampled frames the stream carries.
 What needs a service and is hidden or inert on the site: Record, Demo,
 Open, Clear, Save, the process row, Modules, and hooking.
 
+## Shared captures
+
+The same viewer opens S3 captures shared from OrbitService. Configure the
+bucket and website viewer URL using [the sharing setup](../sharing/README.md).
+Share links include a complete archive download alongside the browser stream.
+
 ## Hosting
 
 The output is plain files. Links and asset URLs are relative, so the same

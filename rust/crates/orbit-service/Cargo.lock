@@ -863,6 +863,7 @@ dependencies = [
  "bytes",
  "miniz_oxide 0.8.9",
  "orbit-live-event",
+ "orbit-live-protocol",
  "parquet",
  "serde_json",
 ]
@@ -918,6 +919,7 @@ dependencies = [
  "orbit-live-render",
  "orbit-live-ring",
  "parking_lot",
+ "rand",
  "serde",
  "serde_json",
  "tokio",

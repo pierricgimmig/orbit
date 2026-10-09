@@ -406,6 +406,7 @@ dependencies = [
  "bytes",
  "miniz_oxide",
  "orbit-live-event",
+ "orbit-live-protocol",
  "parquet",
  "serde_json",
 ]
@@ -414,6 +415,15 @@ dependencies = [
 name = "orbit-live-event"
 version = "0.1.0"
 dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "orbit-live-protocol"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide",
+ "orbit-live-event",
  "serde",
 ]
 

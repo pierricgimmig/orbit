@@ -1,0 +1,30 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Private Orbit shared captures with website CORS and a service upload policy",
+  "Parameters": {
+    "WebsiteOrigin": {"Type": "String", "Description": "Exact HTTPS origin, for example https://orbit.example", "AllowedPattern": "https://[^/]+"},
+    "RetentionDays": {"Type": "Number", "Default": 30, "MinValue": 1, "Description": "Automatically delete shared objects after this many days"}
+  },
+  "Resources": {
+    "Captures": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "PublicAccessBlockConfiguration": {"BlockPublicAcls": true, "BlockPublicPolicy": true, "IgnorePublicAcls": true, "RestrictPublicBuckets": true},
+        "OwnershipControls": {"Rules": [{"ObjectOwnership": "BucketOwnerEnforced"}]},
+        "BucketEncryption": {"ServerSideEncryptionConfiguration": [{"ServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]},
+        "CorsConfiguration": {"CorsRules": [{"AllowedOrigins": [{"Ref": "WebsiteOrigin"}], "AllowedMethods": ["GET", "HEAD"], "AllowedHeaders": ["*"], "ExposedHeaders": ["ETag"], "MaxAge": 3600}]},
+        "LifecycleConfiguration": {"Rules": [{"Id": "ExpireShares", "Prefix": "captures/", "Status": "Enabled", "ExpirationInDays": {"Ref": "RetentionDays"}, "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}}]}
+      }
+    },
+    "UploaderPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {"Description": "Attach to the IAM identity running OrbitService", "PolicyDocument": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:AbortMultipartUpload"], "Resource": {"Fn::Sub": "${Captures.Arn}/captures/*"}}]}}
+    }
+  },
+  "Outputs": {
+    "Bucket": {"Value": {"Ref": "Captures"}},
+    "UploaderPolicyArn": {"Value": {"Ref": "UploaderPolicy"}}
+  }
+}

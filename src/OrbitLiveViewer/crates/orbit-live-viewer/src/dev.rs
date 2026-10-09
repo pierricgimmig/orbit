@@ -595,6 +595,8 @@ mod capture_url_tests {
             query_capture_url("?collapse=scheduler&capture=..%2Fcaptures%2Fa%20b.orbit.stream"),
             Some("../captures/a b.orbit.stream".into())
         );
+        assert_eq!(query_capture_url("?capture=https%3A%2F%2Fbucket.s3.amazonaws.com%2Fa.orbit.stream%3FX-Amz-Signature%3Dx%252Fy%26token%3Da%2Bb&download=archive"),
+            Some("https://bucket.s3.amazonaws.com/a.orbit.stream?X-Amz-Signature=x%2Fy&token=a+b".into()));
         assert_eq!(query_capture_url("?capture="), None);
         assert_eq!(query_capture_url("?report=live"), None);
         assert_eq!(query_capture_url("?capture=x%2"), Some("x%2".into()));

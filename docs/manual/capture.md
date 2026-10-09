@@ -63,3 +63,18 @@ On that branch, **Auto** lets the service choose what to hook. Every two seconds
 The budget starts at 1000 scopes/s (`auto_profile_scopes_per_s` in `~/.config/orbit/settings.json`). It hooks with kernel uprobes, the engine that can arm mid-capture, inside the 16-hook cap and under Auto-unhook. The status line reads “auto-profiling: N function(s) hooked, X of Y scopes/s”. Each change is an instant `auto-profile: hooked …` or `auto-profile: unhooked …` on the target’s main thread. Turning the switch off leaves the hooks that are already armed.
 
 The capture-start body takes `"auto_profile": true`. `POST /api/auto_profile` with `{"on": true}` or `{"on": false}` toggles it, and `/api/status` reports `auto_profile` and `auto_profile_status`.
+
+## Save a slice and share it
+
+Select a time range on the timeline, then use **Save → Selected slice (.orbit.zip)**.
+The file keeps overlapping scopes whole, samples within the selected range,
+their callstack frames, and thread/process names. The selected window is stored
+in the archive alongside the retained events' full bounds.
+
+With S3 sharing configured on the service, stop recording and click **Share slice**.
+With no selection, **Share** uploads the whole capture. Orbit copies a link to
+the website viewer; **Copy link** and **Open shared capture** remain available
+when the upload finishes. On narrow screens these controls are in **More**.
+Recipients can view the timeline and sampling reports without running Orbit,
+and download the complete archive. Private-bucket links expire after seven
+days by default, or sooner if the service's AWS credentials expire.

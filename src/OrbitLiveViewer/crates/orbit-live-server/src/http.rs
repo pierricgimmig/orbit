@@ -64,6 +64,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/sampling/tree", get(sampling_tree))
         .route("/api/symbols/modules", get(symbols_modules))
         .route("/api/capture/export", get(capture_export))
+        .route("/api/capture/share", post(capture_share))
         .route("/api/capture/open", post(capture_open))
         .route("/api/capture/clear", post(capture_clear))
         .route("/api/scope", post(agent_scope))
@@ -528,6 +529,40 @@ async fn capture_export(
             .into_response(),
         Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+/// Publish a stopped capture (or selected slice) to the configured bucket.
+async fn capture_share(State(svc): State<Arc<LiveService>>, Query(q): Query<ExportQuery>, headers: axum::http::HeaderMap) -> Response {
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        let origin = origin.to_str().unwrap_or_default();
+        let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default();
+        if origin != format!("http://{host}") && origin != format!("https://{host}") {
+            return (StatusCode::FORBIDDEN, "Sharing must be requested from the service viewer").into_response();
+        }
+    }
+    let window = match (q.t0, q.t1) {
+        (Some(a), Some(b)) => Some((a.min(b), a.max(b))),
+        (None, None) => None,
+        _ => return (StatusCode::BAD_REQUEST, "give both t0 and t1, or neither").into_response(),
+    };
+    if svc.capturing.load(std::sync::atomic::Ordering::Relaxed) || svc.demo.load(std::sync::atomic::Ordering::Relaxed) {
+        return (StatusCode::CONFLICT, "Stop recording before sharing").into_response();
+    }
+    let config = match crate::sharing::ShareConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::SERVICE_UNAVAILABLE, e).into_response(),
+    };
+    let Some(export) = svc.capture_share_export.lock().clone() else {
+        return (StatusCode::NOT_IMPLEMENTED, "This service cannot export a complete capture").into_response();
+    };
+    match tokio::task::spawn_blocking(move || {
+        let (bundle, stream) = export(window)?;
+        config.upload(bundle, stream)
+    }).await {
+        Ok(Ok(result)) => Json(result).into_response(),
+        Ok(Err(e)) => (StatusCode::BAD_GATEWAY, e).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Share task failed").into_response(),
     }
 }
 
@@ -1384,6 +1419,23 @@ mod isolation_tests {
             h.get("cross-origin-resource-policy").unwrap(),
             "same-origin"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sharing_rejects_partial_windows_running_captures_and_cross_origin_requests() {
+        let svc = test_service();
+        svc.capturing.store(true, std::sync::atomic::Ordering::Relaxed);
+        let base = spawn_router(svc).await;
+        let post = |path: &str, origin: Option<&str>| {
+            let mut cmd = std::process::Command::new("curl");
+            cmd.args(["-si", "--max-time", "5", "-X", "POST"]);
+            if let Some(origin) = origin { cmd.args(["-H", &format!("Origin: {origin}")]); }
+            cmd.arg(format!("{base}{path}"));
+            String::from_utf8_lossy(&cmd.output().unwrap().stdout).into_owned()
+        };
+        assert!(post("/api/capture/share?t0=10", None).contains("400 Bad Request"));
+        assert!(post("/api/capture/share", None).contains("409 Conflict"));
+        assert!(post("/api/capture/share", Some("https://unrelated.example")).contains("403 Forbidden"));
     }
 
     async fn spawn_router(svc: std::sync::Arc<crate::LiveService>) -> String {
