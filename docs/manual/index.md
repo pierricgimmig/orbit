@@ -1,20 +1,20 @@
 # Quick start
 
-Orbit profiles a process that is already running. `orbit-service` captures it and serves the viewer on the same port. This guide matches the viewer and the service on main, plus [auto-profiling](capture.html#auto-profiling), which is not on main yet.
+Orbit profiles a process that is already running. `orbit-service` captures it and serves the viewer on the same port. This guide matches the viewer and the service on main, including [auto-profiling](capture.html#auto-profiling) on Linux.
 
 This is a Rust re-implementation of [Orbit](https://github.com/google/orbit), by the original author.
 
-The [home page](../index.html) opens a saved capture in the viewer. Attach, the timeline, the flame graph and the scheduler are there. The [features page](../features.html) has the rest of the recordings.
+The [home page](../index.html) opens a saved capture in the viewer. Attach, the flame graph, auto-profiling and the scheduler are there. The [features page](../features.html) has the rest of the recordings.
 
 ## Install
 
 ```
-curl -fsSL https://orbitprofiler.dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.sh | sh
 ```
 
-The script puts `orbit-service` in `~/.local/bin` (`ORBIT_INSTALL_DIR` to choose another directory) and, when the release publishes one, `liborbit_api` beside it. The builds this tree produces and tests are Linux x86-64 and macOS, Intel and Apple silicon. The script also accepts a Linux arm64 name; that service compiles and is not run in CI, and the static musl build is x86-64 only. Windows is not a build yet. If the directory is not on `PATH`, the script prints the `export` line to add.
+The script downloads a GitHub Release tagged `orbit-vX.Y.Z` and puts `orbit-service` in `~/.local/bin` (`ORBIT_INSTALL_DIR` to choose another directory), with `liborbit_frida_agent` and `orbit-frida-helper` beside it so function hooks work, and `liborbit_api` when the archive includes it. Until a stable `orbit-v*` release exists, the script stops and says how to build from source. `orbitprofiler.dev` is not a host. `ORBIT_INSTALL_BASE` overrides the download prefix; `DEFAULT_BASE` in the script is the one line to point at orbitprofiler.com later.
 
-The public host may not be serving binaries yet. `ORBIT_INSTALL_BASE` points the same script at a server that has the `dist/` tree.
+The published binaries are Linux x86-64 (static) and macOS, Intel and Apple silicon (one universal binary). Linux arm64 compiles and is not in the release or in CI. Windows is not supported. If the install directory is not on `PATH`, the script prints the `export` line to add.
 
 ## Run the service and open the viewer
 
@@ -42,7 +42,7 @@ On Linux, sampling and the scheduler need the right `perf_event_paranoid` value,
 
 The target is a native binary that is already running. Orbit does not rebuild it and does not relaunch it.
 
-`orbit-service` runs on the machine you profile. On Linux x86-64 it samples call stacks at a fixed 1 kHz, unwinds them with DWARF, records context switches and thread states, and can hook functions with Frida (the default) or kernel uprobes. On macOS it records manual scopes and Frida hooks; sampling, the scheduler, uprobes and live disassembly are not in that build. The service does not build on Windows yet. [Auto-profiling](capture.html#auto-profiling) — the service choosing which functions to hook — is the open pull request [#97](https://github.com/pierricgimmig/orbit/pull/97), not this branch. The [home page](../index.html#platforms) has the feature-by-feature table.
+`orbit-service` runs on the machine you profile. On Linux x86-64 it samples call stacks at a fixed 1 kHz, unwinds them with DWARF, records context switches and thread states, and can hook functions with no code change (Frida by default). On macOS it records manual scopes and Frida hooks; sampling, the scheduler, and live disassembly are not in that build. Windows is not supported. [Auto-profiling](capture.html#auto-profiling) — the service choosing which functions to hook — is on Linux and needs root or `CAP_SYS_ADMIN`, because it uses the kernel hook engine. It is not available on macOS. The [home page](../index.html#platforms) has the feature-by-feature table.
 
 The viewer is a Rust and WebAssembly page (egui, wgpu). It draws the [timeline](timeline.html), the [flame graph and reports](time.html), the [scheduler and the service’s own lanes](systems.html), and it opens a [saved capture or a Chrome trace](everywhere.html) with no service at all. A desktop, a tablet or a phone can open that page and connect to the service.
 

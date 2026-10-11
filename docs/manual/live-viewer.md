@@ -6,7 +6,7 @@ The [home page](../index.html) opens a saved capture. The [features page](../fea
 
 The rest of the guide:
 
-- [Capture](capture.md), including auto-profiling from pull request #97
+- [Capture](capture.md), including auto-profiling on Linux (needs root or `CAP_SYS_ADMIN`)
 - [Timeline](timeline.md)
 - [Where time goes](time.md)
 - [Systems](systems.md)
