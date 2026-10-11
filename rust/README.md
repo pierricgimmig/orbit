@@ -213,8 +213,10 @@ is the all-Rust capture service entry point: sample a
 process (unwind + intern callstacks), capture scheduling system-wide via
 per-CPU context-switch rings, and (where an AMD GPU is present) GPU jobs, all
 written as a pod stream. It
-builds as a **fully static musl binary** (`./build-service-musl.sh`) -- 756 KB,
-`ldd` reports "statically linked", zero runtime dependencies.
+builds as a **fully static musl binary** (`./build-service-musl.sh`). With the
+embedded viewer that binary is about 12 MB (see Distributing above); `ldd`
+reports "statically linked", and the service itself has no shared-library
+dependencies. The older "756 KB" figure is from before the viewer was embedded.
 
 `crates/orbit-wire` is the pod capture wire format: a one-byte tag plus
 fixed little-endian fields per event, zero dependencies, ~4.8x faster to
