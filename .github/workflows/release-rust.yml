@@ -1,0 +1,206 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+#
+# Rust orbit-service release.
+#
+# Tags are orbit-vX.Y.Z (optional suffix, e.g. orbit-v0.1.0-rc.1).
+# That scheme does not collide with the legacy C++ line (v1.* and
+# nightly-*). A plain orbit-vX.Y.Z becomes GitHub's Latest release.
+# A suffix is published as a prerelease and is not Latest.
+#
+# workflow_dispatch with an empty tag builds the same artifacts and
+# does not create a release or a tag. Set tag to an existing orbit-v*
+# tag to attach a release to it. This workflow never creates a tag.
+
+name: release-rust
+
+on:
+  push:
+    tags:
+      - "orbit-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing orbit-vX.Y.Z tag to publish. Empty builds artifacts only."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-rust-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: Linux x86-64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Build static orbit-service
+        run: |
+          set -euo pipefail
+          test -f src/OrbitLiveViewer/viewer-dist/index.html
+          test -f src/OrbitLiveViewer/viewer-dist/orbit_live_viewer_bg.wasm
+          # orbit-live-server's build script embeds viewer-dist into the binary.
+          cargo +1.88.0 build --locked --release --target x86_64-unknown-linux-musl \
+            --manifest-path rust/crates/orbit-service/Cargo.toml
+          bin=rust/crates/orbit-service/target/x86_64-unknown-linux-musl/release/orbit-service
+          file "$bin"
+          file "$bin" | grep -q 'statically linked'
+
+      - name: Build Frida companions, API library, and GPU helper
+        run: |
+          set -euo pipefail
+          # Frida and the GPU helper are glibc binaries. The service stays
+          # static musl and looks for these next to its own executable.
+          ./tools/frida/devkits.sh x86_64-unknown-linux-gnu
+          cargo +1.88.0 build --locked --release \
+            --manifest-path rust/crates/orbit-frida-helper/Cargo.toml
+          cargo +1.88.0 build --locked --release \
+            --manifest-path rust/Cargo.toml -p orbit-frida-agent --features native
+          cargo +1.88.0 build --locked --release \
+            --manifest-path rust/Cargo.toml -p orbit-api -p orbit-gpu-helper
+
+      - name: Pack archive
+        run: |
+          set -euo pipefail
+          stage=dist/orbit
+          mkdir -p "$stage/licenses"
+          cp rust/crates/orbit-service/target/x86_64-unknown-linux-musl/release/orbit-service "$stage/"
+          cp rust/target/release/liborbit_frida_agent.so "$stage/"
+          cp rust/crates/orbit-frida-helper/target/release/orbit-frida-helper "$stage/"
+          cp rust/target/release/liborbit_api.so "$stage/"
+          cp rust/crates/orbit-api/include/orbit.h "$stage/"
+          cp rust/target/release/orbit-gpu-helper "$stage/"
+          cp tools/frida/licenses/* "$stage/licenses/"
+          chmod 755 "$stage/orbit-service" "$stage/orbit-frida-helper" "$stage/orbit-gpu-helper"
+          tar -C dist -czf orbit-linux-x86_64.tar.gz orbit
+          sha256sum orbit-linux-x86_64.tar.gz | tee orbit-linux-x86_64.tar.gz.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbit-linux-x86_64
+          path: |
+            orbit-linux-x86_64.tar.gz
+            orbit-linux-x86_64.tar.gz.sha256
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: rustup toolchain install 1.88.0 --profile minimal
+
+      - name: Build universal service
+        run: ./build-service-macos.sh --universal
+
+      - name: Pack archive
+        run: |
+          set -euo pipefail
+          stage=dist/orbit
+          mkdir -p "$stage"
+          # build-service-macos.sh --universal writes dist/macos-universal,
+          # including the Frida files the service loads from its own directory.
+          cp -R dist/macos-universal/. "$stage/"
+          test -f "$stage/orbit-service"
+          test -f "$stage/liborbit_frida_agent.dylib"
+          test -f "$stage/orbit-frida-helper"
+          test -f "$stage/liborbit_api.dylib"
+          file "$stage/orbit-service" | grep -q 'universal'
+          tar -C dist -czf orbit-macos-universal.tar.gz orbit
+          shasum -a 256 orbit-macos-universal.tar.gz | tee orbit-macos-universal.tar.gz.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbit-macos-universal
+          path: |
+            orbit-macos-universal.tar.gz
+            orbit-macos-universal.tar.gz.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [linux, macos]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Combined checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum ./*.tar.gz | tee SHA256SUMS
+
+      - name: Publish, or stop after the artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          TAG_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || '' }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_TYPE" = "tag" ]; then
+            tag="$REF_NAME"
+          elif [ -n "${TAG_INPUT:-}" ]; then
+            tag="$TAG_INPUT"
+          else
+            echo "workflow_dispatch without a tag: artifacts only, no GitHub Release and no tag."
+            exit 0
+          fi
+          if ! [[ "$tag" =~ ^orbit-v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.]+)?$ ]]; then
+            echo "refusing tag '$tag'"
+            echo "use orbit-vX.Y.Z or orbit-vX.Y.Z-suffix. v1.* is the legacy C++ line."
+            exit 1
+          fi
+          notes=$(mktemp)
+          python3 - "$notes" <<'PY'
+          import pathlib, sys
+          pathlib.Path(sys.argv[1]).write_text(
+              "Rust `orbit-service` release.\n\n"
+              "**Linux x86-64** (`orbit-linux-x86_64.tar.gz`): static musl binary with the WASM viewer embedded. "
+              "Beside it, the files the service loads from its own directory:\n\n"
+              "- `liborbit_frida_agent.so` and `orbit-frida-helper` (function hooks)\n"
+              "- `liborbit_api.so` and `orbit.h` (manual instrumentation)\n"
+              "- `orbit-gpu-helper` (optional NVIDIA lanes; dynamically linked)\n"
+              "- `licenses/` (Frida)\n\n"
+              "**macOS** (`orbit-macos-universal.tar.gz`): universal binary (Apple silicon and Intel) from "
+              "`./build-service-macos.sh --universal`. Ad-hoc signed, not notarized. "
+              "Manual scopes and Frida hooks. No sampling or scheduler.\n\n"
+              "Checksums: `SHA256SUMS` and the per-archive `.sha256` files.\n\n"
+              "Install (fails with a clear message until a non-prerelease `orbit-v*` tag exists):\n\n"
+              "```\n"
+              "curl -fsSL https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.sh | sh\n"
+              "```\n\n"
+              "This is not a legacy C++ nightly (`nightly-*` / `v1.*`).\n"
+          )
+          PY
+          args=(--verify-tag --title "Orbit $tag" --notes-file "$notes")
+          if [[ "$tag" =~ ^orbit-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            args+=(--latest)
+          else
+            args+=(--prerelease --latest=false)
+          fi
+          gh release create "$tag" dist/* "${args[@]}"
