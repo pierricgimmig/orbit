@@ -23,12 +23,12 @@
 # The library is built against glibc 2.17 (manylinux2014) so the wheel installs
 # on any modern Linux; the service binary is a fully static musl build.
 #
-# ORBIT_COMPANIONS_DIR, when set, names a directory whose contents are copied
-# beside the service in the orbit-profiler wheel: the Frida engine's
-# liborbit_frida_agent and orbit-frida-helper plus their licenses/, as
-# tools/frida/build.sh <dir> produces them. Without it the wheel's service has
-# sampling, scheduling, manual instrumentation and the uprobes engine, but not
-# the Frida engine; the script says so.
+# The orbit-profiler wheel always includes the Frida companions. The service
+# loads liborbit_frida_agent and spawns orbit-frida-helper from the directory
+# that contains the orbit-service executable. This script builds those for the
+# wheel's target (glibc or macOS, not the musl service triple). Set
+# ORBIT_COMPANIONS_DIR to skip that build and copy a directory already laid
+# out the way tools/frida/build.sh <dir> writes it.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$(pwd)
@@ -73,6 +73,42 @@ target_spec() {
 # On a macOS host, Apple's toolchain links both mac architectures; zig is for
 # cross-linking from Linux (and for musl, where it needs no musl toolchain).
 native_mac() { [[ $(uname -s) == Darwin && "$1" == macos-* ]]; }
+
+# Frida's devkits and the helper are per-target glibc/macOS binaries, not musl.
+companion_triple() {
+  case "$1" in
+    linux-x86_64)  echo "x86_64-unknown-linux-gnu" ;;
+    linux-aarch64) echo "aarch64-unknown-linux-gnu" ;;
+    macos-x86_64)  echo "x86_64-apple-darwin" ;;
+    macos-arm64)   echo "aarch64-apple-darwin" ;;
+    *) echo "unknown platform key '$1'" >&2; return 1 ;;
+  esac
+}
+
+# build_frida_companions <key> <dest>
+# Writes liborbit_frida_agent.*, orbit-frida-helper, and licenses/ into dest.
+build_frida_companions() {
+  local key=$1 dest=$2 triple lib host
+  triple=$(companion_triple "$key")
+  "$ROOT/tools/frida/devkits.sh" "$triple"
+  rustup target add "$triple" >/dev/null 2>&1 || true
+  host=$(rustc -vV | sed -n 's/^host: //p')
+  echo "-- Frida companions ($triple)"
+  local -a cargo
+  if [[ "$triple" != "$host" ]] && ! native_mac "$key"; then
+    cargo=(cargo zigbuild --release --target "$triple")
+  else
+    cargo=(cargo build --release --target "$triple")
+  fi
+  "${cargo[@]}" --manifest-path "$ROOT/rust/crates/orbit-frida-helper/Cargo.toml" >/dev/null
+  "${cargo[@]}" --manifest-path "$ROOT/rust/Cargo.toml" -p orbit-frida-agent --features native >/dev/null
+  if [[ "$key" == macos-* ]]; then lib=liborbit_frida_agent.dylib; else lib=liborbit_frida_agent.so; fi
+  mkdir -p "$dest/licenses"
+  cp "$ROOT/rust/target/$triple/release/$lib" "$dest/"
+  cp "$ROOT/rust/crates/orbit-frida-helper/target/$triple/release/orbit-frida-helper" "$dest/"
+  chmod 755 "$dest/orbit-frida-helper"
+  cp "$ROOT/tools/frida/licenses/"* "$dest/licenses/"
+}
 
 # cargo_for <key> <manifest> <target> [extra cargo args]
 cargo_for() {
@@ -129,18 +165,29 @@ for key in "$@"; do
   cp "$lib" "$SVC_PKG/orbit_profiler/$lib_file"
   cp "$HEADER" "$SVC_PKG/orbit_profiler/orbit.h"
   staged_companions=()
-  if [[ -n "${ORBIT_COMPANIONS_DIR:-}" ]]; then
-    for f in "$ORBIT_COMPANIONS_DIR"/liborbit_frida_agent.* "$ORBIT_COMPANIONS_DIR"/orbit-frida-helper; do
-      [[ -e "$f" ]] || continue
-      cp "$f" "$SVC_PKG/orbit_profiler/"; staged_companions+=("$SVC_PKG/orbit_profiler/$(basename "$f")")
-    done
-    if [[ -d "$ORBIT_COMPANIONS_DIR/licenses" ]]; then
-      cp -r "$ORBIT_COMPANIONS_DIR/licenses" "$SVC_PKG/orbit_profiler/licenses"; staged_companions+=("$SVC_PKG/orbit_profiler/licenses")
-    fi
-    echo "-- Frida companions: ${#staged_companions[@]} item(s) from $ORBIT_COMPANIONS_DIR"
-  else
-    echo "-- Frida companions: none (ORBIT_COMPANIONS_DIR unset); this wheel's service has no Frida engine"
+  companions_src=${ORBIT_COMPANIONS_DIR:-}
+  companions_tmp=
+  if [[ -z "$companions_src" ]]; then
+    companions_tmp=$(mktemp -d)
+    build_frida_companions "$key" "$companions_tmp"
+    companions_src=$companions_tmp
   fi
+  shopt -s nullglob
+  for f in "$companions_src"/liborbit_frida_agent.* "$companions_src"/orbit-frida-helper; do
+    cp "$f" "$SVC_PKG/orbit_profiler/"
+    staged_companions+=("$SVC_PKG/orbit_profiler/$(basename "$f")")
+  done
+  shopt -u nullglob
+  if [[ -d "$companions_src/licenses" ]]; then
+    cp -r "$companions_src/licenses" "$SVC_PKG/orbit_profiler/licenses"; staged_companions+=("$SVC_PKG/orbit_profiler/licenses")
+  fi
+  [[ -z "${companions_tmp}" ]] || rm -rf "$companions_tmp"
+  if [[ ! -f "$SVC_PKG/orbit_profiler/orbit-frida-helper" ]] || \
+     [[ ! -f "$SVC_PKG/orbit_profiler/liborbit_frida_agent.so" && ! -f "$SVC_PKG/orbit_profiler/liborbit_frida_agent.dylib" ]]; then
+    echo "Frida companions were not staged for $key" >&2
+    exit 1
+  fi
+  echo "-- Frida companions: ${#staged_companions[@]} item(s)"
   build_and_tag "$SVC_PKG" "$plat"
 
   # Leave the trees clean: the bundled binaries are build products, not source.

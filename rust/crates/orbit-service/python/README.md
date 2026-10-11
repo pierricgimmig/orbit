@@ -5,7 +5,7 @@ viewer. This package installs the whole thing with one command.
 
 ```console
 $ pip install orbit-profiler
-$ orbit-service --serve 44766
+$ orbit-service
 # then open http://127.0.0.1:44766/ in a browser
 ```
 
@@ -21,17 +21,16 @@ for instrumenting Python.
 
 ## What is in the wheel, and what is not
 
-Sampling, scheduling, GPU telemetry, manual instrumentation through the API
-(C, C++, Rust, Python) and the uprobes dynamic-instrumentation engine are all
-in the binary. The Frida dynamic-instrumentation engine additionally needs
-two native companions, `liborbit_frida_agent` and `orbit-frida-helper`, which
-a wheel carries only when it was built with them
-(`ORBIT_COMPANIONS_DIR`, see `tools/release/build_wheels.sh`); a wheel built
-without them says so at build time, and the service's settings offer the
-uprobes engine instead. The project's release archives always include the
-Frida engine.
+Sampling, scheduling, manual instrumentation through the API (C, C++, Rust,
+Python) and both hook engines are in the binary. Function hooks also need
+`liborbit_frida_agent` and `orbit-frida-helper` in the same directory as
+`orbit-service`. The wheel includes them (see `tools/release/build_wheels.sh`).
+The console script marks `orbit-frida-helper` executable, because a wheel
+does not keep that bit. NVIDIA GPU lanes need `orbit-gpu-helper` beside the
+service; the release archive has it, this wheel does not.
 
-Sampling needs `perf_event_paranoid <= -1` or `CAP_PERFMON`; dynamic
-instrumentation needs `CAP_SYS_ADMIN`. See the manual for details. The pure
-`curl … | sh` installer and prebuilt archives remain at the project's releases
-for users who do not want Python in the loop.
+On Linux, sampling needs `perf_event_paranoid` at 2 or below, and the
+scheduler needs 0 or below. Root, `CAP_PERFMON`, or `CAP_SYS_ADMIN` bypass
+that sysctl. Frida hooks do not need root. Auto-profiling uses the kernel
+hook engine and needs root or `CAP_SYS_ADMIN`. The `curl … | sh` installer
+and the release archives are in [docs/releasing.md](../../../../docs/releasing.md).

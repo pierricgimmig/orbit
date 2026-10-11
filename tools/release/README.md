@@ -30,12 +30,11 @@ The script refuses to run if the release version drifts between
 `orbit-api==` pin in orbit-profiler, and the two `__version__`s: bump all of
 them together.
 
-`ORBIT_COMPANIONS_DIR=<dir>` copies the Frida engine's companions
-(`liborbit_frida_agent`, `orbit-frida-helper`, `licenses/`, as
-`tools/frida/build.sh <dir>` produces them) beside the service in the
-orbit-profiler wheel. Without it the wheel's service has sampling, scheduling,
-manual instrumentation and the uprobes engine but not the Frida engine, and the
-script prints that. The CI matrix does not build the companions yet.
+The orbit-profiler wheel includes the Frida companions
+(`liborbit_frida_agent`, `orbit-frida-helper`, `licenses/`). The service
+loads them from the directory that contains `orbit-service`. The script
+builds them for the wheel target. `ORBIT_COMPANIONS_DIR=<dir>` skips that
+build and copies a directory already produced by `tools/frida/build.sh`.
 
 Local check:
 
@@ -46,6 +45,8 @@ python3 -m venv /tmp/v
 /tmp/v/bin/orbit-service --help
 ```
 
-CI (`.github/workflows/python-wheels.yml`) runs the matrix on a `v1.*` tag and
-publishes to PyPI via Trusted Publishing — configure the publishers for
-`orbit-api` and `orbit-profiler` on PyPI once before the first tagged release.
+CI (`.github/workflows/python-wheels.yml`) runs the matrix on an `orbit-v*`
+tag (not the legacy C++ `v1.*` tags) and publishes to PyPI via Trusted
+Publishing — configure the publishers for `orbit-api` and `orbit-profiler`
+on PyPI once before the first tagged release. `workflow_dispatch` builds
+wheels and does not publish. See [docs/releasing.md](../../docs/releasing.md).
