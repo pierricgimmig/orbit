@@ -8,13 +8,8 @@ that the Rust service does not have (Qt, Wine/Proton mixed callstacks, AMD
 GPU job tracing, Vulkan labels, memory and page-fault tracing, SSH sessions,
 the Unreal plugin) are this older tree.
 
-On **main**, the Rust service includes macOS manual instrumentation
-and browser viewer hosting for Apple Silicon and Intel. See the
-[macOS build guide](building_macos.md) for setup, validation status and
-features still pending.
-
-Dynamic function instrumentation now defaults to **Frida**, with Linux uprobes
-retained as an option. See the [Frida build and runtime guide](frida-instrumentation.md).
+macOS setup for the Rust service is [building_macos.md](building_macos.md).
+Frida, the default hook engine, is [frida-instrumentation.md](frida-instrumentation.md).
 
 <img alt="ORBIT Logo" src="../contrib/logos/orbit_logo_simple.png" align="right" width="520" >
 
