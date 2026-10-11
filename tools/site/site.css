@@ -135,7 +135,7 @@ footer.site a { color: var(--muted); }
    leftover viewport so the capture is on screen before any scroll. */
 .demo { margin: 0; }
 .demo .embed iframe {
-  height: min(720px, calc(100svh - 14.25rem));
+  height: min(720px, calc(100svh - 18rem));
   min-height: 260px;
 }
 .caption {
@@ -236,6 +236,12 @@ footer.site { padding-bottom: 3rem; }
 }
 @media (max-width: 450px) {
   .hero h1 { font-size: 1.3rem; max-width: none; }
+  /* The longer headline sits above the demo. Shrink the frame so it still
+     ends inside a 390 by 844 screen. */
+  .demo .embed iframe {
+    height: min(640px, calc(100svh - 20.5rem));
+    min-height: 220px;
+  }
 }
 ::selection { background: var(--accent-wash); color: var(--ink); }
 
