@@ -1,6 +1,6 @@
 # Rust service on macOS
 
-The Rust branch includes a macOS service backend for **Apple Silicon and Intel**.
+main includes a macOS service backend for **Apple Silicon and Intel**.
 It serves the embedded browser viewer and records manual instrumentation from
 Rust, C, C++, and Python processes running as the same user. The build targets
 macOS 11 or later; native CI runs on macOS 15 on both architectures.
