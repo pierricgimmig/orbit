@@ -10,6 +10,7 @@ license = "BSD-2-Clause"
 rust-version = "1.88"
 
 [dependencies]
+orbit-live-protocol = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-protocol" }
 orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-event" }
 # Granular arrow crates, no compression features, so the service stays a pure
 # static musl binary with no C toolchain pulled in through lz4/zstd. The same

@@ -1882,6 +1882,20 @@ pub fn run_on(
         target_pid: Arc::new(AtomicI32::new(0)),
     };
 
+    let share_service = service.clone();
+    let share_store = store.clone();
+    let share_target = capture.target_pid.clone();
+    *service.capture_share_export.lock() = Some(Arc::new(move |window| {
+        let (_, events) = share_service.ring().snapshot();
+        let intern = share_service.intern.lock();
+        let (threads, processes) = share_service.capture_names();
+        let bundle = crate::names::capture_bundle(&events, &intern, &share_store, &threads, &processes,
+            share_target.load(Ordering::Relaxed).max(0) as u32);
+        let bundle = window.map(|(a, b)| bundle.slice(a, b)).unwrap_or(bundle);
+        let stream = bundle.to_stream();
+        Ok((bundle.to_zip().map_err(|e| e.to_string())?, stream))
+    }));
+
     let export_store = store.clone();
     let export_target = capture.target_pid.clone();
     service.set_capture_export(Arc::new(move |format, window| {

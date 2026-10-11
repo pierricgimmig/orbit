@@ -288,6 +288,7 @@ pub struct ServiceFrame {
 
 #[derive(Default)]
 pub struct Inbox {
+    pub share: Option<Result<ShareReply, String>>,
     pub status: Option<StatusJson>,
     /// The service's persisted user settings (`/api/settings`), as the raw
     /// object so keys this viewer does not know survive a round trip.
@@ -315,6 +316,12 @@ pub struct Inbox {
     /// The code views: a disassembly and a source file, or why not.
     pub disassembly: Option<Result<crate::code::Disassembly, String>>,
     pub source: Option<Result<crate::code::SourceFile, String>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ShareReply {
+    pub viewer_url: String,
+    pub expires_in: Option<u32>,
 }
 
 #[allow(dead_code)] // used from the wasm Net impl
@@ -603,9 +610,21 @@ mod wasm_impl {
             }
         }
 
+        pub fn share_capture(&self, window: Option<(u64, u64)>) {
+            if self.offline { return; }
+            let inbox = self.inbox.clone();
+            let query = window.map(|(a, b)| format!("?t0={a}&t1={b}")).unwrap_or_default();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = send_text("POST", &format!("/api/capture/share{query}"), "{}")
+                    .await.and_then(|text| serde_json::from_str::<ShareReply>(&text).map_err(|e| e.to_string()));
+                inbox.lock().unwrap_or_else(|e| e.into_inner()).share = Some(result);
+            });
+        }
+
         pub fn take(&self) -> Inbox {
             let mut inbox = self.inbox.lock().unwrap_or_else(|e| e.into_inner());
             Inbox {
+                share: inbox.share.take(),
                 status: inbox.status.take(),
                 settings: inbox.settings.take(),
                 bench: inbox.bench.take(),
@@ -1388,6 +1407,7 @@ mod native_impl {
         pub fn connect() -> Self {
             Self
         }
+        pub fn share_capture(&self, _window: Option<(u64, u64)>) {}
         pub fn from_capture_url(_url: &str) -> Self {
             Self
         }

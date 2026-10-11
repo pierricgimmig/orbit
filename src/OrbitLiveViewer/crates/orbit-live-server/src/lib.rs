@@ -2,6 +2,7 @@
 
 pub mod bench;
 pub mod demo;
+mod sharing;
 pub mod http;
 pub mod ingest;
 pub mod settings;
@@ -179,6 +180,9 @@ pub struct LiveService {
     pub capture_export: Mutex<
         Option<std::sync::Arc<dyn Fn(&str, Option<(u64, u64)>) -> Result<Vec<u8>, String> + Send + Sync>>,
     >,
+    /// The archive and browser stream encoded from one snapshot.
+    #[allow(clippy::type_complexity)]
+    pub capture_share_export: Mutex<Option<Arc<dyn Fn(Option<(u64, u64)>) -> Result<(Vec<u8>, Vec<u8>), String> + Send + Sync>>>,
     /// Optional: opens a self-contained capture (`.orbit.zip` bytes) as the
     /// current capture, replacing what the ring holds. Returns a short JSON
     /// summary. Set by the service, which owns the decoder.
@@ -337,6 +341,7 @@ impl LiveService {
             sampling_tree_scope: Mutex::new(None),
             modules_json: Mutex::new(None),
             capture_export: Mutex::new(None),
+            capture_share_export: Mutex::new(None),
             capture_import: Mutex::new(None),
             capture_open: Mutex::new(None),
             capture_clear: Mutex::new(None),
