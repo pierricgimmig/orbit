@@ -728,7 +728,7 @@ impl LiveService {
     /// receives when it connects, ended by `CaptureFinished` so a viewer
     /// opening it from a file fits the view. A static web page serves this
     /// next to the viewer pack and needs no service. With `window`, only the
-    /// events starting inside it.
+    /// events overlapping it, kept whole.
     pub fn capture_stream(&self, window: Option<(u64, u64)>) -> Vec<u8> {
         let mut out = Vec::new();
         for frame in self.hello_and_snapshot_frames_in(window) {
@@ -747,7 +747,8 @@ impl LiveService {
         frames.extend(self.names_and_status_frames());
         let (_, mut events) = self.ring().snapshot();
         if let Some((a, b)) = window {
-            events.retain(|e| e.start_ns >= a && e.start_ns <= b);
+            let (a, b) = (a.min(b), a.max(b));
+            events.retain(|e| e.start_ns <= b && e.end_ns() >= a);
         }
         if !events.is_empty() {
             // Chunk so one WS message stays reasonable.

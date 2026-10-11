@@ -402,3 +402,16 @@ fn a_provisional_start_after_the_real_one_is_not_broadcast() {
     assert_eq!(svc.live_end_ns(), 3_004, "the live edge was not reset by the late 0");
     assert!(svc.is_capturing());
 }
+
+#[test]
+fn stream_slice_keeps_events_crossing_both_edges_and_normalizes_bounds() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    let mut crossing = ev(1); crossing.duration_ns = 100;
+    svc.push_events(&[ev(0), crossing, ev(5), ev(20)]);
+    let frames = decode_all(&svc.capture_stream(Some((60, 50)))).unwrap();
+    let events: Vec<_> = frames.iter().filter_map(|f| match f {
+        LiveFrame::EventBatch { events } => Some(events.clone()), _ => None,
+    }).flatten().collect();
+    assert_eq!(events, vec![crossing, ev(5)]);
+    assert!(matches!(frames.last(), Some(LiveFrame::CaptureFinished)));
+}
