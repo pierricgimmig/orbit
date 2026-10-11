@@ -129,3 +129,12 @@ Preset regression:
 Browser API fixtures exercise multi-file import, portable JSON download,
 additive/idempotent selection, missing/ambiguous symbols, invalid files, and
 process switching with a late response.
+
+## Capture sharing smoke test
+
+After rebuilding the viewer pack and the debug service, run
+`python3 tools/e2e/share_capture.py`. It uses a local AWS CLI stand-in and an
+HTTPS object server, makes no AWS writes, and checks one-click Share, exact
+slice archive preservation, signed URL encoding, cross-origin browser loading
+under COOP/COEP, and the complete archive download. It requires `openssl` in
+addition to `google-chrome`.
