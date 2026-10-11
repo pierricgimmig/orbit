@@ -10,9 +10,12 @@ Plan and implementation:
 ## Use
 
 Stop recording. Select a time range by dragging on the timeline, then click
-**Share slice** (or **Share** with no selection). The service uploads two files,
-copies the website link, and exposes **Copy link** and **Open shared capture**.
-The controls are also in **More** on narrow screens. Save → Selected slice
+**Share slice** (or **Share** with no selection). The service uploads two files;
+when they are up, the bar shows **Copy link** and **Open shared capture**. The
+controls are also in **More** on narrow screens. The service accepts the request
+only from its own viewer opened by IP address or as `localhost`, so a page on
+some other site cannot upload a capture through a user's browser. Failed AWS
+CLI calls are logged by the service with the CLI's own message. Save → Selected slice
 continues to download a local `.orbit.zip` without S3.
 
 The website opens `viewer/index.html?capture=<encoded-stream-url>&download=<encoded-archive-url>`.

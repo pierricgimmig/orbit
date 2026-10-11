@@ -138,9 +138,13 @@ fn aws() -> Command {
         .env("AWS_MAX_ATTEMPTS", "2");
     cmd
 }
-fn aws_result(output: std::process::Output) -> Result<String, String> {
+fn aws_result(what: &str, output: std::process::Output) -> Result<String, String> {
     if !output.status.success() {
-        // Never echo subprocess output: a presign error can include credential details.
+        // The CLI's own words go to the service log, where whoever configured
+        // the bucket can read them; the browser only learns that it failed,
+        // since a presign error can include credential details.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("share: aws s3 {what} failed ({}): {}", output.status, stderr.trim());
         return Err(format!("S3 operation failed ({}); check the service's AWS credentials, bucket, region and permissions", output.status));
     }
     String::from_utf8(output.stdout)
@@ -163,7 +167,7 @@ impl ObjectStore for Aws {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|_| "Cannot run AWS CLI; install aws on the service machine".to_string())?;
         let written = child
@@ -174,7 +178,7 @@ impl ObjectStore for Aws {
         let output = child
             .wait_with_output()
             .map_err(|_| "Cannot wait for AWS CLI")?;
-        aws_result(output)?;
+        aws_result("cp", output)?;
         written.map_err(|_| "S3 upload interrupted".to_string())
     }
     fn presign(&self, bucket: &str, key: &str, expires: u32) -> Result<String, String> {
@@ -186,10 +190,10 @@ impl ObjectStore for Aws {
                 "--expires-in",
                 &expires.to_string(),
             ])
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .output()
             .map_err(|_| "Cannot run AWS CLI")?;
-        let url = aws_result(output)?;
+        let url = aws_result("presign", output)?;
         if !url.starts_with("https://") {
             return Err("AWS CLI returned a non-HTTPS download URL".into());
         }

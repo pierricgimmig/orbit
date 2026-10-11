@@ -175,37 +175,60 @@ impl CaptureBundle {
     /// Browser wire stream from this exact bundle. The archive remains the
     /// authoritative source of frame addresses and module metadata. Sampled
     /// stacks are rebuilt from sample rows, not inferred from retained spans.
+    ///
+    /// `CaptureStarted` goes out right after `Hello`: the viewer treats it as
+    /// the start of a fresh capture and drops the names it holds, so every
+    /// name has to follow it, not precede it.
     pub fn to_stream(&self) -> Vec<u8> {
         use orbit_live_event::{kind, extra, LIVE_EVENT_SIZE};
         use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
         let mut out = encode_frame(&LiveFrame::Hello { version: VERSION, event_size: LIVE_EVENT_SIZE as u16 });
         let mut append = |frame| out.extend_from_slice(&encode_frame(&frame));
-        for (id, text) in self.names() { append(LiveFrame::InternedString { id, text }); }
-        for f in &self.frames { append(LiveFrame::InternedString { id: f.id, text: f.name.clone() }); }
-        for p in &self.processes { append(LiveFrame::ProcessName { pid: p.pid, name: p.name.clone() }); }
-        for t in &self.threads { append(LiveFrame::ThreadName { pid: t.pid, tid: t.tid, name: t.name.clone() }); }
         let start = self.slice_ns.or(self.time_bounds()).map(|(a, _)| a).unwrap_or(0);
         append(LiveFrame::CaptureStarted { pid: self.target_pid, start_ns: start });
+        let names = self.names();
+        for (id, text) in &names { append(LiveFrame::InternedString { id: *id, text: text.clone() }); }
+        // Scope names and frame names share the viewer's one string table.
+        // The service interns frames into the scope table so their ids never
+        // clash there, but a bundle written by another producer may reuse an
+        // id for both: such frames move to fresh ids above everything in use.
+        let frame_ids = self.stream_frame_ids(&names);
+        for f in &self.frames { append(LiveFrame::InternedString { id: frame_ids[&f.id], text: f.name.clone() }); }
+        for p in &self.processes { append(LiveFrame::ProcessName { pid: p.pid, name: p.name.clone() }); }
+        for t in &self.threads { append(LiveFrame::ThreadName { pid: t.pid, tid: t.tid, name: t.name.clone() }); }
         let mut events: Vec<LiveEvent> = self.events.iter().map(|r| r.event)
             .filter(|e| e.kind != kind::SAMPLE && !(e.kind == kind::FUNCTION_CALL && e.extra == extra::SAMPLED_FRAME)).collect();
         let periods: HashMap<(u32, u64), u64> = self.events.iter()
             .filter(|r| r.event.kind == kind::SAMPLE)
             .map(|r| ((r.event.tid, r.event.start_ns), r.event.duration_ns)).collect();
         let thread_pids: HashMap<u32, u32> = self.threads.iter().map(|t| (t.tid, t.pid)).collect();
+        let frame_id = |id: &u32| frame_ids.get(id).copied().unwrap_or(*id);
         for sample in &self.samples {
             let pid = thread_pids.get(&sample.tid).copied().unwrap_or(self.target_pid);
             let period = periods.get(&(sample.tid, sample.timestamp_ns)).copied().unwrap_or(1);
             let event = LiveEvent { start_ns: sample.timestamp_ns, duration_ns: period, tid: sample.tid, pid,
-                kind: kind::SAMPLE, depth: 0, extra: 0, _pad: 0, name_id: sample.frames.first().copied().unwrap_or(0) };
+                kind: kind::SAMPLE, depth: 0, extra: 0, _pad: 0, name_id: sample.frames.first().map(frame_id).unwrap_or(0) };
             events.push(event);
             for (depth, id) in sample.frames.iter().rev().enumerate() {
-                events.push(LiveEvent { kind: kind::FUNCTION_CALL, extra: extra::SAMPLED_FRAME, depth: depth.min(255) as u8, name_id: *id, ..event });
+                events.push(LiveEvent { kind: kind::FUNCTION_CALL, extra: extra::SAMPLED_FRAME, depth: depth.min(255) as u8, name_id: frame_id(id), ..event });
             }
         }
         events.sort_unstable_by_key(|e| e.start_ns);
         for chunk in events.chunks(2048) { append(LiveFrame::EventBatch { events: chunk.to_vec() }); }
         append(LiveFrame::CaptureFinished);
         out
+    }
+
+    /// The string id each frame takes in the wire stream: its own, unless a
+    /// scope name already holds that id with different text.
+    fn stream_frame_ids(&self, names: &[(u32, String)]) -> HashMap<u32, u32> {
+        let taken: HashMap<u32, &str> = names.iter().map(|(id, text)| (*id, text.as_str())).collect();
+        let mut next = names.iter().map(|(id, _)| *id).chain(self.frames.iter().map(|f| f.id)).max().unwrap_or(0);
+        self.frames.iter().map(|f| {
+            let clashes = taken.get(&f.id).is_some_and(|text| *text != f.name);
+            let id = if clashes { next += 1; next } else { f.id };
+            (f.id, id)
+        }).collect()
     }
 
     /// The bundle as one `.orbit.zip`: Parquet tables, stored.
@@ -307,9 +330,26 @@ mod tests {
         for row in &slice.events { assert!(events.contains(&row.event)); }
         let sample_times: Vec<_> = events.iter().filter(|e| e.kind == kind::SAMPLE).map(|e| e.start_ns).collect();
         assert_eq!(sample_times, slice.samples.iter().map(|s| s.timestamp_ns).collect::<Vec<_>>());
+        // Frame 1 "main" and scope name 1 "Tick" share an id in this fixture:
+        // both names reach the viewer, the frame under a fresh id that the
+        // sampled stacks use too.
+        let strings: HashMap<u32, String> = decoded.iter().filter_map(|f| match f {
+            LiveFrame::InternedString { id, text } => Some((*id, text.clone())), _ => None,
+        }).collect();
+        for row in &slice.events { assert_eq!(strings[&row.event.name_id], row.name); }
         for frame in &slice.frames {
-            assert!(decoded.iter().any(|f| matches!(f, LiveFrame::InternedString { id, text } if *id == frame.id && *text == frame.name)));
+            assert!(strings.values().any(|text| *text == frame.name), "frame {} missing", frame.name);
         }
+        let stack_names: Vec<&str> = events.iter()
+            .filter(|e| e.kind == kind::FUNCTION_CALL && e.extra == orbit_live_event::extra::SAMPLED_FRAME)
+            .map(|e| strings[&e.name_id].as_str()).collect();
+        assert_eq!(stack_names, ["tick", "main", "physics"]);
+        // The viewer forgets names on CaptureStarted: it must come first.
+        let started = decoded.iter().position(|f| matches!(f, LiveFrame::CaptureStarted { .. })).unwrap();
+        let first_name = decoded.iter().position(|f| matches!(f,
+            LiveFrame::InternedString { .. } | LiveFrame::ThreadName { .. } | LiveFrame::ProcessName { .. })).unwrap();
+        assert_eq!(started, 1);
+        assert!(first_name > started);
         assert!(matches!(decoded.last(), Some(LiveFrame::CaptureFinished)));
     }
 

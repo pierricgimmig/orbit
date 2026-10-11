@@ -72,9 +72,11 @@ their callstack frames, and thread/process names. The selected window is stored
 in the archive alongside the retained events' full bounds.
 
 With S3 sharing configured on the service, stop recording and click **Share slice**.
-With no selection, **Share** uploads the whole capture. Orbit copies a link to
-the website viewer; **Copy link** and **Open shared capture** remain available
-when the upload finishes. On narrow screens these controls are in **More**.
+With no selection, **Share** uploads the whole capture. When the upload finishes,
+**Copy link** copies a link to the website viewer and **Open shared capture**
+opens it; both stay until the capture is cleared, re-recorded or replaced. On
+narrow screens these controls are in **More**. Sharing is accepted from the
+service's own viewer opened by IP address or as `localhost`.
 Recipients can view the timeline and sampling reports without running Orbit,
 and download the complete archive. Private-bucket links expire after seven
 days by default, or sooner if the service's AWS credentials expire.

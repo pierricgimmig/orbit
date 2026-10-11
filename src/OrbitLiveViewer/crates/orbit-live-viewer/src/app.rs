@@ -2144,6 +2144,15 @@ impl OrbitLiveApp {
         self.trace_flows.clear();
         self.thread_names.clear();
         self.trace_processes.clear();
+        self.forget_share();
+    }
+
+    /// A share link names one capture: anything that replaces the capture
+    /// (Clear, Record, opening a file, a capture started elsewhere) drops it,
+    /// and a reply still in flight for the old capture is ignored.
+    fn forget_share(&mut self) {
+        self.share_pending = false;
+        self.share_reply = None;
     }
 
     fn begin_trace_load(&mut self, load: TraceLoad) {
@@ -2161,6 +2170,7 @@ impl OrbitLiveApp {
         self.trace_flows.clear();
         self.thread_names.clear();
         self.trace_processes.clear();
+        self.forget_share();
         self.trace_name = Some(load.name.clone());
         self.live_edge_ns = 0;
         self.t0 = 0.0;
@@ -2555,13 +2565,17 @@ impl OrbitLiveApp {
         }
     }
 
-    fn drain_net(&mut self, ctx: &Context) {
+    fn drain_net(&mut self) {
         crate::logging::flush();
         let inbox = self.net.take();
-        if let Some(result) = inbox.share {
+        // Only a reply someone still waits for counts: Clear or Record after
+        // clicking Share dropped the request (`forget_share`). The link is not
+        // copied here: a clipboard write outside a click is refused by
+        // Firefox and Safari, so the bar offers Copy link instead.
+        if let (Some(result), true) = (inbox.share, self.share_pending) {
             self.share_pending = false;
             match result {
-                Ok(reply) => { ctx.copy_text(reply.viewer_url.clone()); self.share_reply = Some(reply); }
+                Ok(reply) => self.share_reply = Some(reply),
                 Err(e) => self.error = e,
             }
         }
@@ -3020,7 +3034,12 @@ impl OrbitLiveApp {
     }
 
     fn transport_overflow_items(&mut self, ui: &mut Ui) {
-        if self.static_capture.is_none() { self.transport_save(ui); self.transport_share(ui); }
+        // The wide bar has Save and Share of its own; the narrow bar keeps
+        // them here.
+        if self.static_capture.is_none() && (self.chrome_collapsed() || self.was_narrow) {
+            self.transport_save(ui);
+            self.transport_share(ui);
+        }
         let presets = ui.button("Instrumentation presets…");
         note_ui_rect("Presets", presets.rect);
         if presets.clicked() { self.presets.open = true; ui.close(); }
@@ -3417,11 +3436,16 @@ impl OrbitLiveApp {
     }
 
     fn transport_share(&mut self, ui: &mut Ui) {
+        // Sharing goes through the service's HTTP API, which only the browser
+        // build talks to: the native `Net` has no request to make.
+        if !cfg!(target_arch = "wasm32") {
+            return;
+        }
         let stopped = !self.recording && !self.status.capturing && !self.status.demo && self.trace_name.is_none();
         let selected = self.selection_span();
         let label = if self.share_pending { "Sharing…" } else if selected.is_some() { "Share slice" } else { "Share" };
         let button = ui.add_enabled(stopped && !self.share_pending && self.index.event_count() > 0, egui::Button::new(label))
-            .on_hover_text("Upload to S3 and copy a website link. Shares the selected time range, or the whole capture. Stop recording first.");
+            .on_hover_text("Upload to S3 and get a website link. Shares the selected time range, or the whole capture. Stop recording first.");
         note_ui_rect(label, button.rect);
         if button.clicked() {
             self.share_pending = true;
@@ -3429,14 +3453,17 @@ impl OrbitLiveApp {
             self.net.share_capture(selected);
         }
         if let Some(reply) = &self.share_reply {
-            let copy = ui.button("Copy link");
+            let copy = ui.button(RichText::new("Copy link").color(theme::ACCENT()))
+                .on_hover_text("Copy the website link to the clipboard");
             note_ui_rect("Copy link", copy.rect);
             if copy.clicked() { ui.ctx().copy_text(reply.viewer_url.clone()); }
             ui.hyperlink_to("Open shared capture", &reply.viewer_url).on_hover_text(
                 reply.expires_in.map(|s| format!("Link expires after {} hours; temporary AWS credentials can expire sooner", s / 3600))
                     .unwrap_or_else(|| "Shared capture on the Orbit website".into()));
         }
-        if self.share_pending { ui.ctx().request_repaint(); }
+        // The label waits on a reply the network drain delivers; an upload
+        // can take a minute, so this is a slow tick, not a frame-rate spin.
+        if self.share_pending { ui.ctx().request_repaint_after(std::time::Duration::from_millis(250)); }
     }
 
     fn paint_symbols_status(&mut self, ui: &mut Ui) {
@@ -9196,7 +9223,7 @@ impl eframe::App for OrbitLiveApp {
                 let _net = devf.scope(TID_NET, NAME_NET);
                 {
                     let _drain = devf.scope(TID_NET, NAME_DRAIN_NET);
-                    self.drain_net(ctx);
+                    self.drain_net();
                     self.refresh_search();
                 }
                 // A live capture that just ended lands on the top-down call
