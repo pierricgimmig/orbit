@@ -23,9 +23,11 @@ Settings, **COLLECT**:
 | **API** | Manual orbit.h API scopes | Scopes from `orbit.h`, Rust and Python |
 | **Sample** | Callstack sampling | A stack sample per period |
 
-The field beside Sample is the period in milliseconds (`ms`). `1.0` is 1 kHz. The capture start sends that as samples per second.
+The field beside Sample is a period in milliseconds (`ms`). It starts at `1.0`. The viewer sends it as `samples_per_second`. The service on main does not read that field: a Linux capture samples at a fixed 1 kHz.
 
-**UNWIND** is **DWARF** or **FP**. DWARF is the default (`unwinding: "dwarf"`; FP sends `"frame_pointers"`).
+> The COLLECT switches are sent with the capture start. On this service a Linux capture always samples, always opens the scheduler and thread-state rings when the kernel allows it, and always reads manual scopes. Turning a switch off does not drop that stream yet.
+
+**UNWIND** shows **DWARF** or **FP**. The viewer sends `unwinding` as `"dwarf"` or `"frame_pointers"`. The service unwinds with DWARF (framehop, `.eh_frame` / `.debug_frame`) and does not read that field, so FP is not a second unwinder on this build.
 
 ## Hooks
 

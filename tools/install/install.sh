@@ -40,7 +40,7 @@ arch=$(uname -m 2>/dev/null || echo unknown)
 case "$os" in
     Linux)  os=linux ;;
     Darwin) os=macos ;;
-    *) die "unsupported OS '$os'. Linux and macOS have binaries; Windows: build from source." ;;
+    *) die "unsupported OS '$os'. Linux and macOS have binaries. The service does not build on Windows yet." ;;
 esac
 case "$arch" in
     x86_64 | amd64)        arch=x86_64 ;;

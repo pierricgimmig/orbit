@@ -2,6 +2,8 @@
 
 Orbit profiles a process that is already running. `orbit-service` captures it and serves the viewer on the same port. This guide matches the viewer and the service on main, plus [auto-profiling](capture.html#auto-profiling), which is not on main yet.
 
+This is a Rust re-implementation of [Orbit](https://github.com/google/orbit), by the original author.
+
 The [home page](../index.html) opens a saved capture in the viewer. Attach, the timeline, the flame graph and the scheduler are there. The [features page](../features.html) has the rest of the recordings.
 
 ## Install
@@ -10,7 +12,7 @@ The [home page](../index.html) opens a saved capture in the viewer. Attach, the 
 curl -fsSL https://orbitprofiler.dev/install.sh | sh
 ```
 
-The script puts `orbit-service` in `~/.local/bin` (`ORBIT_INSTALL_DIR` to choose another directory) and, when the release publishes one, `liborbit_api` beside it. Linux and macOS, x86_64 and aarch64. If the directory is not on `PATH`, the script prints the `export` line to add.
+The script puts `orbit-service` in `~/.local/bin` (`ORBIT_INSTALL_DIR` to choose another directory) and, when the release publishes one, `liborbit_api` beside it. The builds this tree produces and tests are Linux x86-64 and macOS, Intel and Apple silicon. The script also accepts a Linux arm64 name; that service compiles and is not run in CI, and the static musl build is x86-64 only. Windows is not a build yet. If the directory is not on `PATH`, the script prints the `export` line to add.
 
 The public host may not be serving binaries yet. `ORBIT_INSTALL_BASE` points the same script at a server that has the `dist/` tree.
 
@@ -26,23 +28,23 @@ Open `http://127.0.0.1:44766/`. The process prints that URL and every LAN addres
 
 1. Press **Settings** (hover: “Capture settings”).
 2. Pick the process. **Ctrl+Shift+P** (⌘⇧P on macOS) opens the same list. Up and Down move the highlight, Enter selects.
-3. Under **COLLECT**, leave on what you want. The switches are **CSW** (context switches, the scheduler track), **States** (thread state slices), **API** (manual `orbit.h` scopes) and **Sample** (callstack sampling). The text field next to Sample is the period in milliseconds. It starts at `1.0`, which is 1 kHz.
+3. Under **COLLECT** the viewer shows **CSW** (context switches, the scheduler track), **States** (thread state slices), **API** (manual `orbit.h` scopes) and **Sample** (callstack sampling), plus a period field that starts at `1.0`. On this service a Linux capture always samples at 1 kHz, opens the scheduler and thread-state rings when the kernel allows it, and reads manual scopes. The switches and the period are sent and not applied yet.
 4. Under **HOOKS**, **Frida** is the default. Switch to **Uprobes** for kernel probes. [Capture](capture.html) is the rest of that row.
 5. Press the red **Record** button, or **X**. On a narrow window the same control reads **Rec**. While a capture is running it is **Stop**.
 
 The timer at the right of the bar, just before More, shows how long this capture has been running (`m:ss.t`, or `h:mm:ss` past an hour). After Stop it stays, greyed, until Clear or the next Record. Nothing is drawn there before the first capture.
 
-A capture can run with no process selected. The scheduler, the service’s own lanes, and any process that instruments itself still fill in. Record with no service behind the page starts a demo producer instead; the button’s hover says so.
+A capture can run with no process selected. On Linux the scheduler, the service’s own lanes, and any process that instruments itself still fill in. Record with no service behind the page starts a demo producer instead; the button’s hover says so.
 
-Sampling and the scheduler need the right `perf_event_paranoid` value, or a capability that bypasses it. Uprobes need `CAP_SYS_ADMIN` even when paranoid is already low enough for sampling. The thresholds and the exact commands are in [Troubleshooting](troubleshooting.html).
+On Linux, sampling and the scheduler need the right `perf_event_paranoid` value, or a capability that bypasses it. Uprobes need `CAP_SYS_ADMIN` even when paranoid is already low enough for sampling. The thresholds and the exact commands are in [Troubleshooting](troubleshooting.html).
 
 ## What runs where
 
 The target is a native binary that is already running. Orbit does not rebuild it and does not relaunch it.
 
-`orbit-service` samples call stacks, records context switches and thread states, and can hook functions with Frida or kernel uprobes. [Auto-profiling](capture.html#auto-profiling) — the service choosing which functions to hook — is the open pull request [#97](https://github.com/pierricgimmig/orbit/pull/97), not this branch.
+`orbit-service` runs on the machine you profile. On Linux x86-64 it samples call stacks at a fixed 1 kHz, unwinds them with DWARF, records context switches and thread states, and can hook functions with Frida (the default) or kernel uprobes. On macOS it records manual scopes and Frida hooks; sampling, the scheduler, uprobes and live disassembly are not in that build. The service does not build on Windows yet. [Auto-profiling](capture.html#auto-profiling) — the service choosing which functions to hook — is the open pull request [#97](https://github.com/pierricgimmig/orbit/pull/97), not this branch. The [home page](../index.html#platforms) has the feature-by-feature table.
 
-The viewer is a Rust and WebAssembly page (egui, wgpu). It draws the [timeline](timeline.html), the [flame graph and reports](time.html), the [scheduler and the service’s own lanes](systems.html), and it opens a [saved capture or a Chrome trace](everywhere.html) with no service at all.
+The viewer is a Rust and WebAssembly page (egui, wgpu). It draws the [timeline](timeline.html), the [flame graph and reports](time.html), the [scheduler and the service’s own lanes](systems.html), and it opens a [saved capture or a Chrome trace](everywhere.html) with no service at all. A desktop, a tablet or a phone can open that page and connect to the service.
 
 ## Instrument your code
 
