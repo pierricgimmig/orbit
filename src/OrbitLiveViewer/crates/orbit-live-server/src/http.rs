@@ -65,6 +65,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/sampling/tree", get(sampling_tree))
         .route("/api/symbols/modules", get(symbols_modules))
         .route("/api/capture/export", get(capture_export))
+        .route("/api/capture/share", post(capture_share))
         .route("/api/capture/open", post(capture_open))
         .route("/api/capture/clear", post(capture_clear))
         .route("/api/scope", post(agent_scope))
@@ -535,6 +536,67 @@ async fn capture_export(
         Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
+}
+
+/// Publish a stopped capture (or selected slice) to the configured bucket.
+async fn capture_share(State(svc): State<Arc<LiveService>>, Query(q): Query<ExportQuery>, headers: axum::http::HeaderMap) -> Response {
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        let origin = origin.to_str().unwrap_or_default();
+        let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default();
+        if !share_origin_allowed(origin, host, svc.config.lock().bind) {
+            return (StatusCode::FORBIDDEN,
+                "Sharing must be requested from the service viewer, opened by IP address or as localhost").into_response();
+        }
+    }
+    let window = match (q.t0, q.t1) {
+        (Some(a), Some(b)) => Some((a.min(b), a.max(b))),
+        (None, None) => None,
+        _ => return (StatusCode::BAD_REQUEST, "give both t0 and t1, or neither").into_response(),
+    };
+    if svc.capturing.load(std::sync::atomic::Ordering::Relaxed) || svc.demo.load(std::sync::atomic::Ordering::Relaxed) {
+        return (StatusCode::CONFLICT, "Stop recording before sharing").into_response();
+    }
+    let config = match crate::sharing::ShareConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::SERVICE_UNAVAILABLE, e).into_response(),
+    };
+    let Some(export) = svc.capture_share_export.lock().clone() else {
+        return (StatusCode::NOT_IMPLEMENTED, "This service cannot export a complete capture").into_response();
+    };
+    match tokio::task::spawn_blocking(move || {
+        let (bundle, stream) = export(window)?;
+        config.upload(bundle, stream)
+    }).await {
+        Ok(Ok(result)) => Json(result).into_response(),
+        Ok(Err(e)) => (StatusCode::BAD_GATEWAY, e).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Share task failed").into_response(),
+    }
+}
+
+/// Whether a browser `Origin` may trigger an upload. The page must be this
+/// service's own viewer: same scheme-less origin as the request's `Host`,
+/// and that host one a page cannot reach by DNS rebinding -- an IP literal,
+/// `localhost`, or the address the service was told to bind. A rebinding
+/// attack needs a name the attacker controls, which resolves to us only
+/// after the page loaded; such a name matches none of these.
+fn share_origin_allowed(origin: &str, host: &str, bind: std::net::SocketAddr) -> bool {
+    let Some(origin_host) = origin.strip_prefix("http://").or_else(|| origin.strip_prefix("https://")) else {
+        return false;
+    };
+    if origin_host.is_empty() || origin_host != host {
+        return false;
+    }
+    // `[::1]:8080` is bracketed; `1.2.3.4:8080` and `localhost:8080` are not.
+    let name = match host.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or_default(),
+        None => match host.rsplit_once(':') {
+            Some((name, port)) if port.bytes().all(|b| b.is_ascii_digit()) => name,
+            _ => host,
+        },
+    };
+    name.eq_ignore_ascii_case("localhost")
+        || name.parse::<std::net::IpAddr>().is_ok()
+        || name.eq_ignore_ascii_case(&bind.ip().to_string())
 }
 
 /// `POST /api/scope` with `{"track": "agent", "action": "start", "name":
@@ -1410,6 +1472,48 @@ mod isolation_tests {
             h.get("cross-origin-resource-policy").unwrap(),
             "same-origin"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sharing_rejects_partial_windows_running_captures_and_cross_origin_requests() {
+        let svc = test_service();
+        svc.capturing.store(true, std::sync::atomic::Ordering::Relaxed);
+        let base = spawn_router(svc).await;
+        let post = |path: &str, origin: Option<&str>| {
+            let mut cmd = std::process::Command::new("curl");
+            cmd.args(["-si", "--max-time", "5", "-X", "POST"]);
+            if let Some(origin) = origin { cmd.args(["-H", &format!("Origin: {origin}")]); }
+            cmd.arg(format!("{base}{path}"));
+            String::from_utf8_lossy(&cmd.output().unwrap().stdout).into_owned()
+        };
+        assert!(post("/api/capture/share?t0=10", None).contains("400 Bad Request"));
+        assert!(post("/api/capture/share", None).contains("409 Conflict"));
+        assert!(post("/api/capture/share", Some("https://unrelated.example")).contains("403 Forbidden"));
+        // A page whose DNS name was rebound to us has Origin == Host, but not
+        // a name we answer sharing for.
+        let (_, host) = base.rsplit_once('/').unwrap();
+        let rebound = post("/api/capture/share", Some("http://evil.example:1"));
+        assert!(rebound.contains("403 Forbidden"), "{rebound}");
+        assert!(post("/api/capture/share", Some(&format!("http://{host}"))).contains("409 Conflict"));
+    }
+
+    #[test]
+    fn share_origins_are_this_service_reached_without_dns() {
+        let bind: std::net::SocketAddr = "0.0.0.0:44766".parse().unwrap();
+        let ok = |origin: &str, host: &str| super::share_origin_allowed(origin, host, bind);
+        assert!(ok("http://127.0.0.1:44766", "127.0.0.1:44766"));
+        assert!(ok("http://localhost:44766", "localhost:44766"));
+        assert!(ok("http://[::1]:44766", "[::1]:44766"));
+        assert!(ok("http://192.168.1.20:44766", "192.168.1.20:44766"));
+        assert!(ok("https://0.0.0.0", "0.0.0.0"));
+        // Origin and Host agree, but the name could have been rebound.
+        assert!(!ok("http://evil.example:44766", "evil.example:44766"));
+        assert!(!ok("http://orbit.lan", "orbit.lan"));
+        // Origin and Host disagree, or the origin is not a web origin.
+        assert!(!ok("http://127.0.0.1:1", "127.0.0.1:44766"));
+        assert!(!ok("https://127.0.0.1:44766", "127.0.0.1:44766x"));
+        assert!(!ok("null", "127.0.0.1:44766"));
+        assert!(!ok("", ""));
     }
 
     async fn spawn_router(svc: std::sync::Arc<crate::LiveService>) -> String {

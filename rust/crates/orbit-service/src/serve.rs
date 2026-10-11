@@ -2382,27 +2382,44 @@ pub fn run_on(
         target_pid: Arc::new(AtomicI32::new(0)),
     };
 
-    let export_store = store.clone();
-    let export_target = capture.target_pid.clone();
+    // The ring as a self-contained capture: events with their names, the
+    // sample store, thread and process names; with a window, only the slice
+    // inside it. The intern lock covers the name lookups only -- encoding a
+    // large bundle takes long enough that holding it would stall every
+    // producer of new names.
+    let bundle_service = service.clone();
+    let bundle_store = store.clone();
+    let bundle_target = capture.target_pid.clone();
+    let bundle_for = Arc::new(move |window: Option<(u64, u64)>| -> orbit_capture::CaptureBundle {
+        let (_, events) = bundle_service.ring().snapshot();
+        let (threads, processes) = bundle_service.capture_names();
+        let target_pid = bundle_target.load(Ordering::Relaxed).max(0) as u32;
+        let bundle = {
+            let intern = bundle_service.intern.lock();
+            crate::names::capture_bundle(&events, &intern, &bundle_store, &threads, &processes, target_pid)
+        };
+        match window {
+            Some((a, b)) => bundle.slice(a, b),
+            None => bundle,
+        }
+    });
+
+    let share_bundle = bundle_for.clone();
+    *service.capture_share_export.lock() = Some(Arc::new(move |window| {
+        let bundle = share_bundle(window);
+        Ok((bundle.to_zip().map_err(|e| e.to_string())?, bundle.to_stream()))
+    }));
+
+    let export_bundle = bundle_for;
     service.set_capture_export(Arc::new(move |format, window| {
         // The ring, with each scope's name resolved from the intern table, as
         // one file in the asked-for format; with a window, only the slice
-        // inside it. `bundle` is the self-contained capture: events, the
-        // sample store, thread and process names. Held under the intern lock
-        // only for the encode, which borrows the names by id.
+        // inside it.
+        if format == "bundle" {
+            return export_bundle(window).to_zip().map_err(|e| e.to_string());
+        }
         let (_, events) = export_service.ring().snapshot();
         let intern = export_service.intern.lock();
-        let target_pid = export_target.load(Ordering::Relaxed).max(0) as u32;
-        if format == "bundle" {
-            let (threads, processes) = export_service.capture_names();
-            let bundle =
-                crate::names::capture_bundle(&events, &intern, &export_store, &threads, &processes, target_pid);
-            let bundle = match window {
-                Some((a, b)) => bundle.slice(a, b),
-                None => bundle,
-            };
-            return bundle.to_zip().map_err(|e| e.to_string());
-        }
         let events: Vec<LiveEvent> = match window {
             Some((a, b)) => events.into_iter().filter(|e| e.start_ns <= b && e.end_ns() >= a).collect(),
             None => events,
