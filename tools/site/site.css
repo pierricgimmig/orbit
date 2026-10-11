@@ -165,7 +165,7 @@ footer.site a { color: var(--muted); }
   .two { grid-template-columns: 1fr; }
   .embed iframe { height: 70vh; min-height: 360px; }
   .demo .embed iframe {
-    height: min(640px, calc(100svh - 14.25rem));
+    height: min(640px, calc(100svh - 16rem));
     min-height: 240px;
   }
 }
