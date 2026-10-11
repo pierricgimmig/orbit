@@ -147,6 +147,13 @@ pub fn capture_bundle(
     let known_p: HashMap<u32, &str> = known_processes.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
     let mut tids: Vec<(u32, u32)> = events.iter().map(|e| (e.pid, e.tid)).collect::<HashSet<_>>().into_iter().collect();
+    // Sample rows can outlive their timeline spans in the bounded ring.
+    // Keep their thread/process names even in a sample-only capture.
+    for sample in &samples {
+        let pid = known_threads.iter().find(|((_, tid), _)| *tid == sample.tid)
+            .map(|((pid, _), _)| *pid).unwrap_or(target_pid);
+        if !tids.contains(&(pid, sample.tid)) { tids.push((pid, sample.tid)); }
+    }
     tids.sort_unstable();
     let mut pids: Vec<u32> = tids.iter().map(|(p, _)| *p).collect::<HashSet<_>>().into_iter().collect();
     if target_pid != 0 && !pids.contains(&target_pid) {
@@ -242,6 +249,18 @@ mod tests {
         let me = std::process::id();
         assert!(fresh.refresh(&[me], |_, _| {}, |_, _, _| {}) >= 2);
         assert_eq!(fresh.refresh(&[u32::MAX - 1], |_, _| panic!(), |_, _, _| panic!()), 0);
+    }
+
+    #[test]
+    fn sample_only_threads_keep_their_names_when_the_ring_has_no_events() {
+        let store = SampleStore::new();
+        store.record_frame(9, FrameInfo { name: "f".into(), module: "m".into(), address: 9, function_id: 0 });
+        store.push(StoredSample { timestamp_ns: 12, tid: 555, frames: vec![9] });
+        let known = vec![((777, 555), "SampleThread".into())];
+        let bundle = capture_bundle(&[], &InternTable::default(), &store, &known, &[(777, "Process".into())], 777);
+        assert_eq!(bundle.threads, vec![ThreadName { pid: 777, tid: 555, name: "SampleThread".into() }]);
+        assert_eq!(bundle.processes, vec![ProcessName { pid: 777, name: "Process".into() }]);
+        assert_eq!(bundle.slice(10, 20).threads, bundle.threads);
     }
 
     #[test]
