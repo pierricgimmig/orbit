@@ -236,6 +236,7 @@ fn capture_start_json_includes_sampling_and_hooks() {
         show_all_processes: false,
         uprobe_duplicate_filter: true,
         max_hook_calls_per_s: None,
+        auto_profile: false,
     };
     let json = body.to_json();
     assert!(json.contains("\"pid\":42"));

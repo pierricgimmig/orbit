@@ -38,6 +38,16 @@ pub struct ArmedHook {
     pub safety: HookSafety,
 }
 
+/// The armed set matches the live hooks: one entry per function, gone when
+/// it is unhooked. Retries used to append another copy and leave the old one,
+/// so the journal grew a function every time it was tried again.
+pub fn set_hook(hooks: &mut Vec<ArmedHook>, function_id: u64, hook: Option<ArmedHook>) {
+    hooks.retain(|h| h.spec.function_id != function_id);
+    if let Some(hook) = hook {
+        hooks.push(hook);
+    }
+}
+
 impl ArmedHook {
     fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
@@ -359,6 +369,58 @@ mod tests {
             size,
             safety: HookSafety { level, reason: format!("{level:?}"), entry: String::new(), entry_hex: String::new() },
         }
+    }
+
+    #[test]
+    fn the_armed_set_drops_a_function_when_it_is_unhooked_and_keeps_one_copy() {
+        let mut armed = vec![
+            hook("run_frame", 1, 64, SafetyLevel::Safe),
+            hook("run_frame", 1, 64, SafetyLevel::Safe),
+            hook("burn_us", 2, 32, SafetyLevel::Risky),
+        ];
+        set_hook(
+            &mut armed,
+            1,
+            Some(hook("run_frame", 1, 64, SafetyLevel::Safe)),
+        );
+        assert_eq!(
+            armed.len(),
+            2,
+            "a retried function is one entry, not a second copy"
+        );
+        assert_eq!(armed.iter().filter(|h| h.spec.function_id == 1).count(), 1);
+        set_hook(&mut armed, 1, None);
+        assert_eq!(
+            armed
+                .iter()
+                .map(|h| h.spec.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["burn_us"]
+        );
+        set_hook(&mut armed, 2, None);
+        assert!(armed.is_empty());
+    }
+
+    #[test]
+    fn rewriting_the_journal_drops_an_unhooked_function() {
+        let pid = (std::process::id() as i32).saturating_add(1_000_000);
+        let live = hook("live", 11, 8, SafetyLevel::Safe);
+        let gone = hook("gone", 12, 8, SafetyLevel::Safe);
+        let path = write_journal(pid, "kernel_uprobes", &[live.clone(), gone.clone()])
+            .expect("journal writes");
+        let mut armed = vec![live, gone];
+        set_hook(&mut armed, 12, None);
+        write_journal(pid, "kernel_uprobes", &armed).expect("journal rewrites on removal");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let names: Vec<&str> = value["armed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["live"]);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

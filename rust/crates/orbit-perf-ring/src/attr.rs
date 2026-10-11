@@ -248,6 +248,16 @@ impl UprobeAttr {
         // real one by them, as `UprobesUnwindingVisitor` does in C++.
         attr.sample_type |= sample_bits::REGS_USER;
         attr.sample_regs_user = SAMPLE_REGS_USER_SP_IP;
+        // x86-64: the return address sits at [sp] when the entry probe fires,
+        // and the kernel hijacks it only after that sample is taken. Eight
+        // bytes is enough to save it and patch later stack samples, which
+        // otherwise unwind through the uretprobe trampoline. arm64 keeps the
+        // return address in the link register; this dump would not be it.
+        #[cfg(target_arch = "x86_64")]
+        {
+            attr.sample_type |= sample_bits::STACK_USER;
+            attr.sample_stack_user = 8;
+        }
         // No `inherit`: the probe is opened per CPU for every process
         // (pid -1), which covers threads born later on its own. An inherited
         // per-task event cannot mmap a ring at all -- perf_mmap refuses
@@ -315,6 +325,11 @@ mod tests {
 
         let ret = UprobeAttr::new("/bin/true", 0x1234, true).unwrap();
         assert_ne!(ret.attr().config, 0, "the retprobe bit distinguishes exit from entry");
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(attr.sample_type & sample_bits::STACK_USER != 0);
+            assert_eq!(attr.sample_stack_user, 8, "entry saves the return slot at [sp]");
+        }
     }
 
     #[test]

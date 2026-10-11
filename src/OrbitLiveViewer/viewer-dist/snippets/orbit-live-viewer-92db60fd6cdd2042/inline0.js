@@ -3,24 +3,25 @@
 // found in the LICENSE file.
 
 
-export function orbitPickPresets() {
+export function orbitPickTrackOrder() {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
-    input.type = 'file'; input.accept = '.json'; input.multiple = true;
+    input.type = 'file'; input.accept = '.txt,text/plain'; input.multiple = false;
     input.style.display = 'none'; document.body.appendChild(input);
-    input.oncancel = () => { input.remove(); resolve('[]'); };
+    input.oncancel = () => { input.remove(); resolve(''); };
     input.onchange = async () => {
       try {
-        const files = Array.from(input.files || []);
-        if (files.some(f => f.size > 16 * 1024 * 1024)) throw new Error('Preset exceeds 16 MB');
-        resolve(JSON.stringify(await Promise.all(files.map(f => f.text()))));
+        const file = (input.files || [])[0];
+        if (!file) { resolve(''); return; }
+        if (file.size > 1024 * 1024) throw new Error('Track order file exceeds 1 MB');
+        resolve(await file.text());
       } catch (e) { reject(String(e)); } finally { input.remove(); }
     };
     input.click();
   });
 }
-export function orbitSavePreset(name, text) {
-  const url = URL.createObjectURL(new Blob([text], {type: 'application/json'}));
+export function orbitSaveTrackOrder(name, text) {
+  const url = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
   const a = document.createElement('a'); a.href = url; a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);

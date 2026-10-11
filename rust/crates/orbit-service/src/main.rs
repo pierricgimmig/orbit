@@ -18,6 +18,7 @@
 
 #[cfg(target_os = "macos")]
 mod macos;
+mod auto_profile;
 mod hooks;
 mod hook_safety;
 mod hook_journal;

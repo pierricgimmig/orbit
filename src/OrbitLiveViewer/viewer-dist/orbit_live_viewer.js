@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import { orbitPickPresets, orbitSavePreset } from './snippets/orbit-live-viewer-92db60fd6cdd2042/inline0.js';
-import { orbitPickTrackOrder, orbitSaveTrackOrder } from './snippets/orbit-live-viewer-92db60fd6cdd2042/inline1.js';
+import { orbitPickTrackOrder, orbitSaveTrackOrder } from './snippets/orbit-live-viewer-92db60fd6cdd2042/inline0.js';
+import { orbitPickPresets, orbitSavePreset } from './snippets/orbit-live-viewer-92db60fd6cdd2042/inline1.js';
 import { startWorkers } from './snippets/wasm-bindgen-rayon-38edf6e439f6d70d/src/workerHelpers.no-bundler.js';
 
 let wasm;
@@ -307,11 +307,11 @@ export function wbg_rayon_start_worker(receiver) {
 }
 
 function __wbg_adapter_38(arg0, arg1) {
-    wasm._dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__hc0c30ffedb260198(arg0, arg1);
+    wasm._dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h05394f2092b8953d(arg0, arg1);
 }
 
 function __wbg_adapter_41(arg0, arg1, arg2) {
-    wasm.closure481_externref_shim(arg0, arg1, arg2);
+    wasm.closure484_externref_shim(arg0, arg1, arg2);
 }
 
 function takeFromExternrefTable0(idx) {
@@ -327,11 +327,11 @@ function __wbg_adapter_46(arg0, arg1) {
 }
 
 function __wbg_adapter_49(arg0, arg1, arg2) {
-    wasm.closure1164_externref_shim(arg0, arg1, arg2);
+    wasm.closure1167_externref_shim(arg0, arg1, arg2);
 }
 
 function __wbg_adapter_1501(arg0, arg1, arg2, arg3) {
-    wasm.closure2895_externref_shim(arg0, arg1, arg2, arg3);
+    wasm.closure2898_externref_shim(arg0, arg1, arg2, arg3);
 }
 
 const __wbindgen_enum_BinaryType = ["blob", "arraybuffer"];
@@ -3323,28 +3323,28 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper1146 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 84, __wbg_adapter_38);
+    imports.wbg.__wbindgen_closure_wrapper1726 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 210, __wbg_adapter_38);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper2959 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 482, __wbg_adapter_41);
+    imports.wbg.__wbindgen_closure_wrapper2969 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 485, __wbg_adapter_41);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper2961 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 482, __wbg_adapter_41);
+    imports.wbg.__wbindgen_closure_wrapper2971 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 485, __wbg_adapter_41);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper2963 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 482, __wbg_adapter_46);
+    imports.wbg.__wbindgen_closure_wrapper2973 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 485, __wbg_adapter_46);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper4488 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 1165, __wbg_adapter_49);
+    imports.wbg.__wbindgen_closure_wrapper4498 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 1168, __wbg_adapter_49);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper4490 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 1165, __wbg_adapter_49);
+    imports.wbg.__wbindgen_closure_wrapper4500 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 1168, __wbg_adapter_49);
         return ret;
     };
     imports.wbg.__wbindgen_debug_string = function(arg0, arg1) {
@@ -3435,7 +3435,7 @@ function __wbg_get_imports() {
 }
 
 function __wbg_init_memory(imports, memory) {
-    imports.wbg.memory = memory || new WebAssembly.Memory({initial:51,maximum:32768,shared:true});
+    imports.wbg.memory = memory || new WebAssembly.Memory({initial:52,maximum:32768,shared:true});
 }
 
 function __wbg_finalize_init(instance, module, thread_stack_size) {

@@ -237,6 +237,7 @@ pub fn capture_loop(
     mut frida: Option<crate::frida::FridaSession>,
     mut scopes: ScopeSource,
     capture_start_ns: u64,
+    _symbols: Arc<std::sync::Mutex<crate::serve::SymbolState>>,
 ) {
     if gpu_helper.is_some() {
         log::warn!("GPU helper capture is not supported on macOS");
@@ -351,6 +352,7 @@ pub(super) fn capture_file(args: crate::Args) -> Result<(), String> {
         None,
         scopes,
         capture_start_ns,
+        Arc::new(std::sync::Mutex::new(crate::serve::SymbolState::default())),
     );
     let _ = timer.join();
     let (_, events) = service.ring().snapshot();

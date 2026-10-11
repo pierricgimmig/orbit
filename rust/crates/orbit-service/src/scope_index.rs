@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use orbit_live_event::{kind, LiveEvent};
+use orbit_live_event::{extra, kind, LiveEvent};
 
 use crate::report::ScopeRanges;
 
@@ -46,6 +46,14 @@ impl ScopeIndex {
         if built.data_gen != data_gen || built.by_name.is_empty() {
             let mut by_name: HashMap<u32, Vec<(u32, u64, u64)>> = HashMap::new();
             for e in events() {
+                // Sampled callstack frames are one FUNCTION_CALL per frame of
+                // every sample. Indexing them keeps a row per frame for the
+                // whole ring and is rebuilt whenever the ring moves. Scope
+                // reports are about real scopes (API_SCOPE, and hand-recorded
+                // function calls with extra == 0).
+                if e.extra == extra::SAMPLED_FRAME {
+                    continue;
+                }
                 if matches!(e.kind, kind::API_SCOPE | kind::FUNCTION_CALL) {
                     by_name.entry(e.name_id).or_default().push((e.tid, e.start_ns, e.end_ns()));
                 }
@@ -86,5 +94,18 @@ mod tests {
         assert_eq!(index.ranges_for(99, 1, events).instances(), 0);
         let _ = index.ranges_for(5, 2, events);
         assert_eq!(walks.get(), 2, "new generation: rebuilt");
+    }
+
+    #[test]
+    fn sampled_callstack_frames_are_not_indexed() {
+        let index = ScopeIndex::default();
+        let events = || {
+            vec![
+                ev(kind::FUNCTION_CALL, 5, 7, 100, 10),
+                LiveEvent { extra: extra::SAMPLED_FRAME, ..ev(kind::FUNCTION_CALL, 5, 7, 100, 10) },
+                LiveEvent { extra: extra::SAMPLED_FRAME, ..ev(kind::FUNCTION_CALL, 5, 7, 200, 10) },
+            ]
+        };
+        assert_eq!(index.ranges_for(5, 1, events).instances(), 1);
     }
 }
