@@ -5,11 +5,12 @@
 """Orbit, the profiler, as a pip-installable package.
 
     pip install orbit-profiler
-    orbit-service --serve 44766        # then open http://127.0.0.1:44766/
+    orbit-service                      # then open http://127.0.0.1:44766/
 
 The wheel carries the prebuilt ``orbit-service`` binary -- the capture service
 that also serves the web viewer -- plus ``liborbit_api`` and ``orbit.h`` for
-instrumenting C and C++, and depends on ``orbit-api`` so ``import orbit_api``
+instrumenting C and C++, the Frida agent and helper the service loads from
+the same directory, and a dependency on ``orbit-api`` so ``import orbit_api``
 works for Python. The ``orbit-service`` console command runs the bundled
 binary; ``orbit_profiler.binary_path()`` returns its location.
 """
@@ -49,6 +50,16 @@ def header_path():
     return p if os.path.exists(p) else None
 
 
+def _ensure_executable(path):
+    """Wheels do not keep the executable bit. A read-only install is ignored."""
+    if not os.path.exists(path):
+        return
+    try:
+        os.chmod(path, 0o755)
+    except OSError:
+        pass
+
+
 def main():
     """Entry point for the ``orbit-service`` console script: run the bundled
     binary with this process's arguments, replacing this process where the OS
@@ -56,12 +67,10 @@ def main():
     binary = binary_path()
     if not os.path.exists(binary):
         sys.exit("orbit-profiler: the orbit-service binary is missing from this wheel")
-    # Wheels do not record the executable bit; set it once, ignoring a
-    # read-only install (a system that pre-set the bit, or a reinstall).
-    try:
-        os.chmod(binary, 0o755)
-    except OSError:
-        pass
+    # The service spawns orbit-frida-helper from the same directory. Both
+    # need the executable bit, which a wheel does not record.
+    _ensure_executable(binary)
+    _ensure_executable(_here("orbit-frida-helper"))
     argv = [binary] + sys.argv[1:]
     if sys.platform == "win32":
         import subprocess

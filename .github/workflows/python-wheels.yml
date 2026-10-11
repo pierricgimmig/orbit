@@ -8,15 +8,17 @@
 #
 # Both wheels for a platform come from one build (tools/release/build_wheels.sh)
 # so the ring protocol matches between the library that writes and the service
-# that reads. Wheels are uploaded as artifacts; on a version tag they publish to
-# PyPI via Trusted Publishing (configure the publishers on PyPI first).
+# that reads. Wheels are uploaded as artifacts. On an orbit-v* tag (the Rust
+# release scheme, not the legacy C++ v1.* tags) they publish to PyPI via
+# Trusted Publishing once those publishers exist. workflow_dispatch builds
+# wheels and does not publish.
 
 name: python-wheels
 on:
   workflow_dispatch:
   push:
     tags:
-    - 'v1.*'
+    - 'orbit-v*'
 
 permissions: read-all
 
@@ -35,7 +37,7 @@ jobs:
         - { runner: macos-14,     key: macos-arm64 }
         - { runner: macos-14,     key: macos-x86_64 }
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
     - uses: actions/checkout@v4
 
@@ -61,6 +63,14 @@ jobs:
         /tmp/v/bin/pip install --no-index --find-links dist/wheels orbit-profiler
         env -u ORBIT_API_LIB PATH=/usr/bin:/bin /tmp/v/bin/python -c \
           "import orbit_api as o; assert o.init() == 0 and o.available(); print('ok', o.library_path())"
+        /tmp/v/bin/python -c '
+          import os, orbit_profiler as p
+          root = os.path.dirname(p.binary_path())
+          for name in ("orbit-service", "orbit-frida-helper", "liborbit_frida_agent.so"):
+              path = os.path.join(root, name)
+              assert os.path.isfile(path), path
+          print("frida companions ok", root)
+        '
         /tmp/v/bin/orbit-service --help >/dev/null
 
     - uses: actions/upload-artifact@v4

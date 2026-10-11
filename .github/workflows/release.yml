@@ -2,10 +2,15 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+# Legacy C++ Qt UI and C++ OrbitService.
+#
+# The weekly schedule is disabled so new nightlies stop occupying the top of
+# the Releases page. Rust releases are release-rust.yml, tagged orbit-v*
+# (never v1.*). A manual run of this workflow is still a prerelease: the
+# pinned action has no make_latest input, and a prerelease cannot be
+# GitHub's Latest. Existing nightly-* releases are not deleted or retagged.
 name: release
 on:
-  schedule:
-  - cron: '0 6 * * 4'
   workflow_dispatch:
 
 permissions: read-all
@@ -68,8 +73,8 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@1e07f4398721186383de40550babbdf2b84acfc5 # v1
         with:
-          name: 'Orbit ${{ steps.generate-version-string.outputs.version_string }}'
-          body: 'This is an automated nightly release of Orbit.'
+          name: 'Legacy C++ nightly ${{ steps.generate-version-string.outputs.version_string }}'
+          body: 'Legacy C++ nightly (Qt Orbit UI and C++ OrbitService). Not the Rust orbit-service. Rust releases are tagged orbit-vX.Y.Z. This stays a prerelease so it is not GitHub Latest.'
           tag_name: ${{ steps.generate-tag-name.outputs.tag_name }}
           target_commitish: ${{ github.sha }}
           prerelease: true
