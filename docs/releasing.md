@@ -26,6 +26,10 @@ They were not deleted or retagged.
 
 ## What the workflow builds
 
+Each stable tag publishes two archives: a static Linux x86-64 build and a
+universal macOS build (Apple silicon and Intel). Linux arm64 is not in the
+release. Windows is not.
+
 Linux x86-64, on `ubuntu-22.04`:
 
 - `orbit-service`, static musl (`x86_64-unknown-linux-musl`). The WASM viewer
@@ -47,6 +51,8 @@ macOS, on `macos-15`, via `./build-service-macos.sh --universal`:
   `liborbit_frida_agent.dylib`, `orbit-frida-helper`, `liborbit_api.dylib`,
   `orbit.h`, and the Frida licenses.
 - Ad-hoc signed (`codesign --sign -`), not notarized.
+- Records manual scopes and Frida function hooks. No call-stack sampling,
+  scheduler, live disassembly, or auto-profiling.
 - No GPU helper. That binary is Linux-only.
 
 Linux arm64 is not in the release. The service compiles for arm64; it is not

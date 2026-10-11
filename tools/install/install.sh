@@ -7,9 +7,10 @@
 #
 #     curl -fsSL https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.sh | sh
 #
-# It downloads the Rust orbit-service release for this machine (the static
-# capture service, which also serves the web viewer), checks SHA-256, and
-# installs it plus the Frida files the service looks for in the same
+# It downloads the Rust orbit-service release for this machine. Linux
+# x86-64 and macOS (one universal binary, Intel and Apple silicon) are
+# both published. The binary serves the web viewer. The script checks
+# SHA-256 and installs the Frida files the service looks for in the same
 # directory. No compiler and no package manager.
 #
 # Download host. This one line is the switch to orbitprofiler.com later:
@@ -192,16 +193,22 @@ esac
 
 cat >&2 <<EOF
 
-orbit-service is installed. Start it and open the viewer:
+orbit-service is installed for this machine (Linux or macOS). Start it
+and open the viewer in a browser:
 
   orbit-service
   # then open http://127.0.0.1:44766/
 
 Function hooks use liborbit_frida_agent and orbit-frida-helper in the same
-directory as orbit-service. They do not need root. On Linux, sampling needs
-perf_event_paranoid at 2 or below, and the scheduler needs 0 or below.
-Root, CAP_PERFMON, or CAP_SYS_ADMIN bypass that sysctl. Auto-profiling uses
-the kernel hook engine and needs root or CAP_SYS_ADMIN.
+directory as orbit-service, on either OS. They do not need root. On macOS,
+attaching needs a task port; code signing, the hardened runtime, or SIP
+can refuse it.
+
+On Linux, sampling needs perf_event_paranoid at 2 or below, and the
+scheduler needs 0 or below. Root, CAP_PERFMON, or CAP_SYS_ADMIN bypass
+that sysctl. Auto-profiling uses the kernel hook engine and needs root
+or CAP_SYS_ADMIN. Sampling, the scheduler, and auto-profiling are not
+in the macOS build.
 
 To instrument your own code: orbit.h is beside orbit-service (nothing to
 link; it finds liborbit_api there), or use the orbit-api crate or package.
