@@ -53,7 +53,7 @@ pub struct AiEnv {
 impl AiConfig {
     pub fn status(&self) -> AiStatus {
         let provider = match self.provider {
-            ProviderKind::OpenAi if self.local => "ollama".into(),
+            ProviderKind::OpenAi if self.local => "local".into(),
             ProviderKind::OpenAi => "openai".into(),
             ProviderKind::Anthropic => "anthropic".into(),
         };

@@ -655,6 +655,8 @@ mod wasm_impl {
                 preset_functions: std::mem::take(&mut inbox.preset_functions),
                 disassembly: inbox.disassembly.take(),
                 source: inbox.source.take(),
+                ai_status: inbox.ai_status.take(),
+                ai_reply: inbox.ai_reply.take(),
             }
         }
 

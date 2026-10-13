@@ -164,11 +164,12 @@ pub fn grounded_completion(request_body: &str) -> String {
         } else {
             String::new()
         };
-        format!(
-            "{name} is the hottest name in this window at {cost}. \
-Sampling stops at that frame, so hooking it would show which part of the body is the cost.{window} \
-See [{name}]({link})."
-        )
+        let why = if from_hotspot {
+            "Sampling stops at that frame, so hooking it would show which part of the body is the cost."
+        } else {
+            "A hook on this function would split that time across the body."
+        };
+        format!("{name} is the hottest name in this window at {cost}. {why}{window} See [{name}]({link}).")
     } else if selection {
         format!(
             "The slow part of this window is [{name}]({link}), {cost}. \
