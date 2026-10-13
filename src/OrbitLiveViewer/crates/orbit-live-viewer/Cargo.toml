@@ -35,6 +35,9 @@ console_error_panic_hook = "0.1"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Action types and evidence only. The HTTP client stays on orbit-service
+# (`default-features = false`), so the page never links an API key.
+orbit-assistant = { path = "../../../../rust/crates/orbit-assistant", default-features = false }
 # Optional: only compiled when `--features wasm-threads` (wasm pack).
 # no-bundler: viewer-dist is served as raw ES modules (no webpack/vite).
 wasm-bindgen-rayon = { version = "1.3.0", features = ["no-bundler"], optional = true }

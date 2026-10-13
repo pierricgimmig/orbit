@@ -200,6 +200,16 @@ impl Selection<'_> {
     }
 }
 
+/// One distinct call stack, innermost frame first, for a compact briefing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HotStack {
+    pub count: u64,
+    pub percent: f64,
+    pub tid: u32,
+    pub frames: Vec<String>,
+    pub function_ids: Vec<u64>,
+}
+
 /// The samples of a capture, plus the name table their frame ids point into.
 #[derive(Default)]
 pub struct SampleStore {
@@ -423,6 +433,47 @@ impl SampleStore {
                 "range_count": ranges.len(),
             }),
         )
+    }
+
+    /// The distinct stacks that account for the most samples, innermost
+    /// frame first. `limit` caps how many stacks, `depth` how many frames
+    /// of each. Used by the assistant briefing; the full tree stays on the
+    /// sampling tree route.
+    pub fn hot_stacks(&self, ranges: &[SampleRange], limit: usize, depth: usize) -> Vec<HotStack> {
+        self.hot_stacks_selection(Selection::Ranges(ranges), limit, depth)
+    }
+
+    /// As [`Self::hot_stacks`], for every sample inside `scope`.
+    pub fn hot_stacks_for_scope(&self, scope: &ScopeRanges, limit: usize, depth: usize) -> Vec<HotStack> {
+        self.hot_stacks_selection(Selection::Scope(scope), limit, depth)
+    }
+
+    fn hot_stacks_selection(&self, selection: Selection<'_>, limit: usize, depth: usize) -> Vec<HotStack> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.ensure_sorted();
+        let (stacks, total, _, _) = fold_selection(&inner, selection);
+        let mut rows: Vec<(u32, Vec<u32>, u64)> = stacks
+            .into_iter()
+            .map(|((tid, frames), count)| (tid, frames.to_vec(), count))
+            .collect();
+        rows.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+        rows.truncate(limit);
+        let depth = depth.max(1);
+        rows.into_iter()
+            .map(|(tid, frames, count)| {
+                let n = frames.len().min(depth);
+                HotStack {
+                    count,
+                    percent: if total == 0 { 0.0 } else { 100.0 * count as f64 / total as f64 },
+                    tid,
+                    frames: frames[..n].iter().map(|id| inner.name_of(*id)).collect(),
+                    function_ids: frames[..n]
+                        .iter()
+                        .map(|id| inner.names.get(id).map(|f| f.function_id).unwrap_or(0))
+                        .collect(),
+                }
+            })
+            .collect()
     }
 
     /// The report over every sample taken while `scope` was running on the

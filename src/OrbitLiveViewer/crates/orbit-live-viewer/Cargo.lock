@@ -2059,6 +2059,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-assistant"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "orbit-live-chrome"
 version = "0.1.0"
 dependencies = [
@@ -2102,6 +2110,7 @@ dependencies = [
  "egui-wgpu",
  "js-sys",
  "log",
+ "orbit-assistant",
  "orbit-live-chrome",
  "orbit-live-event",
  "orbit-live-protocol",

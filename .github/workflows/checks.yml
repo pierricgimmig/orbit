@@ -50,6 +50,16 @@ jobs:
           path: pr_number.txt
           retention-days: 1
 
+  orbit-assistant:
+    name: orbit-assistant tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Unit tests and mock OpenAI-compatible server
+        run: cargo test --locked --manifest-path rust/crates/orbit-assistant/Cargo.toml
+
   check-license-headers:
     runs-on: ubuntu-22.04
     timeout-minutes: 20

@@ -71,6 +71,11 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/scope", post(agent_scope))
         .route("/api/events", post(ingest_events).layer(axum::extract::DefaultBodyLimit::max(EVENTS_BODY_LIMIT)))
         .route("/api/log", post(viewer_log))
+        .route("/api/assistant/status", get(assistant_status))
+        .route(
+            "/api/assistant/chat",
+            post(assistant_chat).layer(axum::extract::DefaultBodyLimit::max(256 * 1024)),
+        )
         .route(
             "/api/capture/import",
             post(capture_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
@@ -343,6 +348,47 @@ async fn processes(State(svc): State<Arc<LiveService>>) -> Response {
         }
     };
     ([(header::CONTENT_TYPE, "application/json")], raw).into_response()
+}
+
+fn assistant_json(body: String) -> Response {
+    ([(header::CONTENT_TYPE, "application/json")], body).into_response()
+}
+
+/// What a server with no assistant hook says. orbit-service installs the hook.
+fn assistant_unwired() -> String {
+    serde_json::json!({
+        "configured": false,
+        "provider": "",
+        "model": "",
+        "hint": "This server has no assistant configured.",
+        "message": "",
+        "evidence": [],
+        "actions": [],
+        "error": "",
+    })
+    .to_string()
+}
+
+/// `GET /api/assistant/status` — whether a model is configured. Never an API key.
+async fn assistant_status(State(svc): State<Arc<LiveService>>) -> Response {
+    let hook = svc.assistant_status.lock().clone();
+    assistant_json(match hook {
+        Some(status) => status(),
+        None => assistant_unwired(),
+    })
+}
+
+/// `POST /api/assistant/chat` — one question. The model call stays on the server.
+async fn assistant_chat(State(svc): State<Arc<LiveService>>, body: String) -> Response {
+    let hook = svc.assistant_chat.lock().clone();
+    let Some(chat) = hook else {
+        return assistant_json(assistant_unwired());
+    };
+    match tokio::task::spawn_blocking(move || chat(body)).await {
+        Ok(Ok(json)) => assistant_json(json),
+        Ok(Err(error)) => (StatusCode::BAD_REQUEST, error).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
 }
 
 /// `GET /api/sampling/report?start_ns=&end_ns=` -- aggregates the sampled

@@ -427,6 +427,7 @@ def build(out, stream_path, bundle, name, port, service=False):
         ("docs/manual/troubleshooting.md", "troubleshooting.html", "Troubleshooting — Orbit manual"),
         ("docs/manual/keys.md", "keys.html", "Keys and mouse — Orbit manual"),
         ("docs/manual/live-viewer.md", "live-viewer.html", "Live viewer — Orbit manual"),
+        ("docs/manual/assistant.md", "assistant.html", "Assistant — Orbit manual"),
     ]
     for src, dst, title, root in pages:
         path = os.path.join(REPO, src)

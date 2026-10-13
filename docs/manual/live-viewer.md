@@ -13,3 +13,4 @@ The rest of the guide:
 - [Everywhere](everywhere.md): themes, phone, Chrome traces
 - [Troubleshooting](troubleshooting.md)
 - [Keys and mouse](keys.md)
+- [Assistant](assistant.md): questions about the open capture, answered by a model the service calls
