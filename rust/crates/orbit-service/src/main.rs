@@ -47,6 +47,7 @@ mod thread_state;
 #[cfg(target_os = "linux")]
 mod uprobes;
 mod visible;
+mod mcp;
 
 #[cfg(target_os = "linux")]
 use interner::CallstackInterner;
@@ -206,7 +207,9 @@ fn parse_args() -> Args {
             }
             "--help" | "-h" => {
                 eprintln!(
-                    "orbit-service                       serve the live viewer UI\n\
+                    "                     orbit-service                       serve the live viewer UI\n\
+                     orbit-service mcp                   MCP server on stdin for agents\n\
+                     orbit-service mcp --http [127.0.0.1:44767]  the same tools over streamable HTTP\n\
                      orbit-service --serve [port]        ... on a specific port\n\
                      orbit-service --host <addr> --serve  ... bound to one address \
                      (default 0.0.0.0; 127.0.0.1 keeps it off the network)\n\
@@ -245,6 +248,11 @@ fn start_regs(regs: &[u64]) -> StartRegs {
 }
 
 fn main() {
+    // MCP must not write a log line, or anything else, to stdout: that
+    // stream is the JSON-RPC channel. Handle it before the logger starts.
+    if std::env::args().nth(1).as_deref() == Some("mcp") {
+        std::process::exit(mcp::entry());
+    }
     // stderr from here on, and the file once a real run begins (serve mode
     // or a file capture; --help and the one-shot tools leave no log behind).
     logging::install();

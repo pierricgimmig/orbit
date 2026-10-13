@@ -2338,6 +2338,14 @@ pub fn run_on(
             .collect();
         Ok(tree_store.tree_json_for_ranges(&ranges, TreeMode::parse(mode)))
     }));
+    let stacks_store = store.clone();
+    service.set_sampling_callstacks(Arc::new(move |ranges, offset, limit| {
+        let ranges: Vec<SampleRange> = ranges
+            .iter()
+            .map(|&(start_ns, end_ns, tid)| SampleRange::new(start_ns, end_ns, tid))
+            .collect();
+        Ok(stacks_store.callstacks_json_for_ranges(&ranges, offset as usize, limit as usize))
+    }));
     // Scope-scoped reports: every sample taken while the named scope was
     // running on the sample's thread. The instances come from the ring
     // through an index built once per ring generation.

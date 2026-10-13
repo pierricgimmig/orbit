@@ -1,3 +1,9 @@
+<!--
+Copyright (c) 2026 The Orbit Authors. All rights reserved.
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
+
 # Orbit Profiler
 
 Attach to a running Linux program and see everything, from the whole run down
@@ -47,6 +53,52 @@ not switch engines on its own. The kernel engine is a separate choice and
 needs root or `CAP_SYS_ADMIN`.
 
 With no arguments, `orbit-service` listens on `127.0.0.1:44766`.
+
+## Drive it from an agent
+
+`orbit-service mcp` is a Model Context Protocol server. It lists processes, attaches, searches functions, arms Frida hooks, starts and stops captures, and reads sampling hotspots, call stacks, and per-function timing. It does not edit source. The service has to be running first. The HTTP API has no authentication; keep it on `127.0.0.1`.
+
+Claude Code (`~/.claude.json` or `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "orbit": {
+      "command": "orbit-service",
+      "args": ["mcp", "--url", "http://127.0.0.1:44766"]
+    }
+  }
+}
+```
+
+Cursor (`.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "orbit": {
+      "command": "orbit-service",
+      "args": ["mcp", "--url", "http://127.0.0.1:44766"]
+    }
+  }
+}
+```
+
+Streamable HTTP, loopback only:
+
+```sh
+orbit-service mcp --http 127.0.0.1:44767 --url http://127.0.0.1:44766
+```
+
+```json
+{
+  "mcpServers": {
+    "orbit": { "url": "http://127.0.0.1:44767/mcp" }
+  }
+}
+```
+
+Sampling and the scheduler are Linux. On macOS the same tools say `supported: false` and still hook functions. The tool list and the limits are in [docs/manual/mcp.md](docs/manual/mcp.md).
 
 ## Platforms
 

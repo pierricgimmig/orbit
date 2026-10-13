@@ -1,3 +1,7 @@
+// Copyright (c) 2026 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -63,6 +67,8 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/timeline", get(timeline))
         .route("/api/sampling/report", get(sampling_report))
         .route("/api/sampling/tree", get(sampling_tree))
+        .route("/api/sampling/callstacks", get(sampling_callstacks))
+        .route("/api/functions/stats", get(function_stats))
         .route("/api/symbols/modules", get(symbols_modules))
         .route("/api/capture/export", get(capture_export))
         .route("/api/capture/share", post(capture_share))
@@ -776,6 +782,80 @@ async fn symbols_modules(
     match modules(q.pid.unwrap_or(0)) {
         Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct CallstacksQuery {
+    #[serde(default)]
+    start_ns: u64,
+    #[serde(default)]
+    end_ns: u64,
+    tid: Option<u32>,
+    #[serde(default)]
+    offset: u32,
+    limit: Option<u32>,
+}
+
+/// `GET /api/sampling/callstacks` — the hottest distinct stacks, one page.
+/// 501 when this service does not sample.
+async fn sampling_callstacks(
+    State(svc): State<Arc<LiveService>>,
+    Query(q): Query<CallstacksQuery>,
+) -> Response {
+    let hook = svc.sampling_callstacks.lock().clone();
+    let Some(stacks) = hook else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "this service does not provide sampling call stacks",
+        )
+            .into_response();
+    };
+    let end = if q.end_ns == 0 { u64::MAX } else { q.end_ns };
+    let ranges = vec![(q.start_ns, end, q.tid)];
+    let offset = q.offset;
+    let limit = q.limit.unwrap_or(8).clamp(1, 32);
+    match tokio::task::spawn_blocking(move || stacks(&ranges, offset, limit)).await {
+        Ok(Ok(json)) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct StatsQuery {
+    #[serde(default)]
+    q: String,
+    pid: Option<u32>,
+    #[serde(default)]
+    order: String,
+    #[serde(default)]
+    offset: u32,
+    limit: Option<u32>,
+}
+
+/// `GET /api/functions/stats` — one row per measured hook or manual scope.
+/// Sampled frames are excluded. The page is small on purpose: the ring is not.
+async fn function_stats(State(svc): State<Arc<LiveService>>, Query(q): Query<StatsQuery>) -> Response {
+    let offset = q.offset as usize;
+    let limit = q.limit.unwrap_or(20).clamp(1, 100) as usize;
+    let order = crate::stats::StatsOrder::parse(&q.order);
+    let query = q.q;
+    let pid = q.pid;
+    match tokio::task::spawn_blocking(move || {
+        let (_gen, events) = svc.ring().snapshot();
+        let scanned = events.len();
+        // Names are resolved once per distinct scope, after the fold, not
+        // once per event.
+        let rows = crate::stats::fold_timing(&events, |id| {
+            svc.intern.lock().get(id).unwrap_or("?").to_string()
+        });
+        crate::stats::page_timing(rows, &query, pid, order, offset, limit, scanned)
+    })
+    .await
+    {
+        Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
@@ -1906,6 +1986,40 @@ mod isolation_tests {
             resp.headers().get("cross-origin-resource-policy").unwrap(),
             "same-origin"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn function_stats_counts_hooks_and_skips_sampled_frames() {
+        use orbit_live_event::{event_flags, extra, kind, LiveEvent};
+        let svc = test_service();
+        let name = svc.intern_string("inner");
+        let event = |dur, extra_b, pad| LiveEvent {
+            start_ns: 1,
+            duration_ns: dur,
+            tid: 1,
+            pid: 9,
+            kind: kind::FUNCTION_CALL,
+            depth: 0,
+            extra: extra_b,
+            _pad: pad,
+            name_id: name,
+        };
+        svc.push_events(&[
+            event(100, 0, event_flags::DYNAMIC),
+            event(300, 0, event_flags::DYNAMIC),
+            event(1_000_000, extra::SAMPLED_FRAME, 0),
+        ]);
+        let base = spawn_router(svc).await;
+        let out = std::process::Command::new("curl")
+            .args(["-s", "--max-time", "5", &format!("{base}/api/functions/stats?q=inner")])
+            .output()
+            .expect("curl");
+        let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+        assert_eq!(body["total"], 1);
+        assert_eq!(body["rows"][0]["kind"], "hook");
+        assert_eq!(body["rows"][0]["count"], 2);
+        assert_eq!(body["rows"][0]["avg_ns"], 200);
+        assert_eq!(body["rows"][0]["name"], "inner");
     }
 }
 

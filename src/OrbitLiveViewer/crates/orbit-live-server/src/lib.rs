@@ -1,3 +1,7 @@
+// Copyright (c) 2026 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 //! HTTP + WebSocket live viewer, served from the same process as Orbit Service.
 
 pub mod bench;
@@ -6,6 +10,7 @@ mod sharing;
 pub mod http;
 pub mod ingest;
 pub mod settings;
+mod stats;
 pub use settings::Settings;
 
 use std::net::SocketAddr;
@@ -173,6 +178,12 @@ pub struct LiveService {
     #[allow(clippy::type_complexity)]
     pub sampling_tree_scope:
         Mutex<Option<std::sync::Arc<dyn Fn(u32, &str) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: the hottest distinct call stacks, paged. Separate from the
+    /// tree because a tree is the whole shape and an agent wants a short list.
+    #[allow(clippy::type_complexity)]
+    pub sampling_callstacks: Mutex<
+        Option<std::sync::Arc<dyn Fn(&[SampleRangeSpec], u32, u32) -> Result<String, String> + Send + Sync>>,
+    >,
     /// Optional: the modules of the selected process and their symbol counts.
     #[allow(clippy::type_complexity)]
     pub modules_json:
@@ -348,6 +359,7 @@ impl LiveService {
             sampling_tree: Mutex::new(None),
             sampling_report_scope: Mutex::new(None),
             sampling_tree_scope: Mutex::new(None),
+            sampling_callstacks: Mutex::new(None),
             modules_json: Mutex::new(None),
             capture_export: Mutex::new(None),
             capture_share_export: Mutex::new(None),
@@ -429,6 +441,16 @@ impl LiveService {
         tree: std::sync::Arc<dyn Fn(&[SampleRangeSpec], &str) -> Result<String, String> + Send + Sync>,
     ) {
         *self.sampling_tree.lock() = Some(tree);
+    }
+
+    /// Installs `GET /api/sampling/callstacks`. `offset` and `limit` page the
+    /// hottest distinct stacks.
+    #[allow(clippy::type_complexity)]
+    pub fn set_sampling_callstacks(
+        &self,
+        stacks: std::sync::Arc<dyn Fn(&[SampleRangeSpec], u32, u32) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.sampling_callstacks.lock() = Some(stacks);
     }
 
     #[allow(clippy::type_complexity)]

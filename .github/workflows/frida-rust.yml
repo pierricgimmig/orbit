@@ -46,6 +46,10 @@ jobs:
           else
             cc -O1 -g -fno-omit-frame-pointer -DORBIT_STATIC -I rust/crates/orbit-api/include tools/e2e/frida_target.c rust/target/debug/liborbit_api.a -lpthread -ldl -lm -o /tmp/orbit-frida-target
           fi
+      - name: Drive a capture through the MCP server
+        run: |
+          if [ "$(uname -s)" = Darwin ]; then ext=dylib; prefix=(sudo); else ext=so; prefix=(); fi
+          "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/mcp_loop.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target
       - name: Verify live attachment, exact spans and restart
         run: |
           if [ "$(uname -s)" = Darwin ]; then ext=dylib; else ext=so; fi
