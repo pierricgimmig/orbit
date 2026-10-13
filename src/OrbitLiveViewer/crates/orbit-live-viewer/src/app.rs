@@ -832,6 +832,7 @@ pub struct OrbitLiveApp {
     /// Set when the selection was made on one thread's sample bar.
     /// Which of the four report views is showing.
     report_tab: ReportTab,
+    assistant: crate::assistant::Panel,
     tree: Option<crate::net::SamplingTree>,
     /// Expanded tree nodes, keyed by their path of child indices. Kept per
     /// tab so switching top-down/bottom-up does not carry one view's
@@ -1138,6 +1139,9 @@ enum ReportTab {
     Code,
     Inspector,
     Selection,
+    /// Capture assistant. Questions are answered by orbit-service; the page
+    /// never sees the model key.
+    Assistant,
 }
 
 impl ReportTab {
@@ -1155,6 +1159,7 @@ impl ReportTab {
             "code" => Some(ReportTab::Code),
             "inspector" => Some(ReportTab::Inspector),
             "selection" => Some(ReportTab::Selection),
+            "ask" | "assistant" => Some(ReportTab::Assistant),
             _ => None,
         }
     }
@@ -1171,6 +1176,7 @@ impl ReportTab {
             ReportTab::Code => "Code",
             ReportTab::Inspector => "Inspector",
             ReportTab::Selection => "Selection",
+            ReportTab::Assistant => "Ask",
         }
     }
 
@@ -1642,6 +1648,7 @@ impl OrbitLiveApp {
             report_tab: crate::dev::query_report_tab_from_location()
                 .and_then(|v| ReportTab::from_query(&v))
                 .unwrap_or(ReportTab::Flat),
+            assistant: crate::assistant::Panel::default(),
             tree: None,
             tree_expanded: std::collections::HashSet::new(),
             tree_expand_threshold: 0.0,
@@ -2671,6 +2678,22 @@ impl OrbitLiveApp {
         if let Some(r) = inbox.sampling {
             self.sampling = Some(r);
         }
+        if let Some(status) = inbox.ai_status {
+            self.assistant.status = Some(status);
+            self.needs_repaint = true;
+        }
+        if let Some(reply) = inbox.ai_reply {
+            self.assistant.pending = false;
+            match reply {
+                Ok(response) => {
+                    let actions = response.actions.clone();
+                    self.assistant.push_reply(&response);
+                    self.apply_ai_actions(&actions);
+                }
+                Err(e) => self.assistant.error = e,
+            }
+            self.needs_repaint = true;
+        }
         if let Some(t) = inbox.tree {
             // Open along the hot path, the way C++ Orbit's tree arrives:
             // every node over the slider's share of the samples.
@@ -3154,6 +3177,12 @@ impl OrbitLiveApp {
         let report = ui.selectable_label(self.report_open, "Report   R");
         note_ui_rect("Report", report.rect);
         if report.clicked() { self.toggle_report(); ui.close(); }
+        let ask = ui.selectable_label(self.report_open && self.report_tab == ReportTab::Assistant, "Ask");
+        note_ui_rect("Ask", ask.rect);
+        if ask.clicked() {
+            self.open_right_tab(ReportTab::Assistant);
+            ui.close();
+        }
         let own = ui.selectable_label(self.self_pane_open, "Self   F2");
         note_ui_rect("Self", own.rect);
         if own.clicked() { self.self_pane_open = !self.self_pane_open; ui.close(); }
@@ -6889,7 +6918,9 @@ impl OrbitLiveApp {
         if from_self {
             ui.label(RichText::new("In the Self pane: the viewer's own frames").color(theme::ACCENT()).size(11.0));
         }
-        ui.label(RichText::new(one_line).color(theme::MUTED()).size(11.0));
+            ui.label(RichText::new(one_line).color(theme::MUTED()).size(11.0));
+        ui.add_space(4.0);
+        self.explain_buttons(ui);
         ui.add_space(6.0);
         // The parent scrolls both ways to preserve the report's columns.
         ui.add(egui::Label::new(RichText::new(screen_text)
@@ -6897,10 +6928,314 @@ impl OrbitLiveApp {
             .wrap_mode(egui::TextWrapMode::Extend));
     }
 
+    fn assistant_visible(&self) -> bool {
+        self.report_open && self.report_tab == ReportTab::Assistant && !self.report_collapsed
+    }
+
+    fn explain_buttons(&mut self, ui: &mut Ui) {
+        ui.horizontal_wrapped(|ui| {
+            let explain = pill(ui, "Explain this selection", false)
+                .on_hover_text("Ask the assistant to explain the current selection");
+            note_ui_rect("ask:explain", explain.rect);
+            if explain.clicked() {
+                self.ask(
+                    orbit_live_insight::Intent::ExplainSelection,
+                    "Explain this selection. What is slow, and which functions account for it?".into(),
+                );
+            }
+            let suggest = pill(ui, "Suggest optimizations", false)
+                .on_hover_text("Ask what to change, grounded in this selection");
+            note_ui_rect("ask:suggest", suggest.rect);
+            if suggest.clicked() {
+                self.ask(
+                    orbit_live_insight::Intent::Suggest,
+                    "What should I optimize in this selection? Suggest the highest-value changes.".into(),
+                );
+            }
+        });
+    }
+
+    fn assistant_sheet(&mut self, ctx: &Context) {
+        let h = (ctx.screen_rect().height() * 0.58).clamp(260.0, 560.0);
+        let mut events = Vec::new();
+        egui::TopBottomPanel::bottom("orbit_assistant")
+            .resizable(true)
+            .default_height(h)
+            .min_height(220.0)
+            .max_height(ctx.screen_rect().height() * 0.85)
+            .frame(
+                Frame::new()
+                    .fill(theme::PANEL())
+                    .inner_margin(Margin::symmetric(10, 8))
+                    .stroke(Stroke::new(1.0, theme::HAIR())),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Ask").family(fonts::medium()).size(14.0).color(theme::TEXT()));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let close = ui.add(egui::Button::new("Close").min_size(Vec2::new(72.0, 36.0)));
+                        note_ui_rect("ask:close", close.rect);
+                        if close.clicked() {
+                            self.report_open = false;
+                        }
+                    });
+                });
+                events = crate::assistant::draw(ui, &mut self.assistant, true);
+            });
+        self.handle_assistant(events);
+    }
+
+    fn handle_assistant(&mut self, events: Vec<crate::assistant::Event>) {
+        for event in events {
+            match event {
+                crate::assistant::Event::Send { intent, text } => self.ask(intent, text),
+                crate::assistant::Event::Activate(target) => self.activate_evidence(target),
+                crate::assistant::Event::ConfirmHook(index) => self.confirm_assistant_hook(index),
+                crate::assistant::Event::DismissHook(index) => {
+                    if let Some(hook) = self.assistant.hooks.get_mut(index) {
+                        hook.state = crate::assistant::HookState::Dismissed;
+                    }
+                }
+            }
+        }
+    }
+
+    fn ask(&mut self, intent: orbit_live_insight::Intent, text: String) {
+        let text = text.trim().to_string();
+        if text.is_empty() || self.assistant.pending {
+            return;
+        }
+        self.open_right_tab(ReportTab::Assistant);
+        self.assistant.push_user(text);
+        self.assistant.pending = true;
+        let facts = self.capture_facts();
+        let history = self.assistant.history();
+        self.net.post_ai_chat(&history, intent, &facts);
+        self.needs_repaint = true;
+    }
+
+    fn capture_facts(&self) -> orbit_live_insight::CaptureFacts {
+        // `sample_ranges` is the selection on screen. `sampling_ranges` lags
+        // it by a frame and is cleared while a report refetch is in flight.
+        let ranges: Vec<orbit_live_insight::TimeRange> = self
+            .sample_ranges()
+            .into_iter()
+            .map(|(start_ns, end_ns, tid)| orbit_live_insight::TimeRange { start_ns, end_ns, tid })
+            .collect();
+        let hotspots: Vec<orbit_live_insight::Hotspot> = self
+            .sampling
+            .as_ref()
+            .map(|r| {
+                r.rows
+                    .iter()
+                    .take(24)
+                    .map(|row| orbit_live_insight::Hotspot {
+                        name: row.name.clone(),
+                        module: row.module.clone(),
+                        function_id: row.function_id,
+                        self_count: row.self_count,
+                        inclusive_count: row.inclusive_count,
+                        self_percent: row.self_percent,
+                        inclusive_percent: row.inclusive_percent,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut facts = orbit_live_insight::facts_from_index(
+            &self.index,
+            &self.intern,
+            &ranges,
+            &hotspots,
+            &self.selection_report_text(),
+        );
+        if let Some((_, name)) = &self.scope_report {
+            facts.scope_name = name.clone();
+        } else if let Some(report) = &self.sampling {
+            if !report.scope.is_empty() {
+                facts.scope_name = report.scope.clone();
+            }
+        }
+        if let Some(d) = &self.code_disasm {
+            let lines = d
+                .lines
+                .iter()
+                .take(24)
+                .map(|l| format!("{:#x}  {}", l.address, l.text))
+                .collect::<Vec<_>>();
+            if !lines.is_empty() {
+                facts.disassembly = Some(orbit_live_insight::DisasmSnippet {
+                    name: d.function.name.clone(),
+                    function_id: d.function.id,
+                    module: d.function.module.clone(),
+                    lines,
+                });
+            }
+        }
+        facts
+    }
+
+    fn selection_report_text(&self) -> String {
+        if let Some(res) = self.rect_result.as_ref().filter(|r| !r.report_text.is_empty()) {
+            return clip_chars(&res.report_text, 4_000);
+        }
+        if let Some(res) = self.self_tl.rect_result.as_ref().filter(|r| !r.report_text.is_empty()) {
+            return clip_chars(&res.report_text, 4_000);
+        }
+        let Some(report) = &self.sampling else {
+            return String::new();
+        };
+        let mut text = format!("{} samples\n", report.samples);
+        for row in report.rows.iter().take(12) {
+            text.push_str(&format!(
+                "{}  self {:.1}%  inclusive {:.1}%\n",
+                row.name, row.self_percent, row.inclusive_percent
+            ));
+        }
+        text
+    }
+
+    fn apply_ai_actions(&mut self, actions: &[orbit_live_insight::UiAction]) {
+        for action in actions {
+            match action {
+                orbit_live_insight::UiAction::SelectTimeRange { start_ns, end_ns, tid, label } => {
+                    self.select_time_range(*start_ns, *end_ns, *tid);
+                    let shown = if label.is_empty() {
+                        format!("Selected {start_ns}–{end_ns} ns")
+                    } else {
+                        format!("Selected {label}")
+                    };
+                    self.assistant.note(shown);
+                }
+                orbit_live_insight::UiAction::JumpToFunction { name, function_id } => {
+                    if self.reveal_function(name, *function_id) {
+                        self.assistant.note(format!("Jumped to {name}"));
+                    }
+                }
+                orbit_live_insight::UiAction::OpenDisassembly { name, function_id } => {
+                    self.open_ai_disassembly(name, *function_id);
+                }
+                orbit_live_insight::UiAction::SuggestHook { .. } => {}
+            }
+        }
+    }
+
+    fn select_time_range(&mut self, start_ns: u64, end_ns: u64, tid: Option<u32>) {
+        let (start_ns, end_ns) = (start_ns.min(end_ns), start_ns.max(end_ns).max(start_ns.min(end_ns).saturating_add(1)));
+        self.sample_sels = vec![TimeMeasure { start_ns, stop_ns: end_ns, label_y: 28.0, sample_tid: tid }];
+        self.measure = None;
+        let (t0, t1) = zoom_scope_window(start_ns as f64, end_ns as f64);
+        self.apply_zoom_window(t0, t1);
+        self.sampling_ranges.clear();
+        self.needs_repaint = true;
+    }
+
+    fn reveal_function(&mut self, name: &str, function_id: u64) -> bool {
+        self.report_filter = name.to_string();
+        let mut best: Option<ScopePick> = None;
+        for (_key, lane) in self.index.lanes() {
+            for ev in lane.events() {
+                if ev.kind == kind::VALUE || ev.kind == kind::SAMPLE {
+                    continue;
+                }
+                let ev_name = self.intern.get(ev.name_id).unwrap_or("");
+                if ev_name != name {
+                    continue;
+                }
+                let better = best.is_none_or(|p| ev.duration_ns > p.duration_ns);
+                if better {
+                    best = Some(ScopePick::from_event(*ev));
+                }
+            }
+        }
+        let Some(pick) = best else {
+            self.assistant.note(format!("{name} is not on the timeline"));
+            return false;
+        };
+        self.selected = Some(pick);
+        self.zoom_to_scope(pick);
+        self.select_time_range(pick.start_ns, pick.start_ns.saturating_add(pick.duration_ns.max(1)), Some(pick.tid));
+        let _ = function_id;
+        true
+    }
+
+    fn open_ai_disassembly(&mut self, name: &str, function_id: u64) {
+        let id = self.resolve_function_id(name, function_id);
+        if id == 0 {
+            self.assistant.error = format!("{name} has no function id, so its disassembly cannot be opened.");
+            return;
+        }
+        if let Some(pid) = self.selected_pid.filter(|p| *p > 0) {
+            self.net.get_disassembly(pid, id);
+            self.code_loading = true;
+            self.code_error.clear();
+            self.report_tab = ReportTab::Code;
+            self.report_open = true;
+            self.assistant.note(format!("Opened disassembly of {name}"));
+        } else {
+            self.assistant.error = format!("Select a process before opening disassembly of {name}.");
+        }
+    }
+
+    fn activate_evidence(&mut self, target: orbit_live_insight::EvidenceTarget) {
+        use orbit_live_insight::EvidenceTarget;
+        match target {
+            EvidenceTarget::Function { name, function_id } => {
+                self.reveal_function(&name, function_id);
+            }
+            EvidenceTarget::Range { start_ns, end_ns, tid } => self.select_time_range(start_ns, end_ns, tid),
+            EvidenceTarget::Disasm { name, function_id } => self.open_ai_disassembly(&name, function_id),
+            EvidenceTarget::Hook { name, function_id, module } => {
+                if !self.assistant.hooks.iter().any(|h| h.name == name && h.state == crate::assistant::HookState::Proposed) {
+                    self.assistant.hooks.push(crate::assistant::HookCard {
+                        name,
+                        function_id,
+                        module,
+                        reason: "From a citation in the answer.".into(),
+                        state: crate::assistant::HookState::Proposed,
+                    });
+                }
+                self.open_right_tab(ReportTab::Assistant);
+            }
+        }
+        self.needs_repaint = true;
+    }
+
+    fn confirm_assistant_hook(&mut self, index: usize) {
+        let Some(hook) = self.assistant.hooks.get(index).cloned() else {
+            return;
+        };
+        let id = self.resolve_function_id(&hook.name, hook.function_id);
+        if id == 0 {
+            self.assistant.error = format!("{} is not in the symbol list, so it cannot be hooked.", hook.name);
+            return;
+        }
+        self.apply_hook_action(HookAction::Hook, id, &hook.name, &hook.module);
+        if let Some(card) = self.assistant.hooks.get_mut(index) {
+            card.function_id = id;
+            card.state = crate::assistant::HookState::Armed;
+        }
+        self.assistant.error.clear();
+    }
+
+    fn resolve_function_id(&self, name: &str, function_id: u64) -> u64 {
+        if function_id != 0 {
+            return function_id;
+        }
+        if let Some(row) = self.sampling.as_ref().and_then(|r| r.rows.iter().find(|row| row.name == name && row.function_id != 0)) {
+            return row.function_id;
+        }
+        self.functions.iter().find(|f| f.name == name && f.function_id != 0).map(|f| f.function_id).unwrap_or(0)
+    }
+
     /// The sampling report for the current selection: self and inclusive
     /// percentages per function, hottest first, the pair Orbit shows.
     fn sampling_panel(&mut self, ctx: &Context) {
         if !self.report_open { return; }
+        // On a phone the assistant is a bottom sheet, so the timeline keeps
+        // the width a side panel would take.
+        if self.report_tab == ReportTab::Assistant && self.was_narrow {
+            return;
+        }
         let report = self.sampling.clone();
         // A vertical panel to the right of the capture, where C++ Orbit docks
         // its sampling report: the timeline keeps its full height, and the
@@ -6949,6 +7284,7 @@ impl OrbitLiveApp {
                     let title = match (&report, self.report_tab) {
                         (_, ReportTab::Inspector) => "Inspector".into(),
                         (_, ReportTab::Selection) => "Rectangle selection".into(),
+                        (_, ReportTab::Assistant) => "Ask".into(),
                         (_, ReportTab::Live) => self.live_title(),
                         (Some(_), _) => format!("Sampling report — {samples} samples"),
                         // The tree tabs have their own sample count even
@@ -6987,8 +7323,15 @@ impl OrbitLiveApp {
                     }
                 });
                 ui.add_space(2.0);
+                if matches!(
+                    self.report_tab,
+                    ReportTab::Flat | ReportTab::Flame | ReportTab::TopDown | ReportTab::BottomUp | ReportTab::Live
+                ) {
+                    self.explain_buttons(ui);
+                    ui.add_space(2.0);
+                }
                 ui.horizontal_wrapped(|ui| {
-                    const TABS: [ReportTab; 10] = [
+                    const TABS: [ReportTab; 11] = [
                         ReportTab::Live,
                         ReportTab::Flat,
                         ReportTab::Flame,
@@ -6999,6 +7342,7 @@ impl OrbitLiveApp {
                         ReportTab::Code,
                         ReportTab::Inspector,
                         ReportTab::Selection,
+                        ReportTab::Assistant,
                     ];
                     let labels: Vec<&str> = TABS.iter().map(|t| t.label()).collect();
                     let current = TABS.iter().position(|t| *t == self.report_tab).unwrap_or(0);
@@ -7009,7 +7353,7 @@ impl OrbitLiveApp {
                             self.report_tab = tab;
                             // Switching between top-down and bottom-up needs a
                             // different tree; switching to or from Flat does not.
-                            if !matches!(tab, ReportTab::Inspector | ReportTab::Selection)
+                            if !matches!(tab, ReportTab::Inspector | ReportTab::Selection | ReportTab::Assistant)
                                 && (tab.mode() != was_tree_mode || self.tree.is_none()) {
                                 self.tree_expanded.clear();
                                 if self.static_capture.is_some() {
@@ -7126,6 +7470,11 @@ impl OrbitLiveApp {
                     }
                     ui.add_space(2.0);
                 }
+                if self.report_tab == ReportTab::Assistant {
+                    let events = crate::assistant::draw(ui, &mut self.assistant, false);
+                    self.handle_assistant(events);
+                    return;
+                }
                 if matches!(self.report_tab, ReportTab::Inspector | ReportTab::Selection) {
                     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                         if self.report_tab == ReportTab::Inspector { self.chrome(ui); }
@@ -7153,7 +7502,7 @@ impl OrbitLiveApp {
                                 ReportTab::Flat => self.flat_report_rows(ui, report.as_ref()),
                                 ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
                                 ReportTab::Modules => self.module_rows(ui),
-                                ReportTab::Live | ReportTab::Inspector | ReportTab::Selection => {}
+                                ReportTab::Live | ReportTab::Inspector | ReportTab::Selection | ReportTab::Assistant => {}
                                 ReportTab::Flame => self.flame_rows(ui),
                                 ReportTab::Functions => self.function_rows(ui),
                                 ReportTab::Code => self.code_rows(ui),
@@ -9459,7 +9808,15 @@ impl eframe::App for OrbitLiveApp {
             self.refresh_sampling_report(ctx.input(|i| i.time));
             {
                 let _report = devf.scope(TID_UI, NAME_REPORT_PANEL);
-                self.sampling_panel(ctx);
+                if self.report_open && self.report_tab == ReportTab::Assistant && self.was_narrow {
+                    self.assistant_sheet(ctx);
+                } else {
+                    self.sampling_panel(ctx);
+                }
+            }
+            if self.assistant_visible() && self.now_s - self.assistant.status_at > 4.0 {
+                self.assistant.status_at = self.now_s;
+                self.net.get_ai_status();
             }
             self.tweaks_window(ctx);
             self.presets_window(ctx);
@@ -9990,7 +10347,7 @@ pub(crate) const VIEWER_BUILD: &str = match option_env!("ORBIT_VIEWER_BUILD") {
     None => "dev",
 };
 
-fn note_ui_rect(label: &str, rect: Rect) {
+pub(crate) fn note_ui_rect(label: &str, rect: Rect) {
     UI_RECTS.with(|v| v.borrow_mut().push((label.to_string(), rect)));
 }
 
@@ -11947,6 +12304,16 @@ fn count_samples_in(index: &TrackIndex, ranges: &[(u64, u64, Option<u32>)]) -> u
 }
 
 /// The report panel's one-line description of what is selected.
+fn clip_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        let mut s: String = text.chars().take(max).collect();
+        s.push('…');
+        s
+    }
+}
+
 fn describe_selection(ranges: &[(u64, u64, Option<u32>)]) -> String {
     let total: u64 = ranges.iter().map(|(a, b, _)| b.saturating_sub(*a)).sum();
     let ms = total as f64 / 1e6;

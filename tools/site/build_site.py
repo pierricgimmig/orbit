@@ -211,6 +211,7 @@ MANUAL_NAV = [
     ("time.html", "Where time goes"),
     ("systems.html", "Systems"),
     ("everywhere.html", "Everywhere"),
+    ("assistant.html", "Ask"),
     ("troubleshooting.html", "Troubleshooting"),
     ("keys.html", "Keys and mouse"),
 ]
@@ -424,6 +425,7 @@ def build(out, stream_path, bundle, name, port, service=False):
         ("docs/manual/time.md", "time.html", "Where time goes — Orbit manual"),
         ("docs/manual/systems.md", "systems.html", "Systems — Orbit manual"),
         ("docs/manual/everywhere.md", "everywhere.html", "Everywhere — Orbit manual"),
+        ("docs/manual/assistant.md", "assistant.html", "Ask — Orbit manual"),
         ("docs/manual/troubleshooting.md", "troubleshooting.html", "Troubleshooting — Orbit manual"),
         ("docs/manual/keys.md", "keys.html", "Keys and mouse — Orbit manual"),
         ("docs/manual/live-viewer.md", "live-viewer.html", "Live viewer — Orbit manual"),

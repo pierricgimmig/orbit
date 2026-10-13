@@ -71,6 +71,11 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/scope", post(agent_scope))
         .route("/api/events", post(ingest_events).layer(axum::extract::DefaultBodyLimit::max(EVENTS_BODY_LIMIT)))
         .route("/api/log", post(viewer_log))
+        .route("/api/ai/status", get(ai_status))
+        .route(
+            "/api/ai/chat",
+            post(ai_chat).layer(axum::extract::DefaultBodyLimit::max(1 << 20)),
+        )
         .route(
             "/api/capture/import",
             post(capture_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
@@ -1907,6 +1912,67 @@ mod isolation_tests {
             "same-origin"
         );
     }
+
+    fn curl_post(url: &str, body: &str) -> std::process::Output {
+        for _ in 0..40 {
+            let attempt = std::process::Command::new("curl")
+                .args(["-si", "--max-time", "10", "-H", "content-type: application/json", "--data", body, url])
+                .output()
+                .expect("curl");
+            if attempt.status.success() && !attempt.stdout.is_empty() {
+                return attempt;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("curl never reached {url}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ai_status_is_disabled_until_a_provider_is_configured() {
+        let svc = test_service();
+        *svc.ai.lock() = crate::insight::AiChoice::Off;
+        let base = spawn_router(svc).await;
+        let text = String::from_utf8_lossy(&curl_si(&format!("{base}/api/ai/status")).stdout).to_string();
+        assert!(text.to_ascii_lowercase().contains("200 ok"), "{text}");
+        assert!(text.contains("\"enabled\":false"), "{text}");
+        assert!(text.contains("ORBIT_AI_PROVIDER") || text.contains("turned off"), "{text}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ai_chat_runs_against_a_mock_openai_server() {
+        use orbit_live_event::{kind, LiveEvent};
+        use orbit_live_insight::ProviderKind;
+        let mock = orbit_live_insight::testing::spawn_scripted();
+        let svc = test_service();
+        let name = svc.intern_string("simulate_physics");
+        svc.push_event(LiveEvent {
+            start_ns: 120_000_000,
+            duration_ns: 1_000_000,
+            tid: 2,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: name,
+        });
+        *svc.ai.lock() = crate::insight::AiChoice::Config(orbit_live_insight::AiConfig {
+            provider: ProviderKind::OpenAi,
+            api_key: "test-key".into(),
+            base_url: mock.base_url.clone(),
+            model: "mock".into(),
+            summary_tokens: 800,
+            timeout_secs: 5,
+            local: true,
+        });
+        let base = spawn_router(svc).await;
+        let body = r#"{"intent":"question","messages":[{"role":"user","content":"why is frame 120 slow?"}]}"#;
+        let text = String::from_utf8_lossy(&curl_post(&format!("{base}/api/ai/chat"), body).stdout).to_string();
+        assert!(text.to_ascii_lowercase().contains("200 ok"), "{text}");
+        assert!(text.contains("simulate_physics"), "{text}");
+        assert!(text.contains("select_time_range"), "{text}");
+        assert!(text.contains("120000000"), "{text}");
+    }
 }
 
 #[derive(Deserialize)]
@@ -1929,5 +1995,22 @@ async fn functions_resolve(
             Err(error) => (StatusCode::CONFLICT, error).into_response(),
         },
         None => (StatusCode::NOT_IMPLEMENTED, "Function resolution requires a capture service").into_response(),
+    }
+}
+
+async fn ai_status(State(svc): State<Arc<LiveService>>) -> Json<orbit_live_insight::AiStatus> {
+    Json(crate::insight::status_json(&svc))
+}
+
+async fn ai_chat(State(svc): State<Arc<LiveService>>, Json(body): Json<crate::insight::ChatBody>) -> Response {
+    let svc = Arc::clone(&svc);
+    match tokio::task::spawn_blocking(move || crate::insight::chat(&svc, body)).await {
+        Ok(Ok(response)) => Json(response).into_response(),
+        Ok(Err(crate::insight::ChatError::Disabled(status))) => {
+            (StatusCode::SERVICE_UNAVAILABLE, Json(status)).into_response()
+        }
+        Ok(Err(crate::insight::ChatError::BadRequest(msg))) => (StatusCode::BAD_REQUEST, msg).into_response(),
+        Ok(Err(crate::insight::ChatError::Provider(msg))) => (StatusCode::BAD_GATEWAY, msg).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

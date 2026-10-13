@@ -7,6 +7,7 @@ description = "HTTP + WebSocket server that serves the live WASM viewer and stre
 
 [dependencies]
 orbit-live-event = { path = "../orbit-live-event" }
+orbit-live-insight = { path = "../orbit-live-insight" }
 orbit-live-protocol = { path = "../orbit-live-protocol" }
 orbit-live-render = { path = "../orbit-live-render" }
 orbit-live-ring = { path = "../orbit-live-ring" }
@@ -19,6 +20,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal", "fs", "io-util"] }
 tower-http = { version = "0.5.2", features = ["cors"] }
+
+[dev-dependencies]
+# Enables the in-process OpenAI mock for the chat end-to-end test.
+orbit-live-insight = { path = "../orbit-live-insight", features = ["mock-server"] }
 
 [[bin]]
 name = "orbit-live-service"

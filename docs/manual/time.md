@@ -1,6 +1,6 @@
 # Where time goes
 
-Press **R**, or More → “Report   R”, to open the report. The tabs are **Flat**, **Top-down**, **Bottom-up**, **Modules**, **Live**, **Flame**, **Functions**, **Code**, **Inspector** and **Selection**. `?report=` opens one of them: `flat`, `top_down`, `bottom_up`, `modules`, `live`, `flame`, `functions`, `code`, `inspector`, `selection`.
+Press **R**, or More → “Report   R”, to open the report. The tabs are **Flat**, **Top-down**, **Bottom-up**, **Modules**, **Live**, **Flame**, **Functions**, **Code**, **Inspector**, **Selection** and **Ask**. `?report=` opens one of them: `flat`, `top_down`, `bottom_up`, `modules`, `live`, `flame`, `functions`, `code`, `inspector`, `selection`, `ask`.
 
 The flame graph is on the [home page](../index.html#time). Call trees, the live table, selection and the code view are on the [features page](../features.html#time).
 
@@ -31,6 +31,8 @@ Click a row for its duration histogram, on a log scale, pinned under the table. 
 Right-drag a range and the flame graph and the trees recompute for that window, across every thread. Left-drag on one thread’s sample bar limits the report to that thread. Shift adds another range. The Selection tab is that report; More → “Rectangle selection report” opens it too.
 
 The rectangle from Ctrl+drag or ⌘+drag is a different gesture. It gathers scopes (manual scopes and hooked calls, not samples or scheduler slices), shows the summary, and copies the text.
+
+**Explain this selection** and **Suggest optimizations** on that report, and on Flat, Flame, Top-down, Bottom-up and Live, open [Ask](assistant.md) with the current window.
 
 @clip 08-selection-report | Time-range selection | Right-drag selecting a time range so the report recomputes for that window
 

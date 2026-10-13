@@ -9,6 +9,7 @@ members = [
     "crates/orbit-live-ring",
     "crates/orbit-live-protocol",
     "crates/orbit-live-render",
+    "crates/orbit-live-insight",
     "crates/orbit-live-server",
     "crates/orbit-live-ffi",
 ]

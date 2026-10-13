@@ -26,6 +26,7 @@ wasm-threads = ["orbit-live-render/parallel", "dep:wasm-bindgen-rayon"]
 
 [dependencies]
 orbit-live-event = { path = "../orbit-live-event" }
+orbit-live-insight = { path = "../orbit-live-insight", default-features = false }
 orbit-live-chrome = { path = "../orbit-live-chrome" }
 orbit-live-protocol = { path = "../orbit-live-protocol" }
 orbit-live-render = { path = "../orbit-live-render" }

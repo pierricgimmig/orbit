@@ -126,6 +126,30 @@ cargo_build_script(
 )
 
 rust_library(
+    name = "orbit_live_insight",
+    srcs = glob(["crates/orbit-live-insight/src/**/*.rs"]),
+    aliases = aliases(),
+    crate_features = ["provider"],
+    crate_root = "crates/orbit-live-insight/src/lib.rs",
+    edition = ORBIT_LIVE_EDITION,
+    proc_macro_deps = all_crate_deps(
+        package_name = "src/OrbitLiveViewer/crates/orbit-live-insight",
+        proc_macro = True,
+    ),
+    deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-insight") + [
+        ":orbit_live_event",
+        ":orbit_live_render",
+    ],
+)
+
+rust_test(
+    name = "orbit_live_insight_test",
+    crate = ":orbit_live_insight",
+    edition = ORBIT_LIVE_EDITION,
+    size = "small",
+)
+
+rust_library(
     name = "orbit_live_server",
     srcs = glob(
         ["crates/orbit-live-server/src/**/*.rs"],
@@ -140,6 +164,7 @@ rust_library(
     ),
     deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-server") + [
         ":orbit_live_event",
+        ":orbit_live_insight",
         ":orbit_live_protocol",
         ":orbit_live_render",
         ":orbit_live_ring",
@@ -165,6 +190,7 @@ genrule(
             "crates/orbit-live-viewer/**",
             "crates/orbit-live-chrome/**",
             "crates/orbit-live-event/**",
+            "crates/orbit-live-insight/**",
             "crates/orbit-live-protocol/**",
             "crates/orbit-live-render/**",
         ],

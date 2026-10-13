@@ -78,6 +78,26 @@ A release is a tag `orbit-vX.Y.Z` (not `v1.*`, which is the C++ line). Pushing
 that tag runs the Rust release workflow. Details:
 [docs/releasing.md](docs/releasing.md).
 
+## Ask, in the live viewer
+
+The viewer’s **Ask** panel answers questions about the capture that is open
+(sampling hotspots, call stacks, scope timings, the current selection,
+thread states, and disassembly when the service has it). The model runs in
+`orbit-service`. The API key stays there and is never sent to the page.
+
+```
+ORBIT_AI_PROVIDER=openai
+ORBIT_AI_API_KEY=sk-...
+ORBIT_AI_MODEL=gpt-4o-mini
+```
+
+`ORBIT_AI_PROVIDER=ollama` uses a local OpenAI-compatible server and needs
+no key. `ORBIT_AI_PROVIDER=anthropic` uses Anthropic. A summary of the
+capture — not the raw event ring — is sent to whichever provider you
+configure. Details, the privacy note, and the tool list (select a range,
+jump to a function, open disassembly, propose a hook) are in
+[docs/manual/assistant.md](docs/manual/assistant.md).
+
 ## More
 
 - [Manual](docs/manual/index.md)

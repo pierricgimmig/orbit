@@ -2,9 +2,10 @@
 
 pub mod bench;
 pub mod demo;
-mod sharing;
 pub mod http;
 pub mod ingest;
+pub mod insight;
+mod sharing;
 pub mod settings;
 pub use settings::Settings;
 
@@ -239,6 +240,8 @@ pub struct LiveService {
     capture_pid: AtomicU64,
     index_cache: Mutex<Option<CachedIndex>>,
     pub(crate) timeline_cache: Mutex<Option<CachedTimeline>>,
+    /// Model configuration for `/api/ai`. `Env` reads `ORBIT_AI_*` on each request.
+    pub ai: Mutex<insight::AiChoice>,
 }
 
 struct CachedIndex {
@@ -366,6 +369,7 @@ impl LiveService {
             capture_pid: AtomicU64::new(0),
             index_cache: Mutex::new(None),
             timeline_cache: Mutex::new(None),
+            ai: Mutex::new(insight::AiChoice::Env),
         });
         Ok(svc)
     }

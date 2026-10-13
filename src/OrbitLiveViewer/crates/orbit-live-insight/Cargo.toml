@@ -1,0 +1,30 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "orbit-live-insight"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Token-budgeted capture summaries and assistant tools for the live viewer"
+
+[features]
+default = ["provider"]
+# HTTPS client for OpenAI-compatible and Anthropic endpoints.
+provider = ["dep:ureq"]
+# In-process OpenAI-compatible mock, for the server's end-to-end test and demos.
+mock-server = []
+
+[dependencies]
+orbit-live-event = { path = "../orbit-live-event" }
+orbit-live-render = { path = "../orbit-live-render" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { version = "2.12.1", optional = true, default-features = false, features = ["tls", "json"] }
+
+[[example]]
+name = "grounded_openai"
+required-features = ["mock-server"]

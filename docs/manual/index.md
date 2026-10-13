@@ -42,7 +42,7 @@ The target is a native binary that is already running. Orbit does not rebuild it
 
 `orbit-service` samples call stacks, records context switches and thread states, and can hook functions with Frida or kernel uprobes. [Auto-profiling](capture.html#auto-profiling) — the service choosing which functions to hook — is the open pull request [#97](https://github.com/pierricgimmig/orbit/pull/97), not this branch.
 
-The viewer is a Rust and WebAssembly page (egui, wgpu). It draws the [timeline](timeline.html), the [flame graph and reports](time.html), the [scheduler and the service’s own lanes](systems.html), and it opens a [saved capture or a Chrome trace](everywhere.html) with no service at all.
+The viewer is a Rust and WebAssembly page (egui, wgpu). It draws the [timeline](timeline.html), the [flame graph and reports](time.html), the [scheduler and the service’s own lanes](systems.html), and it opens a [saved capture or a Chrome trace](everywhere.html) with no service at all. [Ask](assistant.md) answers questions about the open capture. The model runs in the service, and the API key stays there.
 
 ## Instrument your code
 

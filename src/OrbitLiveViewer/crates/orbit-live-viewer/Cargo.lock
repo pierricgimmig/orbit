@@ -2076,6 +2076,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-live-insight"
+version = "0.1.0"
+dependencies = [
+ "orbit-live-event",
+ "orbit-live-render",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "orbit-live-protocol"
 version = "0.1.0"
 dependencies = [
@@ -2104,6 +2114,7 @@ dependencies = [
  "log",
  "orbit-live-chrome",
  "orbit-live-event",
+ "orbit-live-insight",
  "orbit-live-protocol",
  "orbit-live-render",
  "rfd",

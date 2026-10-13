@@ -324,6 +324,8 @@ pub struct Inbox {
     /// The code views: a disassembly and a source file, or why not.
     pub disassembly: Option<Result<crate::code::Disassembly, String>>,
     pub source: Option<Result<crate::code::SourceFile, String>>,
+    pub ai_status: Option<orbit_live_insight::AiStatus>,
+    pub ai_reply: Option<Result<orbit_live_insight::ChatResponse, String>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -939,6 +941,77 @@ mod wasm_impl {
         }
 
         /// A source file the service may serve (one a disassembly named).
+        pub fn get_ai_status(&self) {
+            if self.offline {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text("/api/ai/status").await.and_then(|t| {
+                    serde_json::from_str::<orbit_live_insight::AiStatus>(&t).map_err(|e| format!("ai status: {e}"))
+                });
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(status) => g.ai_status = Some(status),
+                    Err(err) => {
+                        g.ai_status = Some(orbit_live_insight::AiStatus {
+                            enabled: false,
+                            provider: String::new(),
+                            model: String::new(),
+                            local: false,
+                            hint: format!("Could not reach the assistant on this service ({err})."),
+                            privacy: "Nothing is sent until a provider answers. The API key stays on the service, never in the page.".into(),
+                        });
+                    }
+                }
+            });
+        }
+
+        pub fn post_ai_chat(
+            &self,
+            messages: &[orbit_live_insight::Turn],
+            intent: orbit_live_insight::Intent,
+            facts: &orbit_live_insight::CaptureFacts,
+        ) {
+            if self.offline {
+                return;
+            }
+            let intent = match intent {
+                orbit_live_insight::Intent::ExplainSelection => "explain_selection",
+                orbit_live_insight::Intent::Suggest => "suggest",
+                orbit_live_insight::Intent::Question => "question",
+            };
+            let body = serde_json::json!({
+                "messages": messages,
+                "intent": intent,
+                "selection": facts.selection,
+                "selection_report": facts.selection_report,
+                "scope": facts.scope_name,
+                "client_facts": facts,
+            });
+            let inbox = self.inbox.clone();
+            let payload = body.to_string();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = send_text("POST", "/api/ai/chat", &payload).await.and_then(|t| {
+                    serde_json::from_str::<orbit_live_insight::ChatResponse>(&t).map_err(|e| format!("ai chat: {e}"))
+                });
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(reply) => g.ai_reply = Some(Ok(reply)),
+                    Err(err) => {
+                        if let Some(json) = err.split_once(": ").map(|(_, rest)| rest.trim()) {
+                            if let Ok(status) = serde_json::from_str::<orbit_live_insight::AiStatus>(json) {
+                                g.ai_status = Some(status.clone());
+                                g.ai_reply = Some(Err(if status.hint.is_empty() { err } else { status.hint }));
+                                return;
+                            }
+                        }
+                        g.ai_reply = Some(Err(err));
+                    }
+                }
+            });
+        }
+
         pub fn get_source(&self, path: &str) {
             if self.offline {
                 return;
@@ -1443,6 +1516,14 @@ mod native_impl {
         pub fn get_modules(&self, _pid: u32) {}
         pub fn get_disassembly(&self, _pid: u32, _function_id: u64) {}
         pub fn get_example_disassembly(&self) {}
+        pub fn get_ai_status(&self) {}
+        pub fn post_ai_chat(
+            &self,
+            _messages: &[orbit_live_insight::Turn],
+            _intent: orbit_live_insight::Intent,
+            _facts: &orbit_live_insight::CaptureFacts,
+        ) {
+        }
         pub fn get_source(&self, _path: &str) {}
         pub fn get_processes(&self) {}
         pub fn pull_view(&self, _t0: u64, _t1: u64, _width: u32) {}
