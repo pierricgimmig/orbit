@@ -885,6 +885,9 @@ pub struct OrbitLiveApp {
     listing_pool_ema_us: Option<f32>,
     self_profile: crate::self_pane::SelfProfile,
     self_pane_open: bool,
+    /// Questions about the capture. The model runs in orbit-service; this
+    /// panel draws the answer and applies the view actions it asked for.
+    assistant: crate::assistant::Panel,
     /// The Benchmark window (More menu, F3): the service's fake-scope
     /// producer, with a rate knob that moves while it runs.
     bench_open: bool,
@@ -1671,6 +1674,7 @@ impl OrbitLiveApp {
             listing_pool_ema_us: None,
             self_profile: crate::self_pane::SelfProfile::default(),
             self_pane_open: false,
+            assistant: crate::assistant::Panel::default(),
             bench_open: false,
             bench_threads: 16,
             bench_depth_min: 8,
@@ -2719,6 +2723,29 @@ impl OrbitLiveApp {
             }
             self.needs_repaint = true;
         }
+        if let Some(result) = inbox.assistant_status {
+            self.assistant.status_fetched = true;
+            match result {
+                Ok(status) => {
+                    self.assistant.status = Some(status);
+                    if self.assistant.error.contains("no orbit-service") {
+                        self.assistant.error.clear();
+                    }
+                }
+                Err(error) => self.assistant.error = error,
+            }
+            self.needs_repaint = true;
+        }
+        if let Some((generation, result)) = inbox.assistant_reply {
+            if generation == self.assistant.generation {
+                self.assistant.busy = false;
+                match result {
+                    Ok(reply) => self.accept_assistant_reply(reply),
+                    Err(error) => self.assistant.error = error,
+                }
+            }
+            self.needs_repaint = true;
+        }
         if let Some(mut s) = inbox.symbols {
             if self.selected_pid == Some(s.pid) {
                 if s.status == "ready" && s.elapsed_ms.is_none() {
@@ -3003,6 +3030,15 @@ impl OrbitLiveApp {
         }
     }
 
+    fn paint_assistant_button(&mut self, ui: &mut Ui) {
+        let ask = pill(ui, "Ask", self.assistant.open)
+            .on_hover_text("Ask about this capture: hotspots, the selection, what to optimize");
+        note_ui_rect("Ask", ask.rect);
+        if ask.clicked() {
+            self.assistant.open = !self.assistant.open;
+        }
+    }
+
     fn paint_search(&mut self, ui: &mut Ui) {
         let resp = ui.add(
             egui::TextEdit::singleline(&mut self.search)
@@ -3149,6 +3185,12 @@ impl OrbitLiveApp {
         {
             self.capture_open = !self.capture_open;
             self.capture_user = true;
+            ui.close();
+        }
+        let ask = ui.selectable_label(self.assistant.open, "Ask the assistant");
+        note_ui_rect("menu:assistant", ask.rect);
+        if ask.clicked() {
+            self.assistant.open = !self.assistant.open;
             ui.close();
         }
         let report = ui.selectable_label(self.report_open, "Report   R");
@@ -3318,6 +3360,7 @@ impl OrbitLiveApp {
             ui.add_space(6.0);
             self.paint_link_dot(ui);
             self.transport_record(ui);
+            self.paint_assistant_button(ui);
             self.transport_more(ui);
             if let Some(load) = &self.trace_load {
                 ui.label(
@@ -3440,6 +3483,7 @@ impl OrbitLiveApp {
                 }
                 self.paint_process_picker(ui, "orbit_processes_strip");
             }
+            self.paint_assistant_button(ui);
             self.paint_search(ui);
             self.paint_track_filter(ui);
             self.paint_symbols_status(ui);
@@ -6868,8 +6912,8 @@ impl OrbitLiveApp {
         if res.screen_text.0 != name_cols || res.screen_text.1.is_empty() {
             res.screen_text = (name_cols, res.report.screen_text(name_cols));
         }
-        let (report_text, screen_text, one_line) =
-            (res.report_text.clone(), res.screen_text.1.clone(), res.stats.one_line());
+        let (report_text, screen_text, one_line, t0_ns, t1_ns) =
+            (res.report_text.clone(), res.screen_text.1.clone(), res.stats.one_line(), res.t0_ns, res.t1_ns);
         let copied_at = if from_self { self.self_tl.rect_copied_at } else { self.rect_copied_at };
         ui.horizontal(|ui| {
             let clear = ui.small_button("Clear").on_hover_text("Clear the selection");
@@ -6884,6 +6928,18 @@ impl OrbitLiveApp {
             if copy.clicked() {
                 ui.ctx().copy_text(report_text.clone());
                 if from_self { self.self_tl.rect_copied_at = self.now_s } else { self.rect_copied_at = self.now_s }
+            }
+            let explain = ui.small_button("Explain this selection")
+                .on_hover_text("Ask the assistant to explain this rectangle");
+            note_ui_rect("Explain this selection", explain.rect);
+            let suggest = ui.small_button("Suggest optimizations")
+                .on_hover_text("Ask the assistant what to optimize in this rectangle");
+            note_ui_rect("Suggest optimizations", suggest.rect);
+            if explain.clicked() || suggest.clicked() {
+                let note: String = report_text.chars().take(2000).collect();
+                let intent = if explain.clicked() { "explain_selection" } else { "suggest_optimizations" };
+                let text = if explain.clicked() { "Explain this selection." } else { "What should I optimize?" };
+                self.ask_assistant(intent, text, Some(vec![(t0_ns, t1_ns, None)]), &note);
             }
         });
         if from_self {
@@ -6983,6 +7039,20 @@ impl OrbitLiveApp {
                         if resp.clicked() {
                             let ctx = ui.ctx().clone();
                             self.copy_report(&ctx);
+                        }
+                    }
+                    if !matches!(self.report_tab, ReportTab::Inspector | ReportTab::Selection) {
+                        let explain = ui.small_button("Explain this selection")
+                            .on_hover_text("Ask the assistant to explain the current selection");
+                        note_ui_rect("Explain this selection", explain.rect);
+                        if explain.clicked() {
+                            self.ask_assistant("explain_selection", "Explain this selection.", None, "");
+                        }
+                        let suggest = ui.small_button("Suggest optimizations")
+                            .on_hover_text("Ask the assistant what to optimize here");
+                        note_ui_rect("Suggest optimizations", suggest.rect);
+                        if suggest.clicked() {
+                            self.ask_assistant("suggest_optimizations", "What should I optimize?", None, "");
                         }
                     }
                 });
@@ -7751,6 +7821,180 @@ impl OrbitLiveApp {
         if widest > avail_w {
             // Claim the width so ScrollArea::both offers the sideways scroll.
             ui.allocate_exact_size(Vec2::new(widest, 0.0), Sense::hover());
+        }
+    }
+
+    /// Sends a question to orbit-service. The capture itself stays on the
+    /// service; the body is the question, the current selection, and a short
+    /// note. `ranges` replaces the timeline selection when the question is
+    /// about a rectangle rather than the report window.
+    fn ask_assistant(
+        &mut self,
+        intent: &str,
+        text: &str,
+        ranges: Option<Vec<(u64, u64, Option<u32>)>>,
+        note: &str,
+    ) {
+        if self.assistant.busy {
+            return;
+        }
+        self.assistant.open = true;
+        if self.static_capture.is_some() {
+            let hint = "This page has no orbit-service, so there is no model. Open the viewer from orbit-service to ask about a capture.";
+            self.assistant.error = hint.into();
+            self.assistant.status = Some(crate::assistant::Status {
+                configured: false,
+                provider: String::new(),
+                model: String::new(),
+                hint: hint.into(),
+            });
+            self.assistant.messages.push(crate::assistant::Message {
+                role: "user".into(),
+                text: text.into(),
+                evidence: Vec::new(),
+                effects: Vec::new(),
+            });
+            self.needs_repaint = true;
+            return;
+        }
+        let explicit = ranges.is_some();
+        let ranges = ranges.unwrap_or_else(|| self.sampling_ranges.clone());
+        let scope = if explicit {
+            None
+        } else {
+            self.scope_report.as_ref().map(|(id, name)| (*id, name.as_str()))
+        };
+        let note: String = note.chars().take(2000).collect();
+        let pid = self.selected_pid.unwrap_or(0);
+        let body = self.assistant.request_body(intent, text, &ranges, scope, &note, pid);
+        self.assistant.messages.push(crate::assistant::Message {
+            role: "user".into(),
+            text: text.into(),
+            evidence: Vec::new(),
+            effects: Vec::new(),
+        });
+        self.assistant.generation = self.assistant.generation.wrapping_add(1);
+        self.assistant.busy = true;
+        self.assistant.error.clear();
+        self.net.post_assistant(self.assistant.generation, body);
+        self.needs_repaint = true;
+    }
+
+    fn accept_assistant_reply(&mut self, reply: crate::assistant::Reply) {
+        self.assistant.status = Some(reply.status());
+        if reply.error.is_empty() {
+            if !self.assistant.error.contains("no orbit-service") {
+                self.assistant.error.clear();
+            }
+        } else {
+            self.assistant.error = reply.error.clone();
+        }
+        let mut effects = Vec::new();
+        for action in &reply.actions {
+            if action.needs_confirmation() {
+                if !self.assistant.pending_hooks.iter().any(|pending| pending == action) {
+                    self.assistant.pending_hooks.push(action.clone());
+                }
+            } else if let Some(effect) = self.apply_assistant_action(action) {
+                effects.push(effect);
+            }
+        }
+        if !reply.message.is_empty() || !effects.is_empty() || !reply.error.is_empty() {
+            let text = if !reply.message.is_empty() {
+                reply.message
+            } else {
+                reply.error
+            };
+            self.assistant.messages.push(crate::assistant::Message {
+                role: "assistant".into(),
+                text,
+                evidence: reply.evidence,
+                effects,
+            });
+        }
+    }
+
+    /// Moves the view. A suggested hook is only queued; confirming it is a
+    /// separate click, and even then the hook waits for the next Record.
+    fn apply_assistant_action(&mut self, action: &orbit_assistant::UiAction) -> Option<String> {
+        use orbit_assistant::UiAction;
+        match action {
+            UiAction::SelectTimeRange { start_ns, end_ns, label } => {
+                let start = (*start_ns).min(*end_ns);
+                let end = (*start_ns).max(*end_ns);
+                if start == end {
+                    return None;
+                }
+                self.measure = None;
+                self.scope_report = None;
+                self.sample_sels = vec![TimeMeasure { start_ns: start, stop_ns: end, label_y: 0.0, sample_tid: None }];
+                let span = (end - start) as f64;
+                let pad = (span * 0.2).max(1.0);
+                self.apply_zoom_window((start as f64 - pad).max(0.0), end as f64 + pad);
+                self.open_right_tab(ReportTab::Flat);
+                let name = if label.is_empty() { format!("{start}–{end}") } else { label.clone() };
+                Some(format!("selected {name}"))
+            }
+            UiAction::JumpToFunction { name, function_id } => {
+                self.report_filter = name.clone();
+                if *function_id == 0 {
+                    self.open_right_tab(ReportTab::Live);
+                } else {
+                    self.open_right_tab(ReportTab::Flat);
+                    self.report_selection.clear();
+                    self.report_selection.insert(*function_id);
+                }
+                Some(format!("opened {name}"))
+            }
+            UiAction::OpenDisassembly { name, function_id } => {
+                if *function_id == 0 {
+                    return Some(format!("{name} has no function id to disassemble"));
+                }
+                if self.selected_pid.filter(|pid| *pid > 0).is_none() {
+                    return Some("select a process before disassembly".into());
+                }
+                self.apply_hook_action(HookAction::Disassemble, *function_id, name, "");
+                Some(format!("opened disassembly of {name}"))
+            }
+            UiAction::SuggestHook { .. } => {
+                if !self.assistant.pending_hooks.iter().any(|pending| pending == action) {
+                    self.assistant.pending_hooks.push(action.clone());
+                }
+                None
+            }
+        }
+    }
+
+    fn confirm_assistant_hook(&mut self, index: usize) {
+        let Some(action) = self.assistant.pending_hooks.get(index).cloned() else { return };
+        self.assistant.pending_hooks.remove(index);
+        let orbit_assistant::UiAction::SuggestHook { name, function_id, module, .. } = action else { return };
+        if function_id == 0 {
+            self.assistant.error = format!("{name} has no function id, so it cannot be hooked.");
+            return;
+        }
+        self.apply_hook_action(HookAction::Hook, function_id, &name, &module);
+        if let Some(message) = self.assistant.messages.iter_mut().rev().find(|message| message.role == "assistant") {
+            message.effects.push(format!("hooked {name} for the next Record"));
+        }
+        self.needs_repaint = true;
+    }
+
+    fn handle_assistant_ui(&mut self, events: Vec<crate::assistant::Event>) {
+        for event in events {
+            match event {
+                crate::assistant::Event::Close => self.assistant.open = false,
+                crate::assistant::Event::Send { intent, text } => self.ask_assistant(&intent, &text, None, ""),
+                crate::assistant::Event::Apply(action) => {
+                    let _ = self.apply_assistant_action(&action);
+                }
+                crate::assistant::Event::ConfirmHook(index) => self.confirm_assistant_hook(index),
+                crate::assistant::Event::DismissHook(index) => {
+                    if index < self.assistant.pending_hooks.len() {
+                        self.assistant.pending_hooks.remove(index);
+                    }
+                }
+            }
         }
     }
 
@@ -9456,6 +9700,24 @@ impl eframe::App for OrbitLiveApp {
                     .show(ctx, |_| {});
             }
 
+            if self.assistant.open {
+                if self.static_capture.is_some() && self.assistant.status.is_none() {
+                    let hint = "This page has no orbit-service, so there is no model. Open the viewer from orbit-service to ask about a capture.";
+                    self.assistant.error = hint.into();
+                    self.assistant.status = Some(crate::assistant::Status {
+                        configured: false,
+                        provider: String::new(),
+                        model: String::new(),
+                        hint: hint.into(),
+                    });
+                } else if self.static_capture.is_none() && !self.assistant.status_fetched {
+                    self.assistant.status_fetched = true;
+                    self.net.get_assistant_status();
+                }
+                let events = crate::assistant::show(ctx, &mut self.assistant, self.was_narrow);
+                self.handle_assistant_ui(events);
+            }
+
             self.refresh_sampling_report(ctx.input(|i| i.time));
             {
                 let _report = devf.scope(TID_UI, NAME_REPORT_PANEL);
@@ -9990,7 +10252,7 @@ pub(crate) const VIEWER_BUILD: &str = match option_env!("ORBIT_VIEWER_BUILD") {
     None => "dev",
 };
 
-fn note_ui_rect(label: &str, rect: Rect) {
+pub(crate) fn note_ui_rect(label: &str, rect: Rect) {
     UI_RECTS.with(|v| v.borrow_mut().push((label.to_string(), rect)));
 }
 

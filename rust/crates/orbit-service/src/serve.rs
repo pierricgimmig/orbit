@@ -265,6 +265,25 @@ impl SymbolState {
         })
         .to_string()
     }
+
+    /// A short instruction listing for the assistant. Uses a private source
+    /// allow-list so a question does not grant `/api/code/source` access to
+    /// files the disassembly names. Source text is not returned.
+    pub(crate) fn disassemble_snippet(
+        &self,
+        pid: u32,
+        function_id: u64,
+        max_lines: usize,
+    ) -> Result<orbit_assistant::DisassemblySnippet, String> {
+        if self.pid != pid || self.index.is_none() {
+            return Err(format!("symbols for pid {pid} are not loaded"));
+        }
+        let index = self.index.as_ref().expect("checked above");
+        let allow: crate::code::SourceAllowList =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        let json = crate::code::disassemble_json(index, function_id, &allow)?;
+        orbit_assistant::disassembly_from_json(&json, max_lines)
+    }
 }
 
 /// A capture owns one symbol index, the target's. Loading another pid
@@ -2338,6 +2357,7 @@ pub fn run_on(
             .collect();
         Ok(tree_store.tree_json_for_ranges(&ranges, TreeMode::parse(mode)))
     }));
+    crate::assistant::install(&service, store.clone(), symbols.clone());
     // Scope-scoped reports: every sample taken while the named scope was
     // running on the sample's thread. The instances come from the ring
     // through an index built once per ring generation.

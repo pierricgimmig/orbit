@@ -43,3 +43,5 @@ Right-click a function and choose **Show disassembly and source**. The service d
 ## Hook from a row
 
 **Hook function for dynamic instrumentation** adds the function to the hook list. It is not armed until the next Record, and the list still stops at 16 functions. Details are on the [Capture](capture.html#hooks) page.
+
+**Explain this selection** and **Suggest optimizations**, on the report header and on a rectangle, ask the [assistant](assistant.md) about that window.

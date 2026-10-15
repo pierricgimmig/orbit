@@ -1,0 +1,33 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Shared by orbit-service (the viewer's assistant) and anything else that
+# answers questions about a capture, including an MCP server over the HTTP
+# API. The default feature is the model client; the viewer depends on this
+# crate with default features off so the page never links an HTTP stack.
+#
+# Its own workspace, like orbit-service: the rust/ workspace is what Bazel
+# splices, and this crate is pulled in by path from orbit-service and the
+# viewer rather than as a member of that graph.
+[workspace]
+
+[package]
+name = "orbit-assistant"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/pierricgimmig/orbit"
+rust-version = "1.88"
+description = "Capture summaries and tool dispatch for Orbit's assistant"
+
+[features]
+default = ["client"]
+# HTTPS client for OpenAI-compatible and Anthropic endpoints. Off for the
+# wasm viewer, which only shares the summary and action types.
+client = ["dep:ureq"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2.12", optional = true, default-features = false, features = ["tls"] }

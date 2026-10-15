@@ -207,6 +207,14 @@ pub struct LiveService {
     /// the route prints the viewer's warnings and errors to stderr.
     #[allow(clippy::type_complexity)]
     pub viewer_log: Mutex<Option<std::sync::Arc<dyn Fn(ViewerLogBatch) + Send + Sync>>>,
+    /// `GET /api/assistant/status`. JSON, never an API key. Empty hook means
+    /// the assistant is not wired into this server.
+    pub assistant_status: Mutex<Option<std::sync::Arc<dyn Fn() -> String + Send + Sync>>>,
+    /// `POST /api/assistant/chat`. The body is the viewer's question; the
+    /// string is a JSON answer. The model call happens inside the hook.
+    #[allow(clippy::type_complexity)]
+    pub assistant_chat:
+        Mutex<Option<std::sync::Arc<dyn Fn(String) -> Result<String, String> + Send + Sync>>>,
     /// The service's log file, for `/api/status`; empty when it has none.
     pub log_path: Mutex<Option<String>>,
     /// Optional: what the service does before the ring is emptied by
@@ -356,6 +364,8 @@ impl LiveService {
             capture_clear: Mutex::new(None),
             agent_scope: Mutex::new(None),
             viewer_log: Mutex::new(None),
+            assistant_status: Mutex::new(None),
+            assistant_chat: Mutex::new(None),
             log_path: Mutex::new(None),
             names: Mutex::new(CaptureNames::default()),
             demo_stop: Mutex::new(None),
@@ -554,6 +564,17 @@ impl LiveService {
         report: std::sync::Arc<dyn Fn(&[SampleRangeSpec]) -> Result<String, String> + Send + Sync>,
     ) {
         *self.sampling_report.lock() = Some(report);
+    }
+
+    pub fn set_assistant_status(&self, status: std::sync::Arc<dyn Fn() -> String + Send + Sync>) {
+        *self.assistant_status.lock() = Some(status);
+    }
+
+    pub fn set_assistant_chat(
+        &self,
+        chat: std::sync::Arc<dyn Fn(String) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.assistant_chat.lock() = Some(chat);
     }
 
     pub fn set_hooks(&self, hooks: ControlHooks) {

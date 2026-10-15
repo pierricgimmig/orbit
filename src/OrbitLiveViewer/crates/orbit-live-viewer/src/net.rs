@@ -324,6 +324,11 @@ pub struct Inbox {
     /// The code views: a disassembly and a source file, or why not.
     pub disassembly: Option<Result<crate::code::Disassembly, String>>,
     pub source: Option<Result<crate::code::SourceFile, String>>,
+    /// `GET /api/assistant/status`.
+    pub assistant_status: Option<Result<crate::assistant::Status, String>>,
+    /// `POST /api/assistant/chat`, tagged with the generation the panel sent
+    /// so a late reply cannot land on a newer question.
+    pub assistant_reply: Option<(u64, Result<crate::assistant::Reply, String>)>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -394,7 +399,9 @@ pub fn parse_sampling_report_json(text: &str) -> Result<SamplingReport, String> 
     // The rows are the objects of the "functions" array. Each is cut out by
     // brace depth, skipping over strings, so neither the key order (the
     // service writes keys sorted) nor a brace in a function name matters.
-    let Some(at) = text.find("\"functions\":[") else { return Ok(report) };
+    let Some(at) = text.find("\"functions\":[") else {
+        return Ok(report);
+    };
     let list = &text[at + "\"functions\":[".len()..];
     let mut depth = 0usize;
     let mut in_str = false;
@@ -428,12 +435,16 @@ pub fn parse_sampling_report_json(text: &str) -> Result<SamplingReport, String> 
                             name: string_after(row_text, "\"name\":\"").unwrap_or_default(),
                             module: string_after(row_text, "\"module\":\"").unwrap_or_default(),
                             self_count: number_after(row_text, "\"self\":").unwrap_or(0.0) as u64,
-                            inclusive_count: number_after(row_text, "\"inclusive\":").unwrap_or(0.0) as u64,
-                            self_percent: number_after(row_text, "\"self_percent\":").unwrap_or(0.0) as f32,
-                            inclusive_percent: number_after(row_text, "\"inclusive_percent\":").unwrap_or(0.0)
+                            inclusive_count: number_after(row_text, "\"inclusive\":").unwrap_or(0.0)
+                                as u64,
+                            self_percent: number_after(row_text, "\"self_percent\":").unwrap_or(0.0)
+                                as f32,
+                            inclusive_percent: number_after(row_text, "\"inclusive_percent\":")
+                                .unwrap_or(0.0)
                                 as f32,
                             // 48-bit ids: exact through the f64 the number parser hands back.
-                            function_id: number_after(row_text, "\"function_id\":").unwrap_or(0.0) as u64,
+                            function_id: number_after(row_text, "\"function_id\":").unwrap_or(0.0)
+                                as u64,
                         });
                     }
                 }
@@ -619,12 +630,19 @@ mod wasm_impl {
         }
 
         pub fn share_capture(&self, window: Option<(u64, u64)>) {
-            if self.offline { return; }
+            if self.offline {
+                return;
+            }
             let inbox = self.inbox.clone();
-            let query = window.map(|(a, b)| format!("?t0={a}&t1={b}")).unwrap_or_default();
+            let query = window
+                .map(|(a, b)| format!("?t0={a}&t1={b}"))
+                .unwrap_or_default();
             wasm_bindgen_futures::spawn_local(async move {
                 let result = send_text("POST", &format!("/api/capture/share{query}"), "{}")
-                    .await.and_then(|text| serde_json::from_str::<ShareReply>(&text).map_err(|e| e.to_string()));
+                    .await
+                    .and_then(|text| {
+                        serde_json::from_str::<ShareReply>(&text).map_err(|e| e.to_string())
+                    });
                 inbox.lock().unwrap_or_else(|e| e.into_inner()).share = Some(result);
             });
         }
@@ -653,6 +671,8 @@ mod wasm_impl {
                 preset_functions: std::mem::take(&mut inbox.preset_functions),
                 disassembly: inbox.disassembly.take(),
                 source: inbox.source.take(),
+                assistant_status: inbox.assistant_status.take(),
+                assistant_reply: inbox.assistant_reply.take(),
             }
         }
 
@@ -675,9 +695,10 @@ mod wasm_impl {
             }
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let result = get_text("/api/settings")
-                    .await
-                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("/api/settings: {e}")));
+                let result = get_text("/api/settings").await.and_then(|t| {
+                    serde_json::from_str::<serde_json::Value>(&t)
+                        .map_err(|e| format!("/api/settings: {e}"))
+                });
                 let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
                 match result {
                     Ok(v) => g.settings = Some(v),
@@ -835,7 +856,9 @@ mod wasm_impl {
                     // Older services return pid 0 for idle. Keep the request
                     // identity so a late response cannot reset a new selection.
                     Ok(mut s) => {
-                        if s.pid == 0 { s.pid = pid; }
+                        if s.pid == 0 {
+                            s.pid = pid;
+                        }
                         g.symbols = Some(s);
                     }
                     Err(e) => g.error = Some(e),
@@ -888,7 +911,9 @@ mod wasm_impl {
             let query = format!("/api/sampling/tree?scope={name_id}&mode={mode}");
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let result = get_text(&query).await.and_then(|t| parse_sampling_tree_json(&t));
+                let result = get_text(&query)
+                    .await
+                    .and_then(|t| parse_sampling_tree_json(&t));
                 let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
                 g.tree = result.ok();
             });
@@ -916,7 +941,9 @@ mod wasm_impl {
 
         /// A function of `pid` disassembled, with its source lines.
         pub fn get_disassembly(&self, pid: u32, function_id: u64) {
-            self.fetch_disassembly(format!("/api/code/disassembly?pid={pid}&function_id={function_id}"));
+            self.fetch_disassembly(format!(
+                "/api/code/disassembly?pid={pid}&function_id={function_id}"
+            ));
         }
 
         /// The service's example: one of its own functions.
@@ -930,11 +957,43 @@ mod wasm_impl {
             }
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let result = get_text(&url)
-                    .await
-                    .and_then(|t| serde_json::from_str::<crate::code::Disassembly>(&t).map_err(|e| format!("disassembly: {e}")));
+                let result = get_text(&url).await.and_then(|t| {
+                    serde_json::from_str::<crate::code::Disassembly>(&t)
+                        .map_err(|e| format!("disassembly: {e}"))
+                });
                 let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
                 g.disassembly = Some(result);
+            });
+        }
+
+        /// Whether orbit-service has a model. The body never includes a key.
+        pub fn get_assistant_status(&self) {
+            if self.offline {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text("/api/assistant/status")
+                    .await
+                    .and_then(|t| crate::assistant::parse_status(&t));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                g.assistant_status = Some(result);
+            });
+        }
+
+        /// One question. `generation` is the panel's, so a slow reply for an
+        /// older question is dropped when a newer one is in flight.
+        pub fn post_assistant(&self, generation: u64, body: String) {
+            if self.offline {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = send_text("POST", "/api/assistant/chat", &body)
+                    .await
+                    .and_then(|t| crate::assistant::parse_reply(&t));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                g.assistant_reply = Some((generation, result));
             });
         }
 
@@ -946,9 +1005,10 @@ mod wasm_impl {
             let inbox = self.inbox.clone();
             let url = format!("/api/code/source?path={}", percent_encode(path));
             wasm_bindgen_futures::spawn_local(async move {
-                let result = get_text(&url)
-                    .await
-                    .and_then(|t| serde_json::from_str::<crate::code::SourceFile>(&t).map_err(|e| format!("source: {e}")));
+                let result = get_text(&url).await.and_then(|t| {
+                    serde_json::from_str::<crate::code::SourceFile>(&t)
+                        .map_err(|e| format!("source: {e}"))
+                });
                 let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
                 g.source = Some(result);
             });
@@ -993,9 +1053,14 @@ mod wasm_impl {
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let body = format!(r#"{{"pid":{pid},"functions":{keys}}}"#);
-                let result = send_text("POST", "/api/functions/resolve", &body).await
+                let result = send_text("POST", "/api/functions/resolve", &body)
+                    .await
                     .and_then(|text| parse_function_search_json(&text));
-                inbox.lock().unwrap_or_else(|e| e.into_inner()).preset_functions.push((generation, result));
+                inbox
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .preset_functions
+                    .push((generation, result));
             });
         }
 
@@ -1032,9 +1097,10 @@ mod wasm_impl {
             }
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let result = get_text("/api/bench")
-                    .await
-                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("/api/bench: {e}")));
+                let result = get_text("/api/bench").await.and_then(|t| {
+                    serde_json::from_str::<serde_json::Value>(&t)
+                        .map_err(|e| format!("/api/bench: {e}"))
+                });
                 let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
                 match result {
                     Ok(v) => g.bench = Some(v),
@@ -1105,7 +1171,8 @@ mod wasm_impl {
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Err(e) = send_bytes("/api/capture/import", &bytes, "application/zip").await {
-                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(format!("open capture: {e}"));
+                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error =
+                        Some(format!("open capture: {e}"));
                 }
             });
         }
@@ -1127,7 +1194,8 @@ mod wasm_impl {
                 }
                 .await;
                 if let Err(e) = result {
-                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(format!("open capture: {e}"));
+                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error =
+                        Some(format!("open capture: {e}"));
                 }
             });
         }
@@ -1444,6 +1512,8 @@ mod native_impl {
         pub fn get_disassembly(&self, _pid: u32, _function_id: u64) {}
         pub fn get_example_disassembly(&self) {}
         pub fn get_source(&self, _path: &str) {}
+        pub fn get_assistant_status(&self) {}
+        pub fn post_assistant(&self, _generation: u64, _body: String) {}
         pub fn get_processes(&self) {}
         pub fn pull_view(&self, _t0: u64, _t1: u64, _width: u32) {}
         pub fn start_capture(&self, _req: &CaptureStart) {}
@@ -1509,7 +1579,6 @@ mod tests {
         let q = ranges_query(&[(100, 200, Some(7)), (500, 800, None)]);
         assert_eq!(q, "?ranges=100-200:7,500-800");
     }
-
 
     #[test]
     fn a_row_keeps_the_module_its_function_came_from() {
@@ -1648,10 +1717,9 @@ mod tests {
 
     #[test]
     fn process_json_keeps_cpu_and_path() {
-        let list = parse_processes_json(
-            r#"[{"pid":9,"name":"app","cpu":1.5,"path":"/usr/bin/app"}]"#,
-        )
-        .unwrap();
+        let list =
+            parse_processes_json(r#"[{"pid":9,"name":"app","cpu":1.5,"path":"/usr/bin/app"}]"#)
+                .unwrap();
         assert_eq!(list[0].pid, 9);
         assert_eq!(list[0].path, "/usr/bin/app");
         assert!((list[0].cpu - 1.5).abs() < f32::EPSILON);
@@ -1687,4 +1755,3 @@ fn percent_encode(text: &str) -> String {
     }
     out
 }
-

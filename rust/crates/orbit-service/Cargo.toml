@@ -51,6 +51,7 @@ miniz_oxide = "0.8"
 # already carries it.
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info", "intel"] }
 orbit-api = { path = "../orbit-api" }
+orbit-assistant = { path = "../orbit-assistant" }
 orbit-capture = { path = "../orbit-capture" }
 orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-event" }
 orbit-live-server = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-server" }

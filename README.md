@@ -48,6 +48,20 @@ needs root or `CAP_SYS_ADMIN`.
 
 With no arguments, `orbit-service` listens on `127.0.0.1:44766`.
 
+## Assistant
+
+The viewer’s **Ask** panel answers questions about the open capture (“why is frame 120 slow?”, “what should I optimize?”). The model runs in `orbit-service`, so the API key never reaches the page. **Explain this selection** and **Suggest optimizations** sit on the report. Answers cite evidence you can click, and the model can move the selection, open a function, or propose a hook that waits for you to confirm.
+
+Configure the service, then restart it:
+
+```sh
+ORBIT_AI_PROVIDER=openai ORBIT_AI_API_KEY=sk-... orbit-service
+# or: anthropic, ollama, openai-compatible. ORBIT_AI_BASE_URL and ORBIT_AI_MODEL override the defaults.
+# ORBIT_AI_PROVIDER=mock answers on this machine from the capture summary, for a demo.
+```
+
+Unset, the panel says how to configure it and does not call a model. The prompt is a short summary (hotspots, stacks, scope and thread-state totals, a few disassembly lines), not the raw capture. Details, including what leaves the machine: [docs/manual/assistant.md](docs/manual/assistant.md).
+
 ## Platforms
 
 | | |

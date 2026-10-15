@@ -42,7 +42,7 @@ The target is a native binary that is already running. Orbit does not rebuild it
 
 `orbit-service` samples call stacks, records context switches and thread states, and can hook functions with Frida or kernel uprobes. [Auto-profiling](capture.html#auto-profiling) — the service choosing which functions to hook — is the open pull request [#97](https://github.com/pierricgimmig/orbit/pull/97), not this branch.
 
-The viewer is a Rust and WebAssembly page (egui, wgpu). It draws the [timeline](timeline.html), the [flame graph and reports](time.html), the [scheduler and the service’s own lanes](systems.html), and it opens a [saved capture or a Chrome trace](everywhere.html) with no service at all.
+The viewer is a Rust and WebAssembly page (egui, wgpu). It draws the [timeline](timeline.html), the [flame graph and reports](time.html), the [scheduler and the service’s own lanes](systems.html), and it opens a [saved capture or a Chrome trace](everywhere.html) with no service at all. [Ask](assistant.html) questions about the capture that is open; the model runs in the service.
 
 ## Instrument your code
 
@@ -93,5 +93,7 @@ The viewer and the API share the port. The routes the page itself uses:
 | `POST /api/capture/clear` | Refuses the same way: `busy: stop the capture before clearing` |
 | `GET` / `PUT /api/settings` | Auto-unhook, stored in `~/.config/orbit/settings.json` |
 | `GET /api/capture/export` | Download the capture, including `?format=stream` |
+| `GET /api/assistant/status` | Whether a model is configured. No API key |
+| `POST /api/assistant/chat` | One question about the capture. See [Assistant](assistant.html) |
 
 Symbols, function search, disassembly and source are `/api/symbols/load`, `/api/functions/search`, `/api/code/disassembly` and `/api/code/source`.
