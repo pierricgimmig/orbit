@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
-# Rust orbit-service release.
+# Rust orbit-service release for Linux x86-64 and macOS (universal).
 #
 # Tags are orbit-vX.Y.Z (optional suffix, e.g. orbit-v0.1.0-rc.1).
 # That scheme does not collide with the legacy C++ line (v1.* and
@@ -179,7 +179,7 @@ jobs:
           python3 - "$notes" <<'PY'
           import pathlib, sys
           pathlib.Path(sys.argv[1]).write_text(
-              "Rust `orbit-service` release.\n\n"
+              "Rust `orbit-service` for Linux and macOS. The viewer is in the binary; open it in a browser.\n\n"
               "**Linux x86-64** (`orbit-linux-x86_64.tar.gz`): static musl binary with the WASM viewer embedded. "
               "Beside it, the files the service loads from its own directory:\n\n"
               "- `liborbit_frida_agent.so` and `orbit-frida-helper` (function hooks)\n"
@@ -188,7 +188,8 @@ jobs:
               "- `licenses/` (Frida)\n\n"
               "**macOS** (`orbit-macos-universal.tar.gz`): universal binary (Apple silicon and Intel) from "
               "`./build-service-macos.sh --universal`. Ad-hoc signed, not notarized. "
-              "Manual scopes and Frida hooks. No sampling or scheduler.\n\n"
+              "Manual scopes and Frida function hooks. Attaching needs a task port. "
+              "No call-stack sampling, scheduler, live disassembly, or auto-profiling. No GPU helper.\n\n"
               "Checksums: `SHA256SUMS` and the per-archive `.sha256` files.\n\n"
               "Install (fails with a clear message until a non-prerelease `orbit-v*` tag exists):\n\n"
               "```\n"
