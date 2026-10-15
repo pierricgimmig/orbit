@@ -28,7 +28,7 @@
   <header class="hero">
     <p class="kicker">Features</p>
     <h1>The rest of the viewer</h1>
-    <p class="lede">The <a href="index.html">home page</a> is the live capture, then attach, the timeline, the flame graph and the scheduler. The recordings here are the rest, and each one links to the manual.</p>
+    <p class="lede">The <a href="index.html">home page</a> is the live capture, then attach, the flame graph, auto-profiling and the scheduler. The recordings here are the rest, and each one links to the manual. What a live capture can record depends on the machine the service runs on — the <a href="index.html#platforms">platform table</a> is that list.</p>
   </header>
 
   <figure class="stage hero-stage" id="overview">
@@ -45,7 +45,7 @@
   <section class="section" id="capture">
     <header class="section-head">
       <h2>Capture</h2>
-      <p class="sub">The service can choose which functions to hook. That switch is not on main yet.</p>
+      <p class="sub">On Linux the service can choose which functions to hook. That needs root or <code>CAP_SYS_ADMIN</code>.</p>
       <p class="manual-link"><a href="manual/capture.html#auto-profiling">In the manual</a></p>
     </header>
 
@@ -62,7 +62,7 @@
       </figure>
       <div class="copy">
         <h3>The service picks what to hook</h3>
-        <p>Auto-profiling chooses functions from the samples. The status line counts hooked functions and scopes per second against the budget until the set converges, and the Functions view lists what was hooked. It ships with <a href="https://github.com/pierricgimmig/orbit/pull/97">pull request #97</a>, not in the service on main yet.</p>
+        <p>Auto-profiling chooses functions from the samples and drops whatever costs too much, inside a scopes-per-second budget. The status line counts hooked functions and scopes per second until the set converges, and the Functions view lists what was hooked. It is in the Linux service. It uses the kernel hook engine, so it needs root or <code>CAP_SYS_ADMIN</code>. It is not available on macOS.</p>
       </div>
     </article>
   </section>
@@ -73,6 +73,24 @@
       <p class="sub">Light up a scope by name.</p>
       <p class="manual-link"><a href="manual/timeline.html#scope-search">In the manual</a></p>
     </header>
+
+    <article class="feature" id="zoom">
+      <figure class="stage">
+        <div class="stage-frame">
+          <img class="poster" alt="" src="media/02-timeline-navigation.jpg" width="1280" height="416">
+          <video id="clip-02" width="1280" height="416" muted loop playsinline webkit-playsinline preload="none" poster="media/02-timeline-navigation.jpg" data-src="media/02-timeline-navigation.mp4" aria-label="Cursor-anchored zoom, pan, and tooltips on nested hooked scopes"></video>
+        </div>
+        <figcaption>
+          <span>Live timeline</span>
+          <button type="button" class="clip-toggle" aria-controls="clip-02">Play</button>
+        </figcaption>
+      </figure>
+      <div class="copy">
+        <h3>Zoom from the cursor</h3>
+        <p>Ctrl+wheel zooms around the cursor, drag pans, and W, S, A and D do the same from the keyboard. Hover a scope for a tooltip on the nested hooked functions.</p>
+        <p class="manual-link"><a href="manual/timeline.html">In the manual</a></p>
+      </div>
+    </article>
 
     <article class="feature" id="scope-search">
       <figure class="stage">
@@ -200,7 +218,7 @@
   <section class="section" id="everywhere">
     <header class="section-head">
       <h2>Works everywhere</h2>
-      <p class="sub">The same capture, in another colour scheme, on a phone, or from a Chrome trace.</p>
+      <p class="sub">The same viewer, in another colour scheme, on a phone, or from a Chrome trace. This is the page, not a claim that every capture feature exists on every operating system.</p>
       <p class="manual-link"><a href="manual/everywhere.html">In the manual</a></p>
     </header>
 
@@ -258,9 +276,20 @@
       </div>
     </article>
   </section>
+
+  <section class="section" id="gpu">
+    <header class="section-head">
+      <h2>NVIDIA GPU lanes</h2>
+      <p class="sub">Optional, Linux only. The service binary does not link the driver.</p>
+    </header>
+    <div class="card">
+      <p>If <code>orbit-gpu-helper</code> is next to <code>orbit-service</code>, a capture can show NVIDIA utilisation, memory and power. The helper loads the driver library at runtime and stays quiet when it is not there, so a machine without an NVIDIA GPU still captures. This is not AMD job tracing or Vulkan debug labels; those were the original Orbit and are not a live feature here.</p>
+    </div>
+  </section>
 </main>
 <footer class="site">
   <span>Orbit</span>
+  <a href="https://github.com/google/orbit" rel="noopener noreferrer">Original Orbit</a>
   <a href="index.html">Home</a>
   <a href="manual/index.html">Manual</a>
   <a href="https://github.com/pierricgimmig/orbit" rel="noopener noreferrer">GitHub</a>
