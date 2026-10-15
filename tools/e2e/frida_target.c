@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 #define _POSIX_C_SOURCE 200809L
+#include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -64,8 +65,9 @@ static void *blocked_worker(void *unused) {
 int main(void) {
 #ifdef __linux__
   // This test target explicitly opts into sibling debugger attachment under
-  // Yama. The profiler never changes the machine's ptrace policy.
-  if (prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0) != 0) return 2;
+  // Yama. The profiler never changes the machine's ptrace policy. EINVAL
+  // means the kernel has no Yama, so there is nothing to opt into.
+  if (prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0) != 0 && errno != EINVAL) return 2;
 #endif
   if (orbit_init() != 0) return 3;
   printf("%d\n", getpid()); fflush(stdout);

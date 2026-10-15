@@ -1,3 +1,9 @@
+<!--
+Copyright (c) 2026 The Orbit Authors. All rights reserved.
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
+
 # Quick start
 
 Orbit profiles a process that is already running. `orbit-service` captures it and serves the viewer on the same port. This guide matches the viewer and the service on main, including [auto-profiling](capture.html#auto-profiling) on Linux.
@@ -96,4 +102,6 @@ The viewer and the API share the port. The routes the page itself uses:
 | `GET` / `PUT /api/settings` | Auto-unhook, stored in `~/.config/orbit/settings.json` |
 | `GET /api/capture/export` | Download the capture, including `?format=stream` |
 
-Symbols, function search, disassembly and source are `/api/symbols/load`, `/api/functions/search`, `/api/code/disassembly` and `/api/code/source`.
+Symbols, function search, disassembly and source are `/api/symbols/load`, `/api/functions/search`, `/api/code/disassembly` and `/api/code/source`. `GET /api/functions/stats` is one row per hooked function or manual scope (count, total, average, min, max, stddev). `GET /api/sampling/callstacks` is the hottest distinct stacks, one page.
+
+An agent drives the same API through `orbit-service mcp`. The tools, the Claude Code and Cursor configs, and what macOS refuses are in [Agents](mcp.md).

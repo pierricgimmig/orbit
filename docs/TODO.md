@@ -1,3 +1,9 @@
+<!--
+Copyright (c) 2026 The Orbit Authors. All rights reserved.
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
+
 # ORBIT — TODO
 
 The project owner's list, kept verbatim under each heading. The `Status`
@@ -180,15 +186,21 @@ ever exposed beyond that.
   name. orbit_link connects slow steps across the run.
 - Bootstrapping: service must be running before the agent attaches.
 
-**Status: done for the CLI and the HTTP interface.** `orbit-scope start
+**Status: CLI, HTTP, and MCP.** `orbit-scope start
 <name> | stop | instant <name> | value <name> <n> | run [--name N] -- cmd`
 (`--track`, `--url`, or ORBIT_TRACK / ORBIT_URL) posts to the service's
 `POST /api/scope`; each track is a thread of an "agents" process in the
 viewer, scopes nest per track, timestamps are CLOCK_MONOTONIC from the
 caller so they line up with the capture. A `run` wraps a command in a
 scope with the command's exit code passed through, which is the wrapper
-process idea in its simplest form. Not done: the MCP layer, and links
-(the viewer does not draw links yet). Note: a capture start empties the
+process idea in its simplest form. `orbit-service mcp` is the MCP layer:
+stdio by default, streamable HTTP on loopback with `--http`. Twelve tools
+drive a live profile (list, attach, search, arm Frida hooks, start/stop,
+sampling report, call stacks, function timing). They do not edit source.
+The Python optimize-loop on the `loop` branch was not merged: it applies
+patches and rebuilds, which is a different job and a destructive one.
+Not done: links (the viewer does not draw links yet), and token auth if
+the HTTP API is ever bound past localhost. Note: a capture start empties the
 ring, so agent scopes made before Record are gone once it starts.
 
 `POST /api/events` (orbit-live-server `ingest.rs`) is the batch form for a

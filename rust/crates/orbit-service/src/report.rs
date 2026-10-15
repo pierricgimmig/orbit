@@ -722,6 +722,69 @@ impl SampleStore {
         out.push_str("]}");
         out
     }
+
+    /// The hottest distinct call stacks, one page.
+    ///
+    /// Frames are stored innermost-first. The JSON lists them outermost-first
+    /// so a reader sees `main` then what it called. `limit` is capped at 32
+    /// and each stack at 24 frames; a longer stack sets `truncated`.
+    pub fn callstacks_json_for_ranges(&self, ranges: &[SampleRange], offset: usize, limit: usize) -> String {
+        let limit = limit.clamp(1, 32);
+        let mut inner = self.inner.lock().unwrap();
+        inner.ensure_sorted();
+        let inner = &*inner;
+        let (stacks, total, _, _) = fold_selection(inner, Selection::Ranges(ranges));
+        let mut ordered: Vec<((u32, &[u32]), u64)> = stacks.into_iter().filter(|((_, frames), _)| !frames.is_empty()).collect();
+        ordered.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.0.cmp(&b.0.0)).then(a.0.1.cmp(b.0.1)));
+        let distinct = ordered.len();
+        let percent = |count: u64| {
+            if total == 0 {
+                0.0
+            } else {
+                (1000.0 * count as f64 / total as f64).round() / 10.0
+            }
+        };
+        let mut out = String::with_capacity(1024);
+        out.push_str("{\"order\":\"outermost_first\"");
+        write_kv_u64(&mut out, "samples", total);
+        write_kv_u64(&mut out, "total_stacks", distinct as u64);
+        write_kv_u64(&mut out, "offset", offset as u64);
+        write_kv_u64(&mut out, "limit", limit as u64);
+        out.push_str(",\"stacks\":[");
+        let mut wrote = false;
+        for ((tid, frames), count) in ordered.into_iter().skip(offset).take(limit) {
+            if wrote {
+                out.push(',');
+            }
+            wrote = true;
+            // Outermost first. A stack longer than 24 frames keeps the outer
+            // 23 and the leaf, so both ends of the call survive the cap.
+            let mut shown: Vec<u32> = frames.iter().rev().copied().collect();
+            let truncated = shown.len() > 24;
+            if truncated {
+                let leaf = frames[0];
+                shown.truncate(23);
+                shown.push(leaf);
+            }
+            out.push_str("{\"tid\":");
+            out.push_str(&tid.to_string());
+            write_kv_u64(&mut out, "count", count);
+            write_kv_f64(&mut out, "percent", percent(count));
+            write_kv_u64(&mut out, "frame_count", frames.len() as u64);
+            out.push_str(",\"truncated\":");
+            out.push_str(if truncated { "true" } else { "false" });
+            out.push_str(",\"frames\":[");
+            for (i, id) in shown.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(&inner.name_of(*id)).unwrap_or_else(|_| "\"\"".into()));
+            }
+            out.push_str("]}");
+        }
+        out.push_str("]}");
+        out
+    }
 }
 
 fn write_kv_u64(out: &mut String, key: &str, v: u64) {
@@ -832,6 +895,30 @@ mod tests {
 
     fn report(store: &SampleStore, start: u64, end: u64) -> serde_json::Value {
         serde_json::from_str(&store.report_json(start, end)).unwrap()
+    }
+
+    #[test]
+    fn hottest_callstacks_are_outermost_first_and_paged() {
+        let store = store();
+        let page = serde_json::from_str::<serde_json::Value>(&store.callstacks_json_for_ranges(
+            &[SampleRange::new(0, u64::MAX, None)],
+            0,
+            1,
+        ))
+        .unwrap();
+        assert_eq!(page["samples"], 4);
+        assert_eq!(page["total_stacks"], 2);
+        assert_eq!(page["order"], "outermost_first");
+        let stack = &page["stacks"][0];
+        assert_eq!(stack["count"], 3);
+        assert_eq!(stack["frames"], serde_json::json!(["main", "work", "inner"]));
+        let next = serde_json::from_str::<serde_json::Value>(&store.callstacks_json_for_ranges(
+            &[SampleRange::new(0, u64::MAX, None)],
+            1,
+            1,
+        ))
+        .unwrap();
+        assert_eq!(next["stacks"][0]["frames"], serde_json::json!(["main", "other"]));
     }
 
     #[test]
