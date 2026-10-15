@@ -6,7 +6,7 @@ found in the LICENSE file.
 
 # Quick start
 
-Orbit profiles a process that is already running. `orbit-service` captures it and serves the viewer on the same port. This guide matches the viewer and the service on main, including [auto-profiling](capture.html#auto-profiling) on Linux.
+Orbit profiles a process that is already running, with no code change. `orbit-service` runs on Linux and macOS and serves the viewer on the same port. The viewer is a web page.
 
 This is a Rust re-implementation of [Orbit](https://github.com/google/orbit), by the original author.
 
@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/inst
 
 The script downloads a GitHub Release tagged `orbit-vX.Y.Z` and puts `orbit-service` in `~/.local/bin` (`ORBIT_INSTALL_DIR` to choose another directory), with `liborbit_frida_agent` and `orbit-frida-helper` beside it so function hooks work, and `liborbit_api` when the archive includes it. Until a stable `orbit-v*` release exists, the script stops and says how to build from source. `orbitprofiler.dev` is not a host. `ORBIT_INSTALL_BASE` overrides the download prefix; `DEFAULT_BASE` in the script is the one line to point at orbitprofiler.com later.
 
-The published binaries are Linux x86-64 (static) and macOS, Intel and Apple silicon (one universal binary). Linux arm64 compiles and is not in the release or in CI. Windows is not supported. If the install directory is not on `PATH`, the script prints the `export` line to add.
+The published binaries are for Linux and macOS: a static Linux x86-64 build, and one universal macOS binary (Intel and Apple silicon). Linux arm64 compiles and is not in the release or in CI. Windows is not supported. If the install directory is not on `PATH`, the script prints the `export` line to add.
 
 ## Run the service and open the viewer
 
@@ -48,7 +48,11 @@ On Linux, sampling and the scheduler need the right `perf_event_paranoid` value,
 
 The target is a native binary that is already running. Orbit does not rebuild it and does not relaunch it.
 
-`orbit-service` runs on the machine you profile. On Linux x86-64 it samples call stacks at a fixed 1 kHz, unwinds them with DWARF, records context switches and thread states, and can hook functions with no code change (Frida by default). On macOS it records manual scopes and Frida hooks; sampling, the scheduler, and live disassembly are not in that build. Windows is not supported. [Auto-profiling](capture.html#auto-profiling) — the service choosing which functions to hook — is on Linux and needs root or `CAP_SYS_ADMIN`, because it uses the kernel hook engine. It is not available on macOS. The [home page](../index.html#platforms) has the feature-by-feature table.
+`orbit-service` runs on the machine you profile, on Linux and on macOS. The viewer is a web page on any device. Windows is not supported. The [home page](../index.html#platforms) has the feature-by-feature table.
+
+On Linux x86-64 the service samples call stacks at a fixed 1 kHz, unwinds them with DWARF, records context switches and thread states, and can hook functions with no code change (Frida by default). [Auto-profiling](capture.html#auto-profiling) — the service choosing which functions to hook — uses the kernel hook engine, so it needs root or `CAP_SYS_ADMIN`.
+
+On macOS the service records manual scopes and Frida function hooks, on Intel and Apple silicon. Native Frida tests pass on both. Attaching needs a task port; code signing, the hardened runtime, and SIP can refuse it. Shared-cache images whose symbols Frida cannot read may be missing from the function list. Sampling, the scheduler, thread states, live disassembly, GPU lanes, and auto-profiling are not in that build. The release binary is universal and ad-hoc signed, not notarized.
 
 The viewer is a Rust and WebAssembly page (egui, wgpu). It draws the [timeline](timeline.html), the [flame graph and reports](time.html), the [scheduler and the service’s own lanes](systems.html), and it opens a [saved capture or a Chrome trace](everywhere.html) with no service at all. A desktop, a tablet or a phone can open that page and connect to the service.
 

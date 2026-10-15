@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <title>Orbit — profile a running program</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Orbit attaches to a running Linux program and shows the whole run down to a single context switch. Sampling, automatic function hooks, and the scheduler. One Rust binary; the viewer is a web page.">
+<meta name="description" content="Profile a running program with no code change. The Rust service runs on Linux and macOS. The viewer is a web page, on any device.">
 <meta property="og:title" content="Orbit">
 <meta property="og:description" content="From the whole run to a single context switch. A Rust profiler; the viewer is a web page.">
 <meta property="og:image" content="media/00-hero.jpg">
@@ -30,7 +30,7 @@
 <main class="wide" id="main">
   <header class="hero compact">
     <h1>From the whole run to a single context switch.</h1>
-    <p class="lede">Orbit attaches to a Linux program that is already running: sampling for the big picture, automatic function hooks for exact timings, the scheduler for why. No rebuild, no code changes. One Rust binary; the viewer is a web page.</p>
+    <p class="lede">Orbit attaches to a program that is already running, with no code change. The service runs on Linux and macOS. The viewer is a web page, so any browser on any device can open it.</p>
     <p class="lineage">A Rust re-implementation by the original author of <a href="https://github.com/google/orbit" rel="noopener noreferrer">Orbit</a>.</p>
   </header>
 
@@ -48,7 +48,7 @@
   <section class="section" id="clips">
     <header class="section-head">
       <h2>From the whole run down</h2>
-      <p class="sub">Sampling for the shape of the run, hooks for the exact calls, the scheduler for why a thread was off-CPU. The <a href="features.html">features page</a> has the rest, and the <a href="#platforms">platform table</a> says what macOS does not do yet.</p>
+      <p class="sub">These recordings go from the shape of the run down to one core. The <a href="#platforms">platform table</a> says what the service records on each operating system. The <a href="features.html">features page</a> has the rest.</p>
     </header>
 
     <article class="feature" id="capture">
@@ -133,7 +133,7 @@
       <p class="manual-link"><a href="manual/index.html#what-runs-where">In the manual</a></p>
     </header>
 
-    <figure class="arch" aria-label="The capture agent runs on Linux, with a partial build on macOS. The viewer is a web app on a desktop, tablet, or phone, and it connects to the service.">
+    <figure class="arch" aria-label="The service runs on Linux and on macOS. The viewer is a web app on a desktop, tablet, or phone, and it connects to the service.">
       <div class="arch-hosts">
         <div class="arch-node">
           <span class="mark yes">Supported</span>
@@ -143,7 +143,7 @@
         <div class="arch-node is-partial">
           <span class="mark part">Partial</span>
           <h3>macOS</h3>
-          <p>Manual scopes and function hooks, on Intel and Apple silicon. No sampling or scheduler yet.</p>
+          <p>Manual scopes and Frida function hooks, on Intel and Apple silicon. Sampling, the scheduler, and auto-profiling are not in this build.</p>
         </div>
       </div>
       <div class="arch-agent">
@@ -201,8 +201,8 @@
       </li>
       <li>
         <p class="kicker">orbit-service</p>
-        <h3>Sampling, function hooks, scheduler</h3>
-        <p>On Linux: call stacks at 1&nbsp;kHz, the scheduler, and dynamic instrumentation with no code change. Auto-profiling picks what to hook and keeps the cost under a budget. It needs root or <code>CAP_SYS_ADMIN</code>. On macOS: manual scopes and function hooks.</p>
+        <h3>What this machine records</h3>
+        <p>On Linux: call stacks at 1&nbsp;kHz, the scheduler, and dynamic instrumentation with no code change. Auto-profiling picks what to hook and keeps the cost under a budget. It needs root or <code>CAP_SYS_ADMIN</code>. On macOS: manual scopes and Frida function hooks. Sampling, the scheduler, and auto-profiling are not in that build.</p>
       </li>
       <li>
         <p class="kicker">Web viewer</p>
@@ -275,7 +275,7 @@
       </div>
       <ul class="platform-notes">
         <li><strong>Linux</strong> is the x86-64 service. Sampling is fixed at 1&nbsp;kHz and unwound with DWARF. Arm64 has the register and unwind paths and is not run in CI; the static binary is x86-64.</li>
-        <li><strong>macOS</strong> function hooks are tested on Apple Silicon and Intel. Attachment needs a task port, and shared-cache images may be missing from the function list.</li>
+        <li><strong>macOS</strong> function hooks are tested on Apple Silicon and Intel. Attaching needs a task port. Code signing, the hardened runtime, and SIP can refuse it; these builds do not bypass that. Shared-cache images whose symbols Frida cannot read may be missing from the function list. Hook-safety analysis is the Linux path. The release binary is universal and ad-hoc signed, not notarized.</li>
         <li><strong>Dynamic instrumentation</strong> needs no code change. Frida is the default. On Linux, auto-profiling uses a kernel engine and needs root or <code>CAP_SYS_ADMIN</code>.</li>
         <li><strong>Auto-profiling</strong> is supported on Linux and needs root or <code>CAP_SYS_ADMIN</code>. It is not available on macOS.</li>
         <li>Windows is not supported.</li>
@@ -286,22 +286,24 @@
   <section class="section" id="start">
     <header class="section-head">
       <h2>Get started</h2>
-      <p class="sub">On Linux, one static binary serves the viewer and the API. The manual covers privileges, capture files and instrumentation.</p>
+      <p class="sub">Linux and macOS. The script installs the build for this machine, including the Frida files function hooks need.</p>
     </header>
     <div class="two">
       <div class="card">
         <h3>Run it</h3>
-        <pre><code># install (Linux x86-64 / macOS)
+        <pre><code># install (Linux x86-64 or macOS)
 curl -fsSL https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.sh | sh
 
 orbit-service
 # http://127.0.0.1:44766/</code></pre>
-        <p>The script downloads a GitHub Release tagged <code>orbit-v*</code>. Until that release exists it stops and says so. <code>orbitprofiler.dev</code> is not the host. On Linux, sampling works at <code>perf_event_paranoid</code> 2 or below. The scheduler needs 0 or below. Root, <code>CAP_PERFMON</code> or <code>CAP_SYS_ADMIN</code> bypass the sysctl. Function hooks ship beside the binary and do not need root. Auto-profiling needs root or <code>CAP_SYS_ADMIN</code>.</p>
+        <p>The script downloads a GitHub Release tagged <code>orbit-v*</code>. Linux x86-64 and macOS (one universal binary, Intel and Apple silicon) are both in that release. Until a stable release exists the script stops and says so. <code>orbitprofiler.dev</code> is not the host. Function hooks ship beside the binary and do not need root. On macOS, attaching needs a task port.</p>
+        <p>On Linux, sampling works at <code>perf_event_paranoid</code> 2 or below, and the scheduler needs 0 or below. Root, <code>CAP_PERFMON</code> or <code>CAP_SYS_ADMIN</code> bypass the sysctl. Auto-profiling needs root or <code>CAP_SYS_ADMIN</code>. Those are not in the macOS build.</p>
         <a class="more" href="manual/index.html#quick-start">Quick start in the manual</a>
       </div>
       <div class="card">
         <h3>Where it runs</h3>
-        <p>Linux x86-64 is one static binary. macOS (Intel and Apple silicon) runs manual scopes and function hooks. The viewer runs in any browser, including a phone. Windows is not supported.</p>
+        <p>The service runs on Linux and macOS. The viewer runs in any browser, on any device, including a phone. Windows is not supported.</p>
+        <p>Linux x86-64 is one static binary: sampling, the scheduler, function hooks, and auto-profiling. macOS records manual scopes and Frida function hooks.</p>
         <p>One small API for Rust, C, C++ and Python is in the manual, alongside the HTTP API. The <a href="#platforms">platform table</a> is the feature-by-feature status.</p>
         <a class="more" href="manual/index.html#instrument-your-code">Instrumentation and the HTTP API</a>
       </div>
