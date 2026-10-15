@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "orbit-optimize-loop": {
+      "command": "python3",
+      "args": ["-u", "tools/optimize-loop/mcp/server.py"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}

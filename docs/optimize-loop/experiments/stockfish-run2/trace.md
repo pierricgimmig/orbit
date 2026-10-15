@@ -1,0 +1,68 @@
+# Trace: optimizing Stockfish with the Orbit loop (run 2)
+
+Chronological log of every step, appended as it happened. Numbers are copied
+from the tool output, not summarised after the fact.
+
+- 21:19:49  start. branch=loop, stockfish clean=yes
+- 21:19:49  env ok: baseline+restrict binaries and patch present; paranoid=-1
+- 21:22:31  rebuilt baseline from clean tree (17a6c8f C), ARCH=native COMP=gcc non-PGO -> run2/stockfish-baseline
+- 21:22:52  MCP optimize_run_suite + optimize_inspect_hotspots (sampling): suite: nps mean=1409026 fp=1659671 samples=None backend=None ok=None
+- 21:22:52  hotspots: 37.30% Stockfish::Eval::NNUE::(anonymous; 9.18% Stockfish::Eval::NNUE::NetworkArchitecture::propagate(unsigned; 7.32% Stockfish::Eval::NNUE::(anonymous; 6.52% int; 5.83% Stockfish::MovePicker::next_move(); 3.40% Stockfish::Eval::NNUE::(anonymous; 
+- hook _ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L14apply_combinedENS_5C: calls=6157420 lost=0 status='DROPPING EVENTS: 1071584 scope records lost -- hook fewer functions or lower the call rate'
+- hook ?: calls=None lost=None status=''
+- hook _ZN9Stockfish6Search6Worker19iterative_deepeningEv: calls=24 lost=0 status='DROPPING EVENTS: 1071584 scope records lost -- hook fewer functions or lower the call rate'
+- 21:26:52  baseline via optimize_run_suite: mean=1448422 nps stdev=28947 (cv 2.00%) fp=1659671 n=8
+- 21:27:06  noise batch 1: mean=1445223 (Δ vs baseline -0.22%) fp=1659671
+- 21:27:20  noise batch 2: mean=1456265 (Δ vs baseline +0.54%) fp=1659671
+- 21:27:20  noise floor: batch means [1448422, 1445223, 1456265] → between-batch stdev 4639 (0.32%), floor (max-min) 0.76%, σ used = max(within,between) = 28947
+- 21:27:20  [apply-restrict] optimize_apply_patch applied (52 diff lines)
+- 21:27:30  [apply-restrict] optimize_rebuild ok (?s)
+- 21:27:44  [apply-restrict] rerun_compare: mean=1417550 stdev=19722 fp=1659671 n=8 → Δ -2.24% vs grand baseline 1449970; gate=reject: mean gain -2.236% is not > 0.5%; delta -3.242e+04 is not outside 1σ (threshold 2.895e+04 from baseline stdev); mean gain -2.236% is within the measured run-to-run noise (0.762%) — likely benchmark drift, not a real win
+- 21:27:44  [refresh-restrict] optimize_apply_patch applied (57 diff lines)
+- 21:27:54  [refresh-restrict] optimize_rebuild ok (?s)
+- 21:28:08  [refresh-restrict] rerun_compare: mean=1461714 stdev=12459 fp=1659671 n=8 → Δ +0.81% vs grand baseline 1449970; gate=reject: delta 1.174e+04 is not outside 1σ (threshold 2.895e+04 from baseline stdev)
+- 21:28:08  [both-restrict] optimize_apply_patch applied (109 diff lines)
+- 21:28:18  [both-restrict] optimize_rebuild ok (?s)
+- 21:28:31  [both-restrict] rerun_compare: mean=1470774 stdev=12016 fp=1659671 n=8 → Δ +1.43% vs grand baseline 1449970; gate=reject: delta 2.08e+04 is not outside 1σ (threshold 2.895e+04 from baseline stdev)
+- 21:28:31  experiments done; stockfish tree clean=True
+- 21:29:37  MCP experiments (8 iters each, right after each 16-core rebuild): baseline 1,448,422 ±2.0%; apply-restrict 1,417,550 (-2.24%, reject); refresh-restrict 1,461,714 (+0.81%, reject: <1σ); both-restrict 1,470,774 (+1.43%, reject: <1σ). Within-batch spread 1385-1495k = 8%: far noisier than yesterday's 0.57%.
+- 21:29:37  noise diagnosis: box is not idle — 'samples' pid 3274537 at 63% CPU (5h, user's), a chrome tab at 63%; CPU is i9-13900KF hybrid (8 P + 16 E cores), governor powersave, scaling 52%: an unpinned bench can land on an E-core or share a P-core. Control: run uninstrumented, interleaved, pinned to one P-core (taskset).
+- 21:30:47  interleaved uninstrumented A/B/C/D, 12 rounds, pinned cpu4 (P-core): baseline           mean=  1463680 ± 22349 (cv 1.53%)  fp=[1659671] apply-restrict     mean=  1458408 ± 21301 (cv 1.46%)  fp=[1659671]  Δ=-0.36%  paired -0.35% [-2.56,+2.41] wins 4/12 refresh-restrict   mean=  1444211 ± 46224 (cv 3.20%)  fp=[1659671]  Δ=-1.33%  paired -1.31% [-8.95,+3.09] wins 5/12 both-restrict      mean=  1444926 ± 28432 (cv 1.97%)  fp=[1659671]  Δ=-1.28%  paired -1.26% [-8.37,+1.05] wins 2/12 
+- 21:34:57  code diff: __restrict changed apply_combined by 5 bytes (615 insns both), refresh_cache by 3 insns — GCC+LTO already assumed no alias; yesterday's '+2.56% 14/14' cannot be from the mechanism claimed. pinned 16-round RR on cpu10: all three restrict variants within noise (6/16, 5/16, 7/16 wins). VERDICT: restrict is a phantom; retract.
+- 21:38:20  noise study (6 pinned baseline runs on cpu2): nps cv 0.79%, cycles:u cv 0.49%, instructions:u cv 0.004% — instructions retired is deterministic; use it to tell 'less work' from 'luck', cycles for time.
+- 21:38:20  perf record (instruction-level — what Orbit cannot do yet): hottest instructions in apply_combined are the i16 'vpaddw mem' loads of the piece-square (HalfKA) weight columns (2 KiB each; table 22528x2KiB = 46 MB > 36 MB L3). Threat columns get a prefetch in append_changed_indices; psq columns get none. Also: read_leb_128 (network decode at startup) is 8% of total cycles but outside the nps timing window.
+- 21:38:21  hypothesis P1: compute psq indices first, prefetch every line of their weight columns (<=2 removed + <=2 added), then compute threat indices — behavior-preserving (integer adds, same order).
+- 21:38:21  sf-bench.sh now pins the bench to cpu2 (a P-core with an idle sibling) — uninstrumented; the profiler is never attached in bench runs.
+- 21:38:57  P1 (psq prefetch, all 32 lines, before threat indices): instructions +2.1% (11.555G→11.799G, deterministic), cycles +1.7%, nps -1.3% over 5 pinned pairs → REJECT: the prefetches cost more than they save. Next: precise (PEBS) attribution of L3 misses to instructions before guessing again.
+- 21:39:45  PEBS (mem_load_retired.l3_miss:upp, 50K samples): 49% of all L3-miss loads are in apply_combined, 35.5% in update_accumulator_refresh_cache. Inside apply_combined ~55% of the misses are the eight 'vpaddw mem' loads of a psq (i16) column chunk — every 64B line of the column misses equally, so the hardware prefetcher is not streaming these columns; the threat (i8) columns miss much less (they get a 1-line prefetch). Why P1 lost: it issued up to 128 prefetches in a burst right before the loads (fill buffers ~16) — no lead time, just queueing. Next: P2 = prefetch the NEXT tile's chunk of each psq column while working on the current tile.
+- 21:41:31  P2 (prefetch next tile's chunk of each psq column inside apply_combined + chunk 0 at index time): instructions +7.9% (11.555G→12.467G), cycles +2.0%, nps -2.1% over 6 pinned pairs → REJECT. The eight loads of a chunk already issue back-to-back (memory-level parallelism); software prefetch a few hundred ns ahead only adds work. Last variant worth one shot: prefetch at do_move time (real lead time).
+- 21:43:36  P3 (prefetch psq columns at Worker::do_move, 2 KiB x up to 6 columns per node, real lead time): instructions +3.4%, cycles +2.6%, nps -3.9% over 6 pinned pairs → REJECT. 12 KiB of prefetch per node for updates that often never happen (pruned nodes, TT hits) is pure pollution. Stopping the prefetch line: 3 variants, 3 rejects. Remaining behaviour-preserving levers are build-level: -mtune=native and PGO (profile-build).
+- 21:44:16  built stockfish-mtune (EXTRACXXFLAGS=-mtune=native) and stockfish-pgo (make profile-build), tree clean
+- 21:45:30  baseline via optimize_run_suite: mean=1474007 nps stdev=9427 (cv 0.64%) fp=1659671 n=10
+- 21:45:49  noise batch 1: mean=1261038 (Δ vs baseline -14.45%) fp=1659671
+- 21:46:06  noise batch 2: mean=1487658 (Δ vs baseline +0.93%) fp=1659671
+- 21:46:06  noise floor: batch means [1474007, 1261038, 1487658] → between-batch stdev 103762 (7.37%), floor (max-min) 16.10%, σ used = max(within,between) = 103762
+- 21:46:06  [pgo] build-level variant: rebuild with stockfish-pgo.toml
+- 21:46:52  [pgo] optimize_rebuild ok (?s)
+- 21:47:07  [pgo] rerun_compare: mean=1534327 stdev=15999 fp=1659671 n=10 → Δ +9.01% vs grand baseline 1407568; gate=reject: mean gain 9.006% is within the measured run-to-run noise (16.100%) — likely benchmark drift, not a real win
+- 21:47:07  experiments done; stockfish tree clean=True
+- 21:48:17  e2e interleaved (no profiler, pinned cpu2, 16 rounds): baseline           mean=  1438291 ± 30360 (cv 2.11%)  fp=[1659671] mtune              mean=  1433989 ± 37453 (cv 2.61%)  fp=[1659671]  Δ=-0.30%  paired -0.27% [-5.99,+5.56] wins 6/16 pgo                mean=  1524148 ± 40248 (cv 2.64%)  fp=[1659671]  Δ=+5.97%  paired +5.99% [+0.17,+12.02] wins 16/16 
+- 21:48:37  MCP gate run 1 for PGO: baseline 1,474,007 (cv 0.64%) but noise batch 1 collapsed to 1,261,038 (-14.5%: something else took the core for ~20 s) → floor 16.1% → gate REFUSED +9.0% as inside noise. Correct behaviour on a wrong box. Re-running the gate.
+- 21:49:13  baseline via optimize_run_suite: mean=1489739 nps stdev=22577 (cv 1.52%) fp=1659671 n=10
+- 21:49:29  noise batch 1: mean=1538748 (Δ vs baseline +3.29%) fp=1659671
+- 21:49:45  noise batch 2: mean=1552906 (Δ vs baseline +4.24%) fp=1659671
+- 21:49:45  noise floor: batch means [1489739, 1538748, 1552906] → between-batch stdev 27064 (1.77%), floor (max-min) 4.14%, σ used = max(within,between) = 27064
+- 21:49:45  [pgo] build-level variant: rebuild with stockfish-pgo.toml
+- 21:50:31  [pgo] optimize_rebuild ok (?s)
+- 21:50:46  [pgo] rerun_compare: mean=1531430 stdev=12097 fp=1659671 n=10 → Δ +0.28% vs grand baseline 1527131; gate=reject: mean gain 0.282% is not > 0.5%; delta 4,299 is not outside 1σ (threshold 2.706e+04 from baseline stdev); mean gain 0.282% is within the measured run-to-run noise (4.136%) — likely benchmark drift, not a real win
+- 21:50:46  experiments done; stockfish tree clean=True
+- 21:51:19  MCP gate run 2 INVALID: baseline 1,489k then noise batches 1,538k/1,552k and 'pgo' +0.28%. Cause: optimize_rebuild ran 'make build' over the object files left by the previous profile-build — make saw them as up to date and linked the PGO objects, so run 2 compared PGO against PGO. Lessons: (1) a build-level variant needs a clean build, (2) optimize_rerun_compare rebuilt implicitly (run_suite default) with no way to skip — adding skip_build to the tool. Build commands now 'make clean && make ...'.
+- 21:52:33  baseline via optimize_run_suite: mean=1445521 nps stdev=10404 (cv 0.72%) fp=1659671 n=10
+- 21:52:49  noise batch 1: mean=1438885 (Δ vs baseline -0.46%) fp=1659671
+- 21:53:06  noise batch 2: mean=1433271 (Δ vs baseline -0.85%) fp=1659671
+- 21:53:06  noise floor: batch means [1445521, 1438885, 1433271] → between-batch stdev 5007 (0.35%), floor (max-min) 0.85%, σ used = max(within,between) = 10404
+- 21:53:06  [pgo] build-level variant: rebuild with stockfish-pgo.toml
+- 21:53:53  [pgo] optimize_rebuild ok (?s)
+- 21:54:08  [pgo] rerun_compare: mean=1500970 stdev=12419 fp=1659671 n=10 → Δ +4.29% vs grand baseline 1439226; gate=ACCEPT: gain 4.290% > 0.5% and 6.174e+04 > 1σ, above the 0.851% noise floor
+- 21:54:08  experiments done; stockfish tree clean=True
+- 21:54:50  Orbit before/after sampling captures: before 15554 samples top=[[37.6, '_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L14apply_co'], [9.3, '_ZNK9Stockfish4Eval4NNUE19NetworkArchitecture9pr'], [7.3, '_ZN9Stockfish6Search6Worker6searchILNS_8NodeType']]; after 15570 samples top=[[37.1, '_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L14apply_co'], [14.9, '_ZNK9Stockfish4Eval4NNUE7Network8evaluateERKNS_8'], [12.8, '_ZN9Stockfish6Search6Worker6searchILNS_8NodeType']] ; coarse hook on PGO binary: 28 calls, DROPPING EVENTS: 1071584 scope records lost -- hook fewer fu
