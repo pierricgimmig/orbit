@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <title>Orbit — profile a running program</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Profile a running program with no code change. The Rust service runs on Linux and macOS. The viewer is a web page, on any device.">
+<meta name="description" content="Profile a running program with no code change. The Rust service runs on Linux, macOS and Windows. The viewer is a web page, on any device.">
 <meta property="og:title" content="Orbit">
 <meta property="og:description" content="From the whole run to a single context switch. A Rust profiler; the viewer is a web page.">
 <meta property="og:image" content="media/00-hero.jpg">
@@ -30,7 +30,7 @@
 <main class="wide" id="main">
   <header class="hero compact">
     <h1>From the whole run to a single context switch.</h1>
-    <p class="lede">Orbit attaches to a program that is already running, with no code change. The service runs on Linux and macOS. The viewer is a web page, so any browser on any device can open it.</p>
+    <p class="lede">Orbit attaches to a program that is already running, with no code change. The service runs on Linux, macOS and Windows. The viewer is a web page, so any browser on any device can open it.</p>
     <p class="lineage">A Rust re-implementation by the original author of <a href="https://github.com/google/orbit" rel="noopener noreferrer">Orbit</a>.</p>
   </header>
 
@@ -64,7 +64,7 @@
       </figure>
       <div class="copy">
         <h3>Hit Record, and the timeline starts</h3>
-        <p>Pick the process and hit Record. Nothing to rebuild. The timeline streams live and the capture timer ticks. Function hooks need no code change; Frida is the default on Linux and on macOS.</p>
+        <p>Pick the process and hit Record. Nothing to rebuild. The timeline streams live and the capture timer ticks. Function hooks need no code change; Frida is the default on Linux, macOS and Windows.</p>
         <p class="manual-link"><a href="manual/capture.html">In the manual</a></p>
       </div>
     </article>
@@ -100,7 +100,7 @@
       </figure>
       <div class="copy">
         <h3>Then time the hot functions</h3>
-        <p>Auto-profiling hooks the functions the samples point at and drops whatever costs too much, inside a budget you set. No rebuild and no source edits. On Linux it needs root or <code>CAP_SYS_ADMIN</code>. It is not available on macOS. You can also hook one function yourself.</p>
+        <p>Auto-profiling hooks the functions the samples point at and drops whatever costs too much, inside a budget you set. No rebuild and no source edits. On Linux it needs root or <code>CAP_SYS_ADMIN</code>. It is not available on macOS or Windows. You can also hook one function yourself.</p>
         <p class="manual-link"><a href="manual/capture.html#auto-profiling">In the manual</a></p>
       </div>
     </article>
@@ -133,12 +133,17 @@
       <p class="manual-link"><a href="manual/index.html#what-runs-where">In the manual</a></p>
     </header>
 
-    <figure class="arch" aria-label="The service runs on Linux and on macOS. The viewer is a web app on a desktop, tablet, or phone, and it connects to the service.">
+    <figure class="arch" aria-label="The service runs on Linux, on macOS and on Windows. The viewer is a web app on a desktop, tablet, or phone, and it connects to the service.">
       <div class="arch-hosts">
         <div class="arch-node">
           <span class="mark yes">Supported</span>
           <h3>Linux</h3>
           <p>Call stacks at 1&nbsp;kHz, a lane per core, dynamic instrumentation with no code change, and manual scopes. The tested build is x86-64.</p>
+        </div>
+        <div class="arch-node">
+          <span class="mark yes">Supported</span>
+          <h3>Windows</h3>
+          <p>Call stacks at 1&nbsp;kHz, a lane per core and thread states from the kernel logger (an elevated prompt), Frida function hooks and manual scopes without one. x86-64.</p>
         </div>
         <div class="arch-node is-partial">
           <span class="mark part">Partial</span>
@@ -202,12 +207,12 @@
       <li>
         <p class="kicker">orbit-service</p>
         <h3>What this machine records</h3>
-        <p>On Linux: call stacks at 1&nbsp;kHz, the scheduler, and dynamic instrumentation with no code change. Auto-profiling picks what to hook and keeps the cost under a budget. It needs root or <code>CAP_SYS_ADMIN</code>. On macOS: manual scopes and Frida function hooks. Sampling, the scheduler, and auto-profiling are not in that build.</p>
+        <p>On Linux: call stacks at 1&nbsp;kHz, the scheduler, and dynamic instrumentation with no code change. Auto-profiling picks what to hook and keeps the cost under a budget. It needs root or <code>CAP_SYS_ADMIN</code>. On Windows: the same call stacks, scheduler and thread states from the kernel logger, which needs an elevated prompt; Frida hooks and manual scopes without one. On macOS: manual scopes and Frida function hooks. Sampling, the scheduler, and auto-profiling are not in that build.</p>
       </li>
       <li>
         <p class="kicker">Web viewer</p>
         <h3>Live, in the browser</h3>
-        <p>Timeline, flame graph, call trees, live table, selection reports, and, on Linux, disassembly next to source.</p>
+        <p>Timeline, flame graph, call trees, live table, selection reports, and, on Linux and Windows, disassembly (next to source on Linux).</p>
       </li>
     </ol>
 
@@ -221,6 +226,7 @@
             <tr>
               <th scope="col">Feature</th>
               <th scope="col">Linux</th>
+              <th scope="col">Windows</th>
               <th scope="col">macOS</th>
             </tr>
           </thead>
@@ -228,46 +234,55 @@
             <tr>
               <th scope="row">Call-stack sampling</th>
               <td data-label="Linux"><span class="mark yes">Supported</span></td>
+              <td data-label="Windows"><span class="mark yes">Supported</span></td>
               <td data-label="macOS"><span class="mark no">Not yet</span></td>
             </tr>
             <tr>
               <th scope="row">Scheduler and context switches</th>
               <td data-label="Linux"><span class="mark yes">Supported</span></td>
+              <td data-label="Windows"><span class="mark yes">Supported</span></td>
               <td data-label="macOS"><span class="mark no">Not yet</span></td>
             </tr>
             <tr>
               <th scope="row">Thread states</th>
               <td data-label="Linux"><span class="mark yes">Supported</span></td>
+              <td data-label="Windows"><span class="mark yes">Supported</span></td>
               <td data-label="macOS"><span class="mark no">Not yet</span></td>
             </tr>
             <tr>
               <th scope="row">Dynamic instrumentation (no code change)</th>
               <td data-label="Linux"><span class="mark yes">Supported</span></td>
+              <td data-label="Windows"><span class="mark yes">Supported</span></td>
               <td data-label="macOS"><span class="mark yes">Supported</span></td>
             </tr>
             <tr>
               <th scope="row">Auto-profiling</th>
               <td data-label="Linux"><span class="mark yes">Supported</span></td>
+              <td data-label="Windows"><span class="mark no">Not yet</span></td>
               <td data-label="macOS"><span class="mark no">Not yet</span></td>
             </tr>
             <tr>
               <th scope="row">Manual instrumentation</th>
               <td data-label="Linux"><span class="mark yes">Supported</span></td>
+              <td data-label="Windows"><span class="mark yes">Supported</span></td>
               <td data-label="macOS"><span class="mark yes">Supported</span></td>
             </tr>
             <tr>
               <th scope="row">Symbols</th>
               <td data-label="Linux"><span class="mark yes">Supported</span></td>
+              <td data-label="Windows"><span class="mark yes">Supported</span></td>
               <td data-label="macOS"><span class="mark part">Partial</span></td>
             </tr>
             <tr>
               <th scope="row">Disassembly and source</th>
               <td data-label="Linux"><span class="mark yes">Supported</span></td>
+              <td data-label="Windows"><span class="mark part">Partial</span></td>
               <td data-label="macOS"><span class="mark no">Not yet</span></td>
             </tr>
             <tr>
               <th scope="row">Service CPU and memory</th>
               <td data-label="Linux"><span class="mark yes">Supported</span></td>
+              <td data-label="Windows"><span class="mark yes">Supported</span></td>
               <td data-label="macOS"><span class="mark yes">Supported</span></td>
             </tr>
           </tbody>
@@ -277,8 +292,8 @@
         <li><strong>Linux</strong> is the x86-64 service. Sampling is fixed at 1&nbsp;kHz and unwound with DWARF. Arm64 has the register and unwind paths and is not run in CI; the static binary is x86-64.</li>
         <li><strong>macOS</strong> function hooks are tested on Apple Silicon and Intel. Attaching needs a task port. Code signing, the hardened runtime, and SIP can refuse it; these builds do not bypass that. Shared-cache images whose symbols Frida cannot read may be missing from the function list. Hook-safety analysis is the Linux path. The release binary is universal and ad-hoc signed, not notarized.</li>
         <li><strong>Dynamic instrumentation</strong> needs no code change. Frida is the default. On Linux, auto-profiling uses a kernel engine and needs root or <code>CAP_SYS_ADMIN</code>.</li>
-        <li><strong>Auto-profiling</strong> is supported on Linux and needs root or <code>CAP_SYS_ADMIN</code>. It is not available on macOS.</li>
-        <li>Windows is not supported.</li>
+        <li><strong>Auto-profiling</strong> is supported on Linux and needs root or <code>CAP_SYS_ADMIN</code>. It is not available on macOS or Windows.</li>
+        <li><strong>Windows</strong> is the x86-64 service. Sampling (1&nbsp;kHz, the kernel walks the stacks), the scheduler and thread states come from the NT Kernel Logger (ETW), which needs a prompt opened with <em>Run as administrator</em>; manual scopes and Frida hooks need no privilege. Symbols come from PDBs and export tables. Disassembly is partial: there is no source interleave, since the line table lives in the PDB. No GPU lanes. The binaries link the C runtime statically and are not code-signed.</li>
       </ul>
     </div>
   </section>
@@ -286,7 +301,7 @@
   <section class="section" id="start">
     <header class="section-head">
       <h2>Get started</h2>
-      <p class="sub">Linux and macOS. The script installs the build for this machine, including the Frida files function hooks need.</p>
+      <p class="sub">Linux, macOS and Windows. The script installs the build for this machine, including the Frida files function hooks need.</p>
     </header>
     <div class="two">
       <div class="card">
@@ -294,16 +309,19 @@
         <pre><code># install (Linux x86-64 or macOS)
 curl -fsSL https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.sh | sh
 
+# install (Windows x64, PowerShell)
+irm https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.ps1 | iex
+
 orbit-service
 # http://127.0.0.1:44766/</code></pre>
-        <p>The script downloads a GitHub Release tagged <code>orbit-v*</code>. Linux x86-64 and macOS (one universal binary, Intel and Apple silicon) are both in that release. Until a stable release exists the script stops and says so. <code>orbitprofiler.dev</code> is not the host. Function hooks ship beside the binary and do not need root. On macOS, attaching needs a task port.</p>
-        <p>On Linux, sampling works at <code>perf_event_paranoid</code> 2 or below, and the scheduler needs 0 or below. Root, <code>CAP_PERFMON</code> or <code>CAP_SYS_ADMIN</code> bypass the sysctl. Auto-profiling needs root or <code>CAP_SYS_ADMIN</code>. Those are not in the macOS build.</p>
+        <p>The scripts download a GitHub Release tagged <code>orbit-v*</code>. Linux x86-64, macOS (one universal binary, Intel and Apple silicon) and Windows x86-64 are all in that release. Until a stable release exists the script stops and says so. <code>orbitprofiler.dev</code> is not the host. Function hooks ship beside the binary and do not need root. On macOS, attaching needs a task port.</p>
+        <p>On Linux, sampling works at <code>perf_event_paranoid</code> 2 or below, and the scheduler needs 0 or below. Root, <code>CAP_PERFMON</code> or <code>CAP_SYS_ADMIN</code> bypass the sysctl. Auto-profiling needs root or <code>CAP_SYS_ADMIN</code>. On Windows, sampling, the scheduler and thread states need a prompt opened with <em>Run as administrator</em>. Those are not in the macOS build.</p>
         <a class="more" href="manual/index.html#quick-start">Quick start in the manual</a>
       </div>
       <div class="card">
         <h3>Where it runs</h3>
-        <p>The service runs on Linux and macOS. The viewer runs in any browser, on any device, including a phone. Windows is not supported.</p>
-        <p>Linux x86-64 is one static binary: sampling, the scheduler, function hooks, and auto-profiling. macOS records manual scopes and Frida function hooks.</p>
+        <p>The service runs on Linux, macOS and Windows. The viewer runs in any browser, on any device, including a phone.</p>
+        <p>Linux x86-64 is one static binary: sampling, the scheduler, function hooks, and auto-profiling. Windows x86-64 records sampling, the scheduler and thread states through the kernel logger, plus function hooks and manual scopes. macOS records manual scopes and Frida function hooks.</p>
         <p>One small API for Rust, C, C++ and Python is in the manual, alongside the HTTP API. The <a href="#platforms">platform table</a> is the feature-by-feature status.</p>
         <a class="more" href="manual/index.html#instrument-your-code">Instrumentation and the HTTP API</a>
       </div>

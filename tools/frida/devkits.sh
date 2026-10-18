@@ -12,6 +12,7 @@ case "$target" in
   aarch64-unknown-linux-gnu) platform=linux-arm64 ;;
   x86_64-apple-darwin) platform=macos-x86_64 ;;
   aarch64-apple-darwin) platform=macos-arm64 ;;
+  x86_64-pc-windows-msvc) platform=windows-x86_64 ;;
   *) echo "Unsupported native Frida target: $target" >&2; exit 1 ;;
 esac
 root=${ORBIT_FRIDA_DEVKIT_ROOT:-"$PWD/rust/target/frida-devkits"}
@@ -24,7 +25,11 @@ for component in core gum; do
   trap 'rm -rf "$temp"' EXIT
   curl --fail --location --retry 3 "https://github.com/frida/frida/releases/download/17.17.0/$name" -o "$temp/$name"
   expected=$(awk -v name="$name" '$2 == name {print $1}' tools/frida/devkits.sha256)
-  actual=$(shasum -a 256 "$temp/$name" | awk '{print $1}')
+  if command -v shasum >/dev/null 2>&1; then
+    actual=$(shasum -a 256 "$temp/$name" | awk '{print $1}')
+  else
+    actual=$(sha256sum "$temp/$name" | awk '{print $1}')
+  fi
   [[ -n "$expected" && "$actual" == "$expected" ]] || { echo "Invalid checksum: $name" >&2; exit 1; }
   mkdir -p "$kit"
   tar -xJf "$temp/$name" -C "$kit"

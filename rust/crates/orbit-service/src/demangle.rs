@@ -41,7 +41,7 @@ pub fn pretty(mangled: &str) -> String {
 /// Itanium and Rust names start `_Z`/`_R`; an ISPC name is the plain
 /// function name followed by `___` and its parameter types.
 fn looks_mangled(name: &str) -> bool {
-    name.starts_with("_Z") || name.starts_with("_R") || name.contains("___")
+    name.starts_with("_Z") || name.starts_with("_R") || name.starts_with('?') || name.contains("___")
 }
 
 /// As [`pretty`], memoized: for callers that ask the same few names many
@@ -65,6 +65,11 @@ pub fn pretty_cached(mangled: &str) -> String {
 }
 
 fn pretty_uncached(mangled: &str) -> String {
+    // MSVC names start with `?`; the PDB's procedure names arrive
+    // undecorated, so this is for export tables and COFF symbol tables.
+    if mangled.starts_with('?') {
+        return orbit_object::demangle_msvc(mangled).unwrap_or_else(|| mangled.to_string());
+    }
     if is_rust(mangled) {
         let demangled = format!("{:#}", rustc_demangle::demangle(mangled));
         if demangled != mangled {

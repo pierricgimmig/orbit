@@ -273,6 +273,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-etw"
+version = "0.1.0"
+dependencies = [
+ "orbit-thread-states",
+ "orbit-tracing-state",
+]
+
+[[package]]
 name = "orbit-frida-agent"
 version = "0.1.0"
 dependencies = [

@@ -311,11 +311,17 @@ fn uid() -> u32 {
     0
 }
 
+#[cfg(not(windows))]
 fn hostname() -> Option<String> {
     std::fs::read_to_string("/proc/sys/kernel/hostname")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+#[cfg(windows)]
+fn hostname() -> Option<String> {
+    crate::windows::hostname()
 }
 
 /// `create_dir_all`, chowning each directory it had to create, so a first

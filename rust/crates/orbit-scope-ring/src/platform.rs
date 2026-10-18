@@ -87,6 +87,42 @@ pub fn process_alive(pid: u32) -> bool {
         || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
+/// Whether `pid` still runs. A process this user cannot open may still be
+/// alive, so only a definite "no such process" or a recorded exit counts as
+/// gone -- the same rule as the `kill(pid, 0)` arm: never reclaim a
+/// producer's claims on a guess.
+#[cfg(windows)]
+pub fn process_alive(pid: u32) -> bool {
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+        fn GetExitCodeProcess(process: *mut std::ffi::c_void, code: *mut u32) -> i32;
+        fn GetLastError() -> u32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const ERROR_ACCESS_DENIED: u32 = 5;
+    const STILL_ACTIVE: u32 = 259;
+    if pid == 0 {
+        return false;
+    }
+    // SAFETY: OpenProcess only takes a pid; the handle is owned and closed below.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        // ERROR_INVALID_PARAMETER is "no such process"; access denied means it
+        // exists under another user or integrity level.
+        return unsafe { GetLastError() } == ERROR_ACCESS_DENIED;
+    }
+    // SAFETY: a handle OpenProcess just returned, owned once.
+    let owner = unsafe { OwnedHandle::from_raw_handle(handle) };
+    let mut code = 0u32;
+    // SAFETY: querying an open process handle into a live local.
+    let ok = unsafe { GetExitCodeProcess(std::os::windows::io::AsRawHandle::as_raw_handle(&owner), &mut code) } != 0;
+    // The pid of a process that exited stays openable while anything holds a
+    // handle to it; the exit code tells those apart from a running one.
+    ok && code == STILL_ACTIVE
+}
+
 #[cfg(windows)]
 #[inline]
 pub fn thread_id() -> u64 {

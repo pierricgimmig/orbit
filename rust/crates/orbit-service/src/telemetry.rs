@@ -178,6 +178,8 @@ mod tests {
         ("/bin/cat".to_string(), vec![path.to_string_lossy().into_owned()])
     }
 
+    /// The fake helper is `/bin/cat`.
+    #[cfg(unix)]
     #[test]
     fn drains_pod_events_from_a_helper_process() {
         let expected = vec![metrics_event(1000, 50), metrics_event(2000, 75)];

@@ -25,6 +25,18 @@ fn build_frida(component: &str, source: &str) {
         .compile(&format!("orbit-frida-{component}-adapter"));
     println!("cargo:rustc-link-search=native={}", kit.display());
     println!("cargo:rustc-link-lib=static=frida-{component}");
+    if target.contains("windows") {
+        // The MSVC devkits are built against the static CRT (/MT) and lean
+        // on these system libraries; the .lib carries no defaultlib
+        // directives for them.
+        for lib in [
+            "ws2_32", "winmm", "shlwapi", "crypt32", "secur32", "iphlpapi", "psapi", "dnsapi", "setupapi",
+            "ole32", "shell32", "user32", "gdi32", "advapi32", "bcrypt", "dbghelp", "ntdll", "userenv", "version",
+        ] {
+            println!("cargo:rustc-link-lib={lib}");
+        }
+        return;
+    }
     if target.contains("apple") {
         // Do not make the target agent depend on unused dylibs/frameworks:
         // Darwin's injector resolves dependencies in the target process.

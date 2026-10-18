@@ -250,6 +250,12 @@ fn read_kmsg_crash(_pid: i32) -> Result<Option<KernelCrash>, i32> {
 /// `/proc/<pid>` still exists -- so a plain existence check would miss the
 /// very crash we are watching for. Read the state and treat zombie/dead as
 /// not running.
+#[cfg(windows)]
+pub fn process_alive(pid: i32) -> bool {
+    crate::windows::process_alive(pid)
+}
+
+#[cfg(not(windows))]
 pub fn process_alive(pid: i32) -> bool {
     if pid <= 0 {
         return false;

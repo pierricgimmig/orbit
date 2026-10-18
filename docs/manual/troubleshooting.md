@@ -60,6 +60,20 @@ this kernel has no uprobe PMU (CONFIG_UPROBE_EVENTS)
 
 Switch **HOOKS** to **Frida**, or boot a kernel that has the uprobe PMU. There is no userspace flag that adds the PMU.
 
+## Windows: the kernel logger needs an elevated prompt
+
+On Windows the scheduler, thread states and call-stack samples come from the NT Kernel Logger, an ETW session only administrators may start. From an ordinary prompt the capture runs with manual scopes and Frida hooks only, and the status line reads:
+
+```
+Windows: no kernel logger (needs an elevated prompt): no scheduler, thread states or samples
+```
+
+Open a terminal with *Run as administrator* and start `orbit-service` there. A UAC-filtered token (an administrator account in a normal prompt) is not elevated. The service sets the machine's profile interval to 1 kHz for the capture and puts it back to the 1 ms default when the capture stops; it changes nothing else.
+
+Only one kernel logger session exists per machine. A session another tool left running (`xperf`, `wpr`, a profiler that crashed) is stopped when a capture starts; a tool recording at the same time loses its session.
+
+Frida hooks from an elevated service into an unelevated target of the same user work. An unelevated service cannot hook or read an elevated target.
+
 ## Opening or clearing while a capture is running
 
 Clear, and opening a `.orbit.zip`, are refused until you stop:
@@ -73,6 +87,7 @@ Opening a Chrome or Perfetto trace is different. The viewer stops the capture it
 
 - No process selected, and **CSW** / **States** off, and nothing in the target calling `orbit.h`: there is nothing to draw. Turn on Sample or CSW, or [instrument the code](index.html#instrument-your-code).
 - The process row or the service log says CSW needs a lower paranoid value. See the table above.
+- On Windows, the status line says the kernel logger needs an elevated prompt. See above.
 - Uprobes selected, Functions hooked, and the amber line says no hooks armed. The setcap command is in the line.
 - **API** is off, so manual scopes are dropped even though the program calls them.
 - The capture clock starts when Record does. Scopes written before that, or still open across the start, are refused. `/api/status` counts them as `dropped_before_start`.

@@ -18,6 +18,8 @@
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 mod auto_profile;
 mod hooks;
 mod hook_safety;
@@ -228,6 +230,9 @@ fn parse_args() -> Args {
                 if cfg!(target_os = "macos") {
                     eprintln!("macOS: manual capture only; --out must end in .orbit.zip; --freq-hz is unused");
                 }
+                if cfg!(target_os = "windows") {
+                    eprintln!("Windows: --out must end in .orbit.zip; the scheduler and sampling need an elevated prompt; --freq-hz is fixed at 1000");
+                }
                 std::process::exit(0);
             }
             other => log::warn!("ignoring unknown argument {other}"),
@@ -274,6 +279,11 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     if let Err(error) = macos::capture_file(args) {
+        log::error!("{error}");
+        std::process::exit(2);
+    }
+    #[cfg(target_os = "windows")]
+    if let Err(error) = windows::capture_file(args) {
         log::error!("{error}");
         std::process::exit(2);
     }
@@ -718,6 +728,7 @@ fn unix_now_ns() -> u64 {
 }
 
 /// The capture clock (CLOCK_MONOTONIC), the one perf event timestamps use.
+#[cfg(unix)]
 pub(crate) fn now_monotonic_ns() -> u64 {
     let mut timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: clock_gettime into a local.
@@ -727,12 +738,24 @@ pub(crate) fn now_monotonic_ns() -> u64 {
     timespec.tv_sec as u64 * 1_000_000_000 + timespec.tv_nsec as u64
 }
 
+/// The capture clock on Windows: QueryPerformanceCounter, the one ETW
+/// timestamps are read from and the one the producer stamps scopes with.
+#[cfg(windows)]
+pub(crate) fn now_monotonic_ns() -> u64 {
+    orbit_scope_ring::platform::monotonic_ns()
+}
+
 /// Online CPU count, for sizing worker pools. Falls back to 4.
 #[cfg(unix)]
 pub(crate) fn num_cpus_hint() -> usize {
     // SAFETY: sysconf is always safe to call.
     let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
     if n > 0 { n as usize } else { 4 }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn num_cpus_hint() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
 }
 
 /// Applies `f` to every item across a small pool of scoped worker threads,

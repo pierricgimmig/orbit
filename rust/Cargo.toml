@@ -17,6 +17,7 @@ members = [
     "crates/orbit-api",
     "crates/orbit-test-rust",
     "crates/orbit-collector",
+    "crates/orbit-etw",
     "crates/orbit-maps",
     "crates/orbit-object",
     "crates/orbit-perf-merge",

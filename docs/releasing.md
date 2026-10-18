@@ -26,9 +26,9 @@ They were not deleted or retagged.
 
 ## What the workflow builds
 
-Each stable tag publishes two archives: a static Linux x86-64 build and a
-universal macOS build (Apple silicon and Intel). Linux arm64 is not in the
-release. Windows is not.
+Each stable tag publishes three archives: a static Linux x86-64 build, a
+universal macOS build (Apple silicon and Intel), and a Windows x86-64 build.
+Linux arm64 is not in the release.
 
 Linux x86-64, on `ubuntu-22.04`:
 
@@ -55,12 +55,29 @@ macOS, on `macos-15`, via `./build-service-macos.sh --universal`:
   scheduler, live disassembly, or auto-profiling.
 - No GPU helper. That binary is Linux-only.
 
+Windows x86-64, on `windows-2022`, via `.\build-service-windows.ps1`:
+
+- `orbit-service.exe` with the viewer embedded, linked against the static C
+  runtime (`rust/.cargo/config.toml`), so it depends on system DLLs only;
+  the script checks that with `dumpbin /dependents`.
+- `orbit_frida_agent.dll` and `orbit-frida-helper.exe` beside it, for
+  function hooks; `orbit_api.dll`, `orbit_api.dll.lib`, `orbit_api.lib` and
+  `include\orbit.h` for manual instrumentation; `orbit_api.py`;
+  `OrbitTestRust.exe`; the Frida licenses.
+- Records manual scopes and Frida hooks without privilege. Call-stack
+  sampling, the scheduler and thread states come from the NT Kernel Logger
+  (ETW) and need an elevated prompt. No auto-profiling, no kernel hook
+  engine, no GPU helper.
+- Not code-signed.
+
 Linux arm64 is not in the release. The service compiles for arm64; it is not
 run in CI, and the static musl build in this workflow is x86-64 only.
 
-Each archive is a gzipped tar whose top-level directory is `orbit/`. Beside
-the archives the release has `SHA256SUMS` and a `.sha256` file per archive
-(`sha256sum` format: hash, two spaces, file name).
+The Linux and macOS archives are gzipped tars, the Windows one a zip; each
+has the top-level directory `orbit/`. Beside the archives the release has
+`SHA256SUMS` and a `.sha256` file per archive (`sha256sum` format: hash, two
+spaces, file name). `tools/install/install.ps1` is the Windows installer and
+reads the zip's `.sha256` the way `install.sh` reads the tars'.
 
 ## How to cut one
 

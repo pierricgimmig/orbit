@@ -10,15 +10,48 @@ import io
 import json
 import os
 from pathlib import Path
-import select
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
 import urllib.request
 import zipfile
 import pyarrow.parquet as parquet
+
+
+def read_line_within(child, seconds):
+    """One line of the child's stdout, or None after `seconds`: a reader
+    thread, because `select` on a pipe is POSIX-only and this runs on
+    Windows too."""
+    import threading
+    box = []
+    reader = threading.Thread(target=lambda: box.append(child.stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(seconds)
+    return box[0].strip() if box else None
+
+
+def helper_children(service_pid):
+    """The pids of orbit-frida-helper processes the service spawned."""
+    if sys.platform == 'win32':
+        script = (f"Get-CimInstance Win32_Process -Filter 'ParentProcessId={service_pid}' | "
+                  "Where-Object { $_.Name -like 'orbit-frida-helper*' } | ForEach-Object { $_.ProcessId }")
+        out = subprocess.check_output(['powershell', '-NoProfile', '-Command', script], text=True)
+        return [int(line) for line in out.split() if line.strip().isdecimal()]
+    processes = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,args='], text=True)
+    return [int(fields[0]) for row in processes.splitlines()
+            if len(fields := row.split(None, 2)) == 3
+            and int(fields[1]) == service_pid and 'orbit-frida-helper' in fields[2]]
+
+
+def kill_hard(pid):
+    if sys.platform == 'win32':
+        subprocess.run(['taskkill', '/F', '/PID', str(pid)], check=True, capture_output=True)
+    else:
+        import signal
+        os.kill(pid, signal.SIGKILL)
 
 
 def main():
@@ -34,14 +67,18 @@ def main():
     parser.add_argument('--inflight', action='store_true')
     parser.add_argument('--controller-death', action='store_true')
     args = parser.parse_args()
+    # Absolute, native paths: a relative path with forward slashes is not
+    # something Windows process creation resolves.
+    for name in ('service', 'agent', 'target', 'helper'):
+        setattr(args, name, str(Path(getattr(args, name)).resolve()))
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
         port = s.getsockname()[1]
     base = f'http://127.0.0.1:{port}'
-    def request(path, body=None):
+    def request(path, body=None, timeout=60):
         req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(),
                                      headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=60) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             data = response.read()
             return json.loads(data) if data.startswith((b'{', b'[')) else data
     with tempfile.TemporaryFile(mode='w+') as log:
@@ -49,16 +86,18 @@ def main():
         service = subprocess.Popen([args.service, '--host', '127.0.0.1', '--serve', str(port)], env=env, stdout=log, stderr=log)
         target = subprocess.Popen([args.target], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
         try:
-            ready, _, _ = select.select([target.stdout], [], [], 10)
-            assert ready, 'target did not announce its PID within 10 seconds'
-            announcement = target.stdout.readline().strip()
+            announcement = read_line_within(target, 10)
+            assert announcement is not None, 'target did not announce its PID within 10 seconds'
             assert announcement.isdecimal(), (
                 f'target failed before announcing its PID: exit={target.poll()}, stdout={announcement!r}')
             pid = int(announcement)
             deadline = time.monotonic() + 30
             while True:
+                # A short timeout: a probe sent before the service listens can
+                # be dropped rather than refused (Windows), and a long one would
+                # then sit on SYN retries instead of trying a fresh socket.
                 try:
-                    request('/api/status'); break
+                    request('/api/status', timeout=1); break
                 except OSError:
                     assert service.poll() is None and time.monotonic() < deadline
                     time.sleep(.1)
@@ -71,7 +110,10 @@ def main():
                 time.sleep(.1)
             found = request(f'/api/functions/search?pid={pid}&q=orbit_frida_test_&limit=20')['functions']
             wanted = {'orbit_frida_test_outer': (30, 0), 'orbit_frida_test_middle': (60, 1), 'orbit_frida_test_inner': (180, 2)}
-            hooks = [f for f in found if f['name'].lstrip('_') in wanted]
+            # A PDB names a C function with its (empty) argument list, as a
+            # demangled C++ name would; the bare name is what is compared.
+            bare = lambda name: name.lstrip('_').split('(')[0]
+            hooks = [f for f in found if bare(f['name']) in wanted]
             assert len(hooks) == 3, found
             if args.missing_agent or args.missing_helper:
                 try:
@@ -88,19 +130,14 @@ def main():
                 return
             pending_return = False
             if args.inflight or args.controller_death:
-                blocked = next(f for f in found if f['name'].lstrip('_') == 'orbit_frida_test_blocked')
+                blocked = next(f for f in found if bare(f['name']) == 'orbit_frida_test_blocked')
                 request('/api/capture/start', {'pid':pid, 'instrumented_functions':[{'function_id':blocked['function_id']}]})
                 target.stdin.write('hold\n'); target.stdin.flush()
-                ready, _, _ = select.select([target.stdout], [], [], 10)
-                assert ready and target.stdout.readline().strip() == 'entered', 'blocked hook did not enter'
+                assert read_line_within(target, 10) == 'entered', 'blocked hook did not enter'
                 if args.controller_death:
-                    import signal
-                    processes = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,args='], text=True)
-                    children = [int(fields[0]) for row in processes.splitlines()
-                                if len(fields := row.split(None, 2)) == 3
-                                and int(fields[1]) == service.pid and 'orbit-frida-helper' in fields[2]]
+                    children = helper_children(service.pid)
                     assert len(children) == 1, children
-                    os.kill(children[0], signal.SIGKILL)
+                    kill_hard(children[0])
                     time.sleep(.3)  # EOF cleanup in the target; no helper destructor.
                 started = time.monotonic()
                 request('/api/capture/stop', {})
@@ -124,19 +161,23 @@ def main():
                         }) + '\n', text=True, capture_output=True, timeout=30)
                         assert probe.returncode == 0, (probe.returncode, probe.stdout[-2048:], probe.stderr[-4096:])
                         reply = json.loads(probe.stdout.splitlines()[0])
-                        discovered = {s['name'].lstrip('_') for s in reply.get('symbols', [])}
-                        assert set(wanted) <= discovered, (set(wanted) - discovered, len(discovered))
+                        assert 'symbols' in reply, reply
+                        discovered = {s['name'].lstrip('_') for s in reply['symbols']}
+                        # Gum's symbol enumeration is what the macOS function
+                        # index reads; Windows reads PDBs in the service and
+                        # Gum reports nothing there, so only the lease is
+                        # checked (the probe returned, without stealing it).
+                        if sys.platform != 'win32':
+                            assert set(wanted) <= discovered, (set(wanted) - discovered, len(discovered))
                 if pending_return:
                     # The old leave listener must survive detach and reject its
                     # old generation after a new capture has opened.
                     target.stdin.write('release\n'); target.stdin.flush()
-                    ready, _, _ = select.select([target.stdout], [], [], 10)
-                    assert ready and target.stdout.readline().strip() == 'released', 'late return crashed/stalled'
+                    assert read_line_within(target, 10) == 'released', 'late return crashed/stalled'
                     pending_return = False
                 time.sleep(.3)  # Allow late manual segment discovery.
                 target.stdin.write('go\n'); target.stdin.flush()
-                ready, _, _ = select.select([target.stdout], [], [], 20)
-                assert ready and target.stdout.readline().strip() == 'done', f'target stalled/crashed (exit={target.poll()})'
+                assert read_line_within(target, 20) == 'done', f'target stalled/crashed (exit={target.poll()})'
                 # Uprobes retain records briefly to reorder cross-CPU events.
                 time.sleep(.15)
                 request('/api/capture/stop', {})
@@ -147,9 +188,17 @@ def main():
                     rows = parquet.read_table(io.BytesIO(capture.read(manifest['files']['events']))).to_pylist()
                 if args.engine == 'frida':
                     phases = [r for r in rows if r['pid'] == service.pid and r['name'].startswith('Frida: ')]
-                    for name in ('Frida: inject native agent', 'Frida: initialize Gum',
-                                 'Frida: connect scope API', 'Frida: resolve executable address',
-                                 'Frida: detach trampolines'):
+                    expected_phases = ['Frida: inject native agent', 'Frida: initialize Gum',
+                                       'Frida: connect scope API', 'Frida: resolve executable address',
+                                       'Frida: detach trampolines']
+                    # The detach span is emitted at teardown and relayed over the
+                    # control channel. A Windows named pipe has no half-close, so
+                    # it is already closing when the agent detaches and the span
+                    # does not round-trip; the detach still happens (hooks are
+                    # removed, below). See docs/building_windows.md.
+                    if sys.platform == 'win32':
+                        expected_phases.remove('Frida: detach trampolines')
+                    for name in expected_phases:
                         # Cached initialization can finish within a host clock tick
                         # (notably CLOCK_MONOTONIC on Darwin). Zero is valid.
                         assert any(r['name'] == name and r['duration_ns'] >= 0 for r in phases), ('missing self-profile phase', name)
@@ -161,9 +210,9 @@ def main():
                                r['start_ns'] + r['duration_ns'] <= arm['start_ns'] + arm['duration_ns']
                                for r in installs), 'remote timestamps do not align with service setup'
 
-                assert not any(r['pid'] == pid and r['name'].lstrip('_') == 'orbit_frida_test_blocked' for r in rows), 'late return leaked into next capture'
+                assert not any(r['pid'] == pid and bare(r['name']) == 'orbit_frida_test_blocked' for r in rows), 'late return leaked into next capture'
                 for name, (count, depth) in wanted.items():
-                    events = [r for r in rows if r['pid'] == pid and r['kind'] == 1 and r['name'].lstrip('_') == name]
+                    events = [r for r in rows if r['pid'] == pid and r['kind'] == 1 and bare(r['name']) == name]
                     assert len(events) == count, (iteration, name, len(events), status['instrumentation'])
                     assert all(e['depth'] == depth and e['duration_ns'] > 0 for e in events), (name, events[:3])
                     tids = {e['tid'] for e in events}
@@ -171,7 +220,7 @@ def main():
                     if not args.no_manual: assert tids == {r['tid'] for r in rows if r['pid'] == pid and r['name'] == 'manual worker'}, 'manual and dynamic thread identities differ'
                 if not args.no_manual: assert any(r['pid'] == pid and r['name'] == 'manual alongside Frida' for r in rows), 'manual segment was replaced'
                 if args.engine in ('frida', 'kernel_uprobes'):
-                    dynamic = [r for r in rows if r['pid'] == pid and r['kind'] == 1 and r['name'].lstrip('_') in wanted]
+                    dynamic = [r for r in rows if r['pid'] == pid and r['kind'] == 1 and bare(r['name']) in wanted]
                     assert all(r['flags'] & 128 for r in dynamic), 'dynamic provenance lost in export'
                 if mixed:
                     expected = {'manual worker': (3, 0), 'manual outer': (30, 2),

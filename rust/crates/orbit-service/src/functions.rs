@@ -155,6 +155,75 @@ impl FunctionIndex {
         out
     }
 
+    /// Every module of the process (Toolhelp), each indexed from its PDB,
+    /// export table and exception table (see `symbolize::pe_symbols`).
+    #[cfg(target_os = "windows")]
+    pub fn for_pid(pid: i32) -> FunctionIndex {
+        Self::for_pid_with_progress(pid, |_, _| {})
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn for_pid_with_progress(pid: i32, progress: impl Fn(usize, usize) + Sync) -> FunctionIndex {
+        let mut paths: Vec<String> = Vec::new();
+        for module in crate::windows::modules_of(pid.max(0) as u32) {
+            if !module.path.is_empty() && !paths.iter().any(|seen| seen.eq_ignore_ascii_case(&module.path)) {
+                paths.push(module.path);
+            }
+        }
+        let module_count = paths.len();
+        let mut pairs: Vec<(InstrumentableFunction, crate::hook_safety::HookSafety)> = {
+            let _total = orbit_api::scope(format!("load symbols ({module_count} modules)"));
+            crate::par_map(&paths, |path| {
+                let functions = Self::functions_of_pe_module(path);
+                progress(functions.len(), 1);
+                functions
+            })
+            .into_iter()
+            .flatten()
+            .collect()
+        };
+        pairs.sort_by(|a, b| a.0.id.cmp(&b.0.id).then_with(|| a.0.name.cmp(&b.0.name)));
+        pairs.dedup_by_key(|pair| pair.0.id);
+        let mut functions = Vec::with_capacity(pairs.len());
+        let mut safety = HashMap::with_capacity(pairs.len());
+        for (function, verdict) in pairs {
+            safety.insert(function.id, verdict);
+            functions.push(function);
+        }
+        FunctionIndex { functions, module_count, safety }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn functions_of_pe_module(path: &str) -> Vec<(InstrumentableFunction, crate::hook_safety::HookSafety)> {
+        let module = crate::symbolize::basename(path).to_string();
+        let _load = orbit_api::scope(format!("load symbols: {module}"));
+        let bytes = crate::symbolize::map_file(path);
+        if bytes.is_empty() {
+            return Vec::new();
+        }
+        let Ok(metadata) = orbit_object::parse_coff_metadata(&bytes, path) else { return Vec::new() };
+        let Ok(symbols) = crate::symbolize::symbol_source(&bytes, Some(path)) else { return Vec::new() };
+        let machine = if metadata.is_64_bit { crate::hook_safety::EM_X86_64 } else { crate::hook_safety::EM_386 };
+        let mut out = Vec::new();
+        for symbol in symbols {
+            if symbol.address == 0 || symbol.mangled_name.is_empty() {
+                continue;
+            }
+            let Some(file_offset) = file_offset_of(&metadata.sections, symbol.address) else { continue };
+            let function = InstrumentableFunction {
+                id: function_id(path, file_offset),
+                name: pretty_name(&symbol.mangled_name),
+                module: module.clone(),
+                module_path: path.to_string(),
+                file_offset,
+                size: symbol.size,
+            };
+            let verdict = crate::hook_safety::assess_in_module(&bytes, machine, metadata.is_64_bit, file_offset, symbol.size);
+            out.push((function, verdict));
+        }
+        out
+    }
+
     #[cfg(target_os = "macos")]
     pub fn for_pid(pid: i32) -> FunctionIndex {
         let rows = crate::frida::symbols(pid).unwrap_or_else(|e| { log::warn!("{e}"); Vec::new() });

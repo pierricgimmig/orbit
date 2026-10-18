@@ -5,12 +5,29 @@
 // Setup-only telemetry. Use the same host clock as Orbit scopes, without
 // initializing a second SDK inside the target or tracing hot callbacks.
 use std::io::Write;
+#[cfg(unix)]
 fn now_ns() -> u64 {
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
     unsafe {
         libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
     }
     ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+}
+// QueryPerformanceCounter, converted exactly as orbit-scope-ring does, so
+// these spans sit on the service's track next to its own scopes.
+#[cfg(windows)]
+fn now_ns() -> u64 {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn QueryPerformanceCounter(count: *mut i64) -> i32;
+        fn QueryPerformanceFrequency(freq: *mut i64) -> i32;
+    }
+    let (mut counter, mut freq) = (0i64, 0i64);
+    unsafe {
+        QueryPerformanceFrequency(&mut freq);
+        QueryPerformanceCounter(&mut counter);
+    }
+    ((counter.max(0) as u128 * 1_000_000_000) / freq.max(1) as u128) as u64
 }
 pub fn measure<T>(
     output: &mut impl Write,

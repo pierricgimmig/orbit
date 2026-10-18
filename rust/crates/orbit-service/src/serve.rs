@@ -27,6 +27,8 @@ use crate::hooks::{HookSpec, MAX_HOOKS};
 use crate::uprobes::UprobeSession;
 #[cfg(target_os = "macos")]
 use crate::macos::capture_loop;
+#[cfg(target_os = "windows")]
+use crate::windows::capture_loop;
 #[cfg(target_os = "linux")]
 use crate::visible::VisibleProcesses;
 #[cfg(target_os = "linux")]
@@ -57,7 +59,7 @@ pub const DEFAULT_PORT: u16 = 44766;
 
 /// Name ids for symbolized frames start here, clear of the ids the server
 /// assigns to its own lanes.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const FRAME_NAME_ID_BASE: u32 = 1 << 20;
 
 /// A synthetic pid for machine-wide GPU tracks, so they lane on their own
@@ -175,17 +177,17 @@ pub fn max_hook_calls_per_s(body: &str, service: &LiveService) -> u64 {
     requested.unwrap_or_else(|| service.settings().effective_max_hook_calls_per_s())
 }
 
-#[cfg(target_os = "linux")]
-struct FrameNames {
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) struct FrameNames {
     service: Arc<LiveService>,
     store: Arc<SampleStore>,
     ids: HashMap<String, u32>,
     next: u32,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 impl FrameNames {
-    fn new(service: Arc<LiveService>, store: Arc<SampleStore>) -> FrameNames {
+    pub(crate) fn new(service: Arc<LiveService>, store: Arc<SampleStore>) -> FrameNames {
         FrameNames { service, store, ids: HashMap::new(), next: FRAME_NAME_ID_BASE }
     }
 
@@ -202,7 +204,7 @@ impl FrameNames {
     /// function must share a row in the report and a box on the timeline.
     /// The module and address kept alongside are the first ones seen for that
     /// name, which is what the call tree shows.
-    fn id_for_frame(&mut self, frame: &crate::symbolize::ResolvedFrame) -> u32 {
+    pub(crate) fn id_for_frame(&mut self, frame: &crate::symbolize::ResolvedFrame) -> u32 {
         if let Some(id) = self.ids.get(&frame.name) {
             return *id;
         }
@@ -453,7 +455,7 @@ fn hook_request(body: &str) -> (Vec<u64>, String) {
 /// worth keeping -- what a core was doing includes the processes competing
 /// with the target. The second lanes by `(pid, tid)`, so keeping it for every
 /// process on the machine is what buries the target under hundreds of rows.
-fn scheduling_events(slice: &orbit_tracing_state::context_switches::SchedulingSlice) -> [LiveEvent; 2] {
+pub(crate) fn scheduling_events(slice: &orbit_tracing_state::context_switches::SchedulingSlice) -> [LiveEvent; 2] {
     let start_ns = slice.out_timestamp_ns.saturating_sub(slice.duration_ns);
     let base = LiveEvent {
         start_ns,
@@ -585,7 +587,7 @@ impl AgentTracks {
 /// scopes from before Record; draining them now does not make them this
 /// capture's, and a scope that was open across the start would put its
 /// start left of the capture's, which nothing may.
-fn started_in_capture(e: &LiveEvent, capture_start_ns: u64) -> bool {
+pub(crate) fn started_in_capture(e: &LiveEvent, capture_start_ns: u64) -> bool {
     e.start_ns >= capture_start_ns
 }
 
@@ -2556,8 +2558,11 @@ pub fn run_on(
             // every hook.
             #[cfg(target_os = "linux")]
             let engine = if wants_auto_profile(body) { crate::frida::Engine::Uprobes } else { engine };
-            if cfg!(target_os = "macos") && engine == crate::frida::Engine::Uprobes && !hook_request(body).0.is_empty() {
+            if cfg!(any(target_os = "macos", target_os = "windows")) && engine == crate::frida::Engine::Uprobes && !hook_request(body).0.is_empty() {
                 return Err("Kernel uprobes are only available on Linux; select Frida".into());
+            }
+            if cfg!(target_os = "windows") && wants_auto_profile(body) {
+                return Err("Auto-profiling is not available on Windows yet; pick functions to hook".into());
             }
             let mut worker = start_worker.lock().map_err(|_| "capture worker poisoned".to_string())?;
             if start_running.swap(true, Ordering::SeqCst) {

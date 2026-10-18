@@ -12,9 +12,21 @@ use std::sync::{OnceLock, RwLock};
 // An injected mapping belongs to one process. A fork inherits both it and
 // possibly-held Rust locks; ignore child callbacks before touching those locks.
 static FORK_CHILD: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
 static ATFORK: OnceLock<i32> = OnceLock::new();
+#[cfg(unix)]
 unsafe extern "C" fn after_fork() {
     FORK_CHILD.store(true, Ordering::Relaxed);
+}
+
+/// Registers the fork guard once; nothing to guard against on Windows.
+#[cfg(unix)]
+unsafe fn arm_fork_guard() -> bool {
+    *ATFORK.get_or_init(|| libc::pthread_atfork(None, None, Some(after_fork))) == 0
+}
+#[cfg(windows)]
+unsafe fn arm_fork_guard() -> bool {
+    true
 }
 
 type Start = unsafe extern "C" fn(*const libc::c_char, usize) -> u64;
@@ -41,9 +53,7 @@ pub unsafe extern "C" fn orbit_frida_open(
     start: Option<Start>,
     stop: Option<Stop>,
 ) -> u32 {
-    if FORK_CHILD.load(Ordering::Relaxed)
-        || *ATFORK.get_or_init(|| libc::pthread_atfork(None, None, Some(after_fork))) != 0
-    {
+    if FORK_CHILD.load(Ordering::Relaxed) || !arm_fork_guard() {
         return 0;
     }
     if path.is_null() {

@@ -26,6 +26,7 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 static FORK_CHILD: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
 unsafe extern "C" fn after_fork() {
     FORK_CHILD.store(true, Ordering::Relaxed);
     if let Some(writer) = SEGMENT.load(Ordering::Acquire).as_ref() {
@@ -93,9 +94,13 @@ pub fn init() -> Result<(), i32> {
     if !SEGMENT.load(Ordering::Acquire).is_null() {
         return Ok(());
     }
-    static ATFORK: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
-    let error = *ATFORK.get_or_init(|| unsafe { libc::pthread_atfork(None, None, Some(after_fork)) });
-    if error != 0 { return Err(error); }
+    // Windows has no fork, so there is nothing to disarm in a child there.
+    #[cfg(unix)]
+    {
+        static ATFORK: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+        let error = *ATFORK.get_or_init(|| unsafe { libc::pthread_atfork(None, None, Some(after_fork)) });
+        if error != 0 { return Err(error); }
+    }
     // A second SDK initialized after injection must not unlink the active
     // instance. Initialize the application's SDK before attaching Frida.
     if orbit_scope_ring::ScopeRingReader::open(std::process::id())

@@ -1,0 +1,117 @@
+Phase 17 -- the Windows service (TODO items 7 and 8)
+====================================================
+Date: 2026-10-17.
+
+Machine: WINBOX, Windows 11 Pro (10.0.26200), 13th Gen Intel Core
+i7-1365U, 12 logical processors. Rust 1.88.0 (x86_64-pc-windows-msvc),
+Visual Studio 2022 Community. Claude's shells run as a UAC-filtered
+(non-elevated) token: the NT Kernel Logger cannot be started from them,
+so the live ETW results below were not produced on this box and are
+marked as such; GitHub's windows-2022 runners are elevated and run them
+(.github/workflows/windows-rust.yml).
+
+What was built and run
+----------------------
+The whole Windows backend the brief (docs/windows-agent-brief.md) asked
+for, built and tested on the OS. Two deviations from the brief, both
+recorded in cross-platform-plan.md:
+
+  - ETW through hand-declared advapi32 bindings, not ferrisetw: the
+    classic kernel events are fixed MOF structures decoded from raw bytes,
+    which is what the C++ tracer should have done -- it lost every CSwitch
+    through TDH on a newer Windows (52787b085).
+  - The scope segment is a file-backed section in %LOCALAPPDATA%\Orbit\
+    scopes, not a Local\ named section: a directory a service can list,
+    so producer discovery is a read_dir exactly as on Linux and macOS.
+
+Test counts (cargo +1.88.0 test, release where noted)
+-----------------------------------------------------
+  orbit-scope-ring            49 unit + 2 cost + 9 end-to-end   all pass
+  orbit-api                    6                                  all pass
+  orbit-frida-transport        1                                  all pass
+  orbit-etw                   36 (decoders, scheduler feed,       all pass
+                                  sample assembler, QPC clock,
+                                  sysproc snapshot, token)
+  orbit-etw --test live        1  needs elevation; skips here,    CI runs it
+                                  ORBIT_ETW_LIVE=1 makes it fail
+                                  instead of skip
+  orbit-service              154                                  all pass
+
+The scope ring on Windows (shm_windows.rs)
+------------------------------------------
+A file-backed section per process, the two views (rings read-only, the
+control page read-write), the producer lease a LockFileEx byte-range
+lock, unlink-while-mapped by renaming out of the discovery namespace plus
+FILE_FLAG_DELETE_ON_CLOSE (NTFS will not delete a mapped file). The
+crate's existing API-level tests pass unchanged, plus Windows ones for
+the read-only ring view (checked with VirtualQuery), the sweep, and
+delete-on-close.
+
+Scope write cost (cargo test -p orbit-scope-ring --release --test cost):
+  push (ring only)         7.93 ns
+  push + clock read       25.97 ns   <- what a scope costs
+  clock read alone        18.23 ns   (QueryPerformanceCounter)
+  atomic fetch_add         4.74 ns
+Against Linux's 15.9 ns/scope (phase-9): the ring write itself is in the
+same ballpark (7.9 ns here), and the difference is the clock -- QPC reads
+at ~18 ns on this box where clock_gettime via the vDSO is a few ns on
+Linux. Expected, and the reason the brief said not to expect parity on
+the clock.
+
+ETW scheduler + sampling (orbit-etw)
+------------------------------------
+The six C++ ContextSwitchManagerTest cases are reproduced through the
+SchedulerFeed (scheduler.rs), so the Rust CSwitch->SchedulingSlice
+semantics match the oracle by construction rather than by a differential
+run. The live test (tests/live.rs) starts the kernel logger, spins for
+400 ms and asserts: >50 threads in the DCStart rundown, this executable
+in the image rundown, context switches present, a scheduling slice for
+the test thread with the right pid, the thread seen RUNNING, >=100
+samples in 400 ms at 1 kHz, and most of them in user code. It needs an
+elevated token and was NOT run on this box (see the machine note); it
+runs on the elevated CI runner.
+
+Frida hooks (orbit_frida_agent.dll, orbit-frida-helper.exe)
+-----------------------------------------------------------
+tools/e2e/frida_smoke.py, the same harness Linux and macOS use, against
+a target built with MSVC (tools/e2e/frida_target.c). Attach, arm three
+hooks with no rebuild, capture, read the nested scope counts, a second
+capture where the set changed, and clean detach. 540 hook scope events
+for the three functions across three threads, correct nesting and
+depths, manual scopes alongside, clean stop. The Gum adapter reads the
+in-memory PE section table for the file-offset->RVA map; the control
+channel is a named pipe, the agent injected with Frida Core's injector.
+
+One honest gap: the "Frida: detach trampolines" self-profile span is not
+relayed to the service on Windows. It is emitted at teardown over the
+control pipe, and a Windows named pipe has no half-close, so the pipe is
+already closing when the agent detaches and the span write breaks. The
+detach itself is correct (hooks removed, target survives, every other
+phase recorded). The smoke test does not require that one span on
+Windows and docs/building_windows.md states the limitation.
+
+Symbols
+-------
+From the module's PDB (located by the CodeView record's GUID and age,
+also looked for beside the module and under ORBIT_PDB_DIR), its export
+table, and its exception table's function ranges for anything unnamed.
+On this box the Frida target indexed 27,724 functions across 9 modules;
+its own three test functions resolve by name with "clean entry" hook
+safety. MSVC-decorated names are demangled.
+
+Static CRT
+----------
+rust/.cargo/config.toml sets -C target-feature=+crt-static for the MSVC
+target, and build-service-windows.ps1 checks every shipped binary with
+dumpbin /dependents and refuses any that imports vcruntime/msvcp/
+ucrtbase/api-ms-win-crt. The service, helper, agent DLL and orbit_api.dll
+import only system DLLs (kernel32, ntdll, advapi32, ws2_32, and the like).
+
+Not done (stated, not hidden)
+-----------------------------
+  - Auto-profiling: rides on Linux uprobes; refused with a sentence.
+  - The GPU telemetry helper: Linux only.
+  - PDB line tables in the disassembler: disassembly works, no source
+    interleave (the line table is in the PDB, which line_rows does not
+    read).
+  - Windows on ARM64: not built.

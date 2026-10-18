@@ -1,5 +1,16 @@
 # Windows agent brief
 
+> **Done (2026-10-17).** Every item below was built and run on Windows:
+> the scope ring (`shm_windows.rs`), the ETW backend (`orbit-etw`), the
+> service's `windows.rs` loop, Frida over a named pipe, the static CRT
+> build and the packaging. The outcome and its numbers are in
+> `docs/blog/metrics/phase-17-windows.txt`, the status in
+> `cross-platform-plan.md`, the how-to in `building_windows.md`, and the
+> story in blog post 24. Two deviations from the plan are recorded there:
+> raw advapi32 bindings instead of `ferrisetw`, and a file-backed section
+> in a per-user directory instead of a `Local\` named section. The text
+> below is the brief as it was handed over.
+
 You are starting cold on a Windows x86-64 machine, in a clone of this
 repository on branch `rust-port-object-utils`. Nothing from the Linux
 sessions travels except what is in git, so this file is the handoff. Read it,

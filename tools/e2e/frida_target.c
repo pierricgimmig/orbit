@@ -1,6 +1,34 @@
 // Copyright (c) 2026 The Orbit Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+#ifdef _WIN32
+// The same program on Windows: a thread, a gate (SRW lock + condition
+// variable) and a short sleep, behind the names the POSIX body uses. No
+// fork: the fork-child case is a POSIX behaviour.
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <process.h>
+#include <stdio.h>
+#include <string.h>
+#define NOINLINE __declspec(noinline)
+typedef HANDLE test_thread;
+typedef unsigned (__stdcall *test_thread_fn)(void *);
+#define TEST_THREAD_RETURN unsigned __stdcall
+#define TEST_THREAD_DONE 0
+static int test_thread_create(test_thread *t, test_thread_fn fn, void *arg) {
+  *t = (HANDLE) _beginthreadex(NULL, 0, fn, arg, 0, NULL);
+  return *t == NULL ? -1 : 0;
+}
+static void test_thread_join(test_thread t) { WaitForSingleObject(t, INFINITE); CloseHandle(t); }
+static SRWLOCK gate_mutex = SRWLOCK_INIT;
+static CONDITION_VARIABLE gate_condition = CONDITION_VARIABLE_INIT;
+static void gate_lock(void) { AcquireSRWLockExclusive(&gate_mutex); }
+static void gate_unlock(void) { ReleaseSRWLockExclusive(&gate_mutex); }
+static void gate_wait(void) { SleepConditionVariableSRW(&gate_condition, &gate_mutex, INFINITE, 0); }
+static void gate_signal(void) { WakeConditionVariable(&gate_condition); }
+static void short_sleep(void) { Sleep(0); }
+#define test_getpid() ((int) GetCurrentProcessId())
+#else
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>
 #include <pthread.h>
@@ -11,6 +39,22 @@
 #include <sys/wait.h>
 #ifdef __linux__
 #include <sys/prctl.h>
+#endif
+#define NOINLINE __attribute__((noinline))
+typedef pthread_t test_thread;
+typedef void *(*test_thread_fn)(void *);
+#define TEST_THREAD_RETURN void *
+#define TEST_THREAD_DONE NULL
+static int test_thread_create(test_thread *t, test_thread_fn fn, void *arg) { return pthread_create(t, NULL, fn, arg); }
+static void test_thread_join(test_thread t) { pthread_join(t, NULL); }
+static pthread_mutex_t gate_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t gate_condition = PTHREAD_COND_INITIALIZER;
+static void gate_lock(void) { pthread_mutex_lock(&gate_mutex); }
+static void gate_unlock(void) { pthread_mutex_unlock(&gate_mutex); }
+static void gate_wait(void) { pthread_cond_wait(&gate_condition, &gate_mutex); }
+static void gate_signal(void) { pthread_cond_signal(&gate_condition); }
+static void short_sleep(void) { struct timespec t = {0, 100000}; nanosleep(&t, NULL); }
+#define test_getpid() ((int) getpid())
 #endif
 #ifdef ORBIT_NO_API
 #include <stdint.h>
@@ -24,43 +68,41 @@
 #include "orbit.h"
 #endif
 
-__attribute__((noinline)) void orbit_frida_test_inner(void) {
+NOINLINE void orbit_frida_test_inner(void) {
   uint64_t manual = orbit_start("manual inner", 12);
-  struct timespec t = {0, 100000}; nanosleep(&t, NULL);
+  short_sleep();
   orbit_stop(manual);
 }
-__attribute__((noinline)) void orbit_frida_test_middle(void) {
+NOINLINE void orbit_frida_test_middle(void) {
   uint64_t manual = orbit_start("manual middle", 13);
   for (int i = 0; i < 3; ++i) orbit_frida_test_inner();
   orbit_stop(manual);
 }
-__attribute__((noinline)) void orbit_frida_test_outer(void) {
+NOINLINE void orbit_frida_test_outer(void) {
   uint64_t manual = orbit_start("manual outer", 12);
   for (int i = 0; i < 2; ++i) orbit_frida_test_middle();
   orbit_stop(manual);
 }
-static void *worker(void *unused) {
+static TEST_THREAD_RETURN worker(void *unused) {
   (void)unused;
   uint64_t manual = orbit_start("manual worker", 13);
   uint64_t async = orbit_start_async("async worker", 12);
   for (int i = 0; i < 10; ++i) orbit_frida_test_outer();
   orbit_stop(async);
   orbit_stop(manual);
-  return NULL;
+  return TEST_THREAD_DONE;
 }
-static pthread_mutex_t gate_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t gate_condition = PTHREAD_COND_INITIALIZER;
 static int released = 0;
-__attribute__((noinline)) void orbit_frida_test_blocked(void) {
-  pthread_mutex_lock(&gate_mutex);
+NOINLINE void orbit_frida_test_blocked(void) {
+  gate_lock();
   puts("entered"); fflush(stdout);
-  while (!released) pthread_cond_wait(&gate_condition, &gate_mutex);
-  pthread_mutex_unlock(&gate_mutex);
+  while (!released) gate_wait();
+  gate_unlock();
 }
-static void *blocked_worker(void *unused) {
+static TEST_THREAD_RETURN blocked_worker(void *unused) {
   (void)unused;
   orbit_frida_test_blocked();
-  return NULL;
+  return TEST_THREAD_DONE;
 }
 int main(void) {
 #ifdef __linux__
@@ -70,33 +112,35 @@ int main(void) {
   if (prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0) != 0 && errno != EINVAL) return 2;
 #endif
   if (orbit_init() != 0) return 3;
-  printf("%d\n", getpid()); fflush(stdout);
+  printf("%d\n", test_getpid()); fflush(stdout);
   char command[32];
-  pthread_t blocked;
+  test_thread blocked;
   while (fgets(command, sizeof(command), stdin)) {
     if (strncmp(command, "hold", 4) == 0) {
       released = 0;
-      if (pthread_create(&blocked, NULL, blocked_worker, NULL) != 0) return 6;
+      if (test_thread_create(&blocked, blocked_worker, NULL) != 0) return 6;
       continue;
     }
     if (strncmp(command, "release", 7) == 0) {
-      pthread_mutex_lock(&gate_mutex);
+      gate_lock();
       released = 1;
-      pthread_cond_signal(&gate_condition);
-      pthread_mutex_unlock(&gate_mutex);
-      pthread_join(blocked, NULL);
+      gate_signal();
+      gate_unlock();
+      test_thread_join(blocked);
       puts("released"); fflush(stdout);
       continue;
     }
     uint64_t manual = orbit_start("manual alongside Frida", 22);
+#ifndef _WIN32
     pid_t child = fork();
     if (child == 0) { orbit_frida_test_outer(); _exit(0); }
     if (child < 0) return 4;
     int status;
     if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) return 5;
-    pthread_t threads[3];
-    for (int i = 0; i < 3; ++i) pthread_create(&threads[i], NULL, worker, NULL);
-    for (int i = 0; i < 3; ++i) pthread_join(threads[i], NULL);
+#endif
+    test_thread threads[3];
+    for (int i = 0; i < 3; ++i) test_thread_create(&threads[i], worker, NULL);
+    for (int i = 0; i < 3; ++i) test_thread_join(threads[i]);
     orbit_stop(manual);
     puts("done"); fflush(stdout);
   }

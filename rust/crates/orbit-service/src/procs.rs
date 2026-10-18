@@ -139,12 +139,14 @@ fn snapshot() -> Result<Vec<ProcSnap>, String> {
     crate::macos::process_snapshot()
 }
 
-/// The service does not build on Windows yet (see `docs/windows-agent-brief.md`).
-/// When it does, this is the one function to fill in: enumerate with
-/// `CreateToolhelp32Snapshot` (name from the entry, path from
-/// `QueryFullProcessImageNameW`), and `cpu_secs` from `GetProcessTimes` --
-/// kernel + user `FILETIME`, in 100 ns units. The sampler needs nothing else.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// One `NtQuerySystemInformation` call: every process with its image name
+/// and CPU times; the path comes from `QueryFullProcessImageNameW`.
+#[cfg(target_os = "windows")]
+fn snapshot() -> Result<Vec<ProcSnap>, String> {
+    crate::windows::process_snapshot()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn snapshot() -> Result<Vec<ProcSnap>, String> {
     Err("process listing is not implemented on this platform yet".into())
 }

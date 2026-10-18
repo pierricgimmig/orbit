@@ -59,8 +59,18 @@ fn disassemble_function(
 ) -> Result<String, String> {
     let path = &function.module_path;
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-    let metadata = parse_elf_metadata(&bytes, path)?;
-    let segments = &metadata.loadable_segments;
+    // A PE image's sections stand in for an ELF's loadable segments; its
+    // line table is in a PDB, which `line_rows` does not read, so a PE
+    // disassembly has no source interleave.
+    let (segments, is_64_bit, debug_bytes): (Vec<ObjectSegment>, bool, Option<Vec<u8>>) = if orbit_object::is_pe(&bytes) {
+        let metadata = orbit_object::parse_coff_metadata(&bytes, path)?;
+        (metadata.sections, metadata.is_64_bit, None)
+    } else {
+        let metadata = parse_elf_metadata(&bytes, path)?;
+        let debug = detached_debug_file(Path::new(path), &metadata).and_then(|p| std::fs::read(p).ok());
+        (metadata.loadable_segments, metadata.is_64_bit, debug)
+    };
+    let segments = &segments;
     let address = address_of_offset(segments, function.file_offset)
         .ok_or_else(|| format!("{}: file offset {:#x} is in no loadable segment", function.name, function.file_offset))?;
     let start = function.file_offset as usize;
@@ -71,11 +81,9 @@ fn disassemble_function(
     let code = &bytes[start..end];
     // The line table lives in the module, or in its detached debug file
     // when the distribution ships one.
-    let debug_bytes: Option<Vec<u8>> = detached_debug_file(Path::new(path), &metadata)
-        .and_then(|p| std::fs::read(p).ok());
     let debug_data: &[u8] = debug_bytes.as_deref().unwrap_or(&bytes);
 
-    let bitness = if metadata.is_64_bit { 64 } else { 32 };
+    let bitness = if is_64_bit { 64 } else { 32 };
     let mut decoder = Decoder::with_ip(bitness, code, address, DecoderOptions::NONE);
     let mut formatter = IntelFormatter::new();
     {
@@ -180,7 +188,7 @@ fn disassemble_function(
         json_str(&function.module_path),
         function.size,
         json_str(&decl_file),
-        if metadata.is_64_bit { "x86-64" } else { "x86" },
+        if is_64_bit { "x86-64" } else { "x86" },
         files_json.join(",")
     ))
 }
@@ -220,8 +228,8 @@ pub fn example_disassembly_json(allow: &SourceAllowList) -> Result<String, Strin
     }
     static OWN_INDEX: OnceLock<FunctionIndex> = OnceLock::new();
     let index = OWN_INDEX.get_or_init(|| FunctionIndex::for_pid(std::process::id() as i32));
-    let exe = std::fs::read_link("/proc/self/exe").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-    let own = |f: &&InstrumentableFunction| f.module_path == exe;
+    let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let own = |f: &&InstrumentableFunction| f.module_path.eq_ignore_ascii_case(&exe);
     let pick = index
         .functions()
         .filter(own)
