@@ -311,8 +311,9 @@ fn uid() -> u32 {
     0
 }
 
+/// The machine's name, for the log header and for other machines' rails.
 #[cfg(not(windows))]
-fn hostname() -> Option<String> {
+pub(crate) fn hostname() -> Option<String> {
     std::fs::read_to_string("/proc/sys/kernel/hostname")
         .ok()
         .map(|s| s.trim().to_string())
@@ -320,7 +321,7 @@ fn hostname() -> Option<String> {
 }
 
 #[cfg(windows)]
-fn hostname() -> Option<String> {
+pub(crate) fn hostname() -> Option<String> {
     crate::windows::hostname()
 }
 

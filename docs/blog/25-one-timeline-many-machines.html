@@ -1,0 +1,926 @@
+<!--
+Copyright (c) 2026 The Orbit Authors. All rights reserved.
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>One Timeline, Many Machines</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+
+<style>
+  figure { margin: 0.5rem 0; background: var(--surface); border: 1px solid var(--line); padding: 1.35rem 1.35rem 1rem; }
+  figcaption { font-family: var(--display); font-size: 0.8rem; line-height: 1.45; color: var(--muted); margin-top: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+  .embed { background: #0b0c0e; border: 1px solid var(--line); }
+  .embed iframe { display: block; width: 100%; height: 640px; border: 0; }
+  .embed-head { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 0.7rem; }
+  .embed-head.off { color: var(--accent-deep); } .embed-head.on { color: var(--hold); }
+  @media (max-width: 720px) { .embed iframe { height: 460px; } }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+
+<style>
+  .diagram { overflow-x:auto; padding:16px 8px; background:var(--surface); border:1px solid var(--line); border-radius:10px; }
+  .diagram svg { display:block; width:100%; min-width:700px; height:auto; }
+  .diagram rect { fill:var(--ground); stroke:var(--line); stroke-width:1.5; }
+  .diagram rect.accent { fill:var(--accent-wash); stroke:var(--accent); }
+  .diagram rect.soft { fill:var(--surface-2); stroke:var(--line-strong); }
+  .diagram rect.warn { fill:var(--warn-wash); stroke:var(--warn); }
+  .diagram rect.hold { fill:var(--hold-wash); stroke:var(--hold); }
+  .diagram rect.bar { fill:var(--accent); stroke:none; }
+  .diagram rect.bar.dim { fill:var(--line-strong); }
+  .diagram rect.bar.hold { fill:var(--hold); stroke:none; }
+  .diagram circle.dot { fill:var(--accent); stroke:none; }
+  .diagram circle.dim { fill:var(--line-strong); stroke:none; }
+  .diagram text { fill:var(--ink); font:16px Roboto,sans-serif; text-anchor:middle; }
+  .diagram text.small { font-size:13px; fill:var(--ink-soft); }
+  .diagram text.label { font-size:12px; letter-spacing:1px; fill:var(--muted); }
+  .diagram text.mono { font-family:'Roboto Mono',monospace; font-size:14px; }
+  .diagram text.left { text-anchor:start; }
+  .diagram text.right { text-anchor:end; }
+  .diagram path.arrow { fill:none; stroke:var(--accent); stroke-width:2; marker-end:url(#ah); }
+  .diagram path.arrow.both { marker-start:url(#ah); }
+  .diagram path.arrow.hold { stroke:var(--hold); marker-end:url(#ah-hold); }
+  .diagram path.line { fill:none; stroke:var(--line-strong); stroke-width:2; }
+  .diagram path.dash { fill:none; stroke:var(--muted); stroke-width:1.5; stroke-dasharray:5 5; }
+  .diagram path.fit { fill:none; stroke:var(--accent); stroke-width:2.5; }
+  .diagram marker path { fill:var(--accent); stroke:none; }
+  .diagram marker.hold path { fill:var(--hold); }
+  .callout { background:var(--accent-wash); border:1px solid var(--accent); border-radius:10px; padding:1rem 1.25rem; font-size:.98rem; }
+  .callout.hold { background:var(--hold-wash); border-color:var(--hold); }
+  .table-wrap { overflow-x:auto; border:1px solid var(--line); background:var(--surface); }
+  .table-wrap table { border-collapse:collapse; width:100%; font-size:.93rem; }
+  .table-wrap th, .table-wrap td { text-align:left; padding:.55rem .8rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  .table-wrap th { font-family:var(--display); font-size:.74rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+  .doc > .wide { grid-column: wide; }
+  .wide { max-width:100%; margin-left:0; margin-right:0; }
+  @media(max-width:760px) { .diagram::after { content:"Scroll horizontally to see the full diagram \2192"; display:block; padding-top:12px; color:var(--muted); font-size:12px; } }
+</style>
+</head><body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 25</p>
+    <h1>One Timeline, Many Machines</h1>
+    <p class="dek">Post 22 was the plan: one service as the hub, every other machine streaming into it, a clock fit per link so their events share an axis. This is the build. Two flags, one small protocol, a byte of the pid, and a least-squares line through the fastest round trips. The remote does nothing it did not do before.</p>
+    <p class="byline">On the <code>multi-machine</code> branch. Verified by <code>tools/e2e/multi_machine_smoke.py</code>, two services on one Windows box, and nine unit tests in <code>orbit-live-server/src/peers.rs</code>. Every number below is from <a href="metrics/phase-18-multi-machine.txt"><code>metrics/phase-18-multi-machine.txt</code></a>; the plan it implements is <a href="22-every-machine-in-one-timeline.html">post 22</a>. The how-to is in the manual, <a href="../manual/machines.html">Several machines</a>.</p>
+    <div class="stats">
+      <div class="stat"><b>2</b><span>flags: --join dials in, --connect dials out</span></div>
+      <div class="stat"><b>1 byte</b><span>of every pid and tid names the machine</span></div>
+      <div class="stat"><b>&plusmn;87 &micro;s</b><span>worst alignment, one box, debug build, loopback</span></div>
+      <div class="stat"><b>0</b><span>changes to the ring, the renderer, the frames</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p>The request in <code>docs/TODO.md</code> was for one viewer that shows many machines, with clocks lined up well enough that a scope on one box can be read against a scope on another. Post 22 worked out how, and ended on five decisions. This post takes the first of them, pack the machine into the top byte of the pid, as decided by the plan's own recommendation, and builds the core: the link, the identity, the clocks, the fan-out, and the rail. The transports the plan added around that core, ssh with install-on-demand, a token on the API, the Machines panel, stay in the plan; the last section says exactly which parts are not here.</p>
+
+  <h2 id="shape">The shape: a hub and its remotes</h2>
+
+  <p>Nothing is configured in advance and there is no distributed build. Any <code>orbit-service</code> is a hub the moment another machine is linked to it, and a remote is an ordinary service doing ordinary work: it captures what it always captured and hands the frames it would give a browser to the hub instead. The hub is the service whose URL you open. Browsers never talk to a remote.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 330" role="img" aria-labelledby="shape-title"><title id="shape-title">Browsers talk to the hub; remotes reach it by dialing in or by being dialed; the hub merges one stream</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<text x="110" y="28" class="label">BROWSERS</text><text x="450" y="28" class="label">HUB &middot; the service you opened</text><text x="790" y="28" class="label">REMOTES &middot; stock services</text>
+<rect x="20" y="60" width="180" height="50" rx="8"/><text x="110" y="90">your laptop's tab</text>
+<rect x="20" y="130" width="180" height="50" rx="8"/><text x="110" y="160">a colleague's tab</text>
+<path d="M200 85 H290" class="arrow both"/><path d="M200 155 H290" class="arrow both"/>
+<text x="245" y="72" class="small">/ws</text>
+<rect x="295" y="50" width="310" height="250" rx="10" class="accent"/>
+<text x="450" y="80">one ring, one time axis</text>
+<rect x="315" y="98" width="270" height="34" rx="6"/><text x="450" y="120" class="small">machine table &middot; 0 = itself, 1..64 = links</text>
+<rect x="315" y="140" width="270" height="34" rx="6"/><text x="450" y="162" class="small">pid, tid, string ids rewritten at ingest</text>
+<rect x="315" y="182" width="270" height="34" rx="6"/><text x="450" y="204" class="small">a clock fit per link, applied at ingest</text>
+<rect x="315" y="224" width="270" height="34" rx="6"/><text x="450" y="246" class="small">Record fans out: start / stop to every link</text>
+<text x="450" y="285" class="small">the renderer, the reports and the bundle never learn</text>
+<path d="M690 100 H610" class="arrow"/><rect x="695" y="75" width="190" height="56" rx="8"/><text x="790" y="98">ci-runner</text><text x="790" y="118" class="small mono">--join hub:44766</text>
+<text x="648" y="92" class="small">dials in</text>
+<path d="M605 195 H690" class="arrow"/><rect x="695" y="170" width="190" height="56" rx="8"/><text x="790" y="193">render-01</text><text x="790" y="213" class="small mono">hub: --connect render-01</text>
+<text x="648" y="187" class="small">dialed</text>
+<rect x="695" y="245" width="190" height="56" rx="8" class="soft"/><text x="790" y="268">build-mac</text><text x="790" y="288" class="small mono">POST /api/peers/connect</text>
+<path d="M605 272 H690" class="arrow"/>
+</svg></div>
+<figcaption><b>Who dials does not matter.</b> A remote behind a firewall dials the hub with <code>--join</code>; a machine the hub can reach is dialed with <code>--connect</code> or added at run time through the API. Either way one WebSocket carries the link and the hub runs the same code over it.</figcaption></figure>
+
+  <p>The plan chose the hub over the browser for four reasons, and the decisive one still holds: aligning two hosts needs round-trip timing at microsecond resolution, and a browser coarsens <code>performance.now()</code> on purpose. Service to service, both ends read the capture clock, <code>CLOCK_MONOTONIC</code> on Unix and <code>QueryPerformanceCounter</code> on Windows, the clocks the events are stamped with. The hub exposes that clock to the server crate through one hook, <code>LiveService::set_clock</code>, and the same hook now stamps <code>POST /api/events</code>, which on Windows had been reading a different clock than the capture.</p>
+
+  <h2 id="link">One link, two roles</h2>
+
+  <p>A link is one WebSocket. The hub side runs <code>hub_role</code>, the remote side <code>remote_role</code>, and neither knows which WebSocket crate carries the bytes or who opened the socket: each socket is pumped into a pair of channels, a <code>Link</code>, by a twenty-line adapter per crate (axum for an accepted connection, tokio-tungstenite for a dialed one, and a pair of in-process channels for the tests). The roles are plain async loops over those channels. That is what lets a remote dial in and still be a remote: the hub accepts the socket on <code>/api/join</code> and runs the hub role over it, exactly as it does over a socket it dialed to a remote's <code>/api/peer</code>.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 420" role="img" aria-labelledby="seq-title"><title id="seq-title">The link protocol: hello and welcome, a burst of clock probes, then frames one way and start and stop the other</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker><marker id="ah-hold" class="hold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<rect x="60" y="20" width="200" height="40" rx="8" class="accent"/><text x="160" y="46">hub role</text>
+<rect x="640" y="20" width="200" height="40" rx="8"/><text x="740" y="46">remote role</text>
+<path d="M160 60 V400" class="dash"/><path d="M740 60 V400" class="dash"/>
+<path d="M730 90 H175" class="arrow"/><text x="450" y="84" class="mono">{"hello": {host, cores, version}}</text>
+<path d="M170 125 H725" class="arrow"/><text x="450" y="119" class="mono">{"welcome": {machine: 1, host}}</text>
+<text x="450" y="145" class="small">the remote then re-sends every name it already knows</text>
+<path d="M170 175 H725" class="arrow"/><text x="450" y="169" class="mono">{"ping": {t1}}</text>
+<path d="M730 205 H175" class="arrow"/><text x="450" y="199" class="mono">{"pong": {t1, t2, t3}}</text>
+<text x="450" y="226" class="small">40 probes at 50 ms, then one a second &middot; the hub stamps t4 on receipt</text>
+<path d="M730 260 H175" class="arrow"/><text x="450" y="254" class="mono">binary: the remote's own /ws frames, untouched</text>
+<text x="450" y="280" class="small">event batches, interned strings, thread and process names &middot; nothing else</text>
+<path d="M730 310 H175" class="arrow"/><text x="450" y="304" class="mono">{"processes": [...]} every 2 s</text>
+<path d="M170 345 H725" class="arrow hold"/><text x="450" y="339" class="mono">{"start": {pid}}  &middot;  {"stop": true}</text>
+<text x="450" y="366" class="small">what the hub's Record and Stop become on every link; pid 0 is a capture with no target</text>
+<rect x="60" y="385" width="780" height="26" rx="6" class="soft"/><text x="450" y="403" class="small">held frames: event batches that arrive before the first pong wait, bounded, and are filed once a fit exists</text>
+</svg></div>
+<figcaption><b>Six message kinds.</b> Text messages are one JSON object with one key. Binary messages are the wire frames the remote's own viewers get, forwarded by a type-byte check without decoding: the remote spends nothing on the link that it did not already spend on a browser.</figcaption></figure>
+
+  <p>Pings are their own tiny messages, never appended to a batch, because a probe queued behind a 64&nbsp;KB batch measures the batch. The remote answers from inside its select loop; if that loop is busy forwarding a burst the answer is late, the round trip is long, and the filter in the next section throws the sample away. A dropped link is redialed every two seconds by whichever side dialed, and the remote resubscribes to its own broadcast before saying hello so nothing between the two is missed.</p>
+
+  <h2 id="identity">Identity: a byte and a word</h2>
+
+  <p>The viewer keys everything on a 32-bit pid, and two machines will each have a pid 1234. The plan's recommendation was to pack the machine into the top byte at hub ingest, and that is what is built: the hub's own ids keep a zero top byte and read exactly as before; a remote's pid and tid become <code>machine &lt;&lt; 24 | id</code>. Linux's <code>pid_max</code> ceiling is 2<sup>22</sup>, so 24 bits hold any real id on any of the three platforms.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 230" role="img" aria-labelledby="pid-title"><title id="pid-title">A 32-bit pid split into an 8-bit machine index and a 24-bit pid on that machine</title>
+<text x="450" y="26" class="label">LiveEvent.pid AND LiveEvent.tid &middot; 32 BITS &middot; UNCHANGED SIZE</text>
+<rect x="60" y="50" width="200" height="70" rx="6" class="accent"/><text x="160" y="80">machine</text><text x="160" y="104" class="small">8 bits &middot; 0 = the hub itself &middot; 1..64</text>
+<rect x="260" y="50" width="580" height="70" rx="6"/><text x="550" y="80">pid on that machine</text><text x="550" y="104" class="small">24 bits &middot; Linux pid_max is 2&sup2;&sup2; &middot; macOS 99,998 &middot; Windows fits</text>
+<text x="60" y="140" class="small left">31</text><text x="258" y="140" class="small right">24</text><text x="264" y="140" class="small left">23</text><text x="840" y="140" class="small right">0</text>
+<rect x="60" y="160" width="780" height="54" rx="6" class="soft"/>
+<text x="450" y="181" class="small">0 stays 0, so the idle thread and "no target" keep their meaning &middot; an id that needs more than 24 bits is dropped and counted</text>
+<text x="450" y="202" class="small">64 is far under the top bytes of the synthetic ids (the agent's 0xA6E7_0000, the viewer's 0x5E1F_0002), so those never read as a machine</text>
+</svg></div>
+<figcaption><b>The demo's "spoofed remote pids" convention, made real.</b> <code>MachineId::from_pid</code> in the viewer now reads the top byte and returns <code>Peer(n)</code>; the rail's grouping, dragging and collapsing, which were already written for the demo's two-valued enum, carry over unchanged.</figcaption></figure>
+
+  <p>Three more collisions are handled the same way, at ingest, per link. Interned string ids are a per-service sequence, so the hub interns each remote string into its own table and keeps a map from the remote's id to its own; a name it has never seen falls back to <code>?</code> rather than to a wrong label. A remote's process name gets <code>@host</code> appended, which is both the label on its process row and, as the next-but-one section shows, how the viewer learns the machine's name without a new frame type. And scheduler slices carry a core id in a byte: a remote's cores are shifted past the hub's and past every earlier link's, so machine 1's core 3 draws as lane 15 on a 12-core hub. The Scheduler track is still one track; 255 lanes is its ceiling and a slice past it is dropped and counted.</p>
+
+  <h2 id="clocks">Clocks: trust the fast round trips</h2>
+
+  <p>A probe is the NTP exchange: <code>t1</code> as the hub sends, <code>t2</code> and <code>t3</code> as the remote receives and answers, <code>t4</code> as the hub receives. Offset and round trip fall out of the four, and the error of any single sample is at most half its round trip, under the one assumption that both legs took the same time. The method is about making that assumption true: keep a window, find the fastest round trip in it, and keep only the samples within 1.5&times; of it plus 30&nbsp;&micro;s of scheduler slack. Those are the probes that met no queue on either leg.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 360" role="img" aria-labelledby="clock-title"><title id="clock-title">Four timestamps per probe; a window of probes filtered by round trip; a line fitted through the ones that met no queue</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<text x="200" y="26" class="label">ONE PROBE</text>
+<path d="M40 60 H360" class="line"/><text x="30" y="65" class="small right">hub</text>
+<path d="M40 150 H360" class="line"/><text x="30" y="155" class="small right">remote</text>
+<circle cx="90" cy="60" r="5" class="dot"/><text x="90" y="46" class="mono">t1</text>
+<path d="M92 63 L178 147" class="arrow"/>
+<circle cx="180" cy="150" r="5" class="dot"/><text x="180" y="176" class="mono">t2</text>
+<circle cx="215" cy="150" r="5" class="dot"/><text x="215" y="176" class="mono">t3</text>
+<path d="M217 147 L303 63" class="arrow"/>
+<circle cx="305" cy="60" r="5" class="dot"/><text x="305" y="46" class="mono">t4</text>
+<text x="200" y="210" class="mono">offset = ((t2 &minus; t1) + (t3 &minus; t4)) / 2</text>
+<text x="200" y="234" class="mono">rtt = (t4 &minus; t1) &minus; (t3 &minus; t2)</text>
+<text x="200" y="258" class="small">|error| &le; rtt / 2</text>
+<text x="640" y="26" class="label">THE WINDOW &middot; offset against hub time</text>
+<path d="M440 300 H860" class="line"/><path d="M440 300 V50" class="line"/>
+<text x="650" y="330" class="small">hub time &middot; last 120 s, up to 256 probes</text>
+<text x="458" y="60" class="small left">offset</text>
+<path d="M470 250 L850 214" class="fit"/>
+<circle cx="480" cy="249" r="4" class="dot"/><circle cx="520" cy="246" r="4" class="dot"/><circle cx="560" cy="242" r="4" class="dot"/><circle cx="600" cy="236" r="4" class="dot"/><circle cx="640" cy="233" r="4" class="dot"/><circle cx="680" cy="230" r="4" class="dot"/><circle cx="720" cy="226" r="4" class="dot"/><circle cx="760" cy="223" r="4" class="dot"/><circle cx="800" cy="218" r="4" class="dot"/><circle cx="840" cy="215" r="4" class="dot"/>
+<circle cx="540" cy="150" r="4" class="dim"/><circle cx="620" cy="110" r="4" class="dim"/><circle cx="700" cy="170" r="4" class="dim"/><circle cx="780" cy="95" r="4" class="dim"/><circle cx="660" cy="300" r="4" class="dim"/>
+<text x="648" y="90" class="small">queued on one leg: long rtt, wrong offset, out</text>
+<text x="720" y="205" class="small">within 1.5&times; the best rtt: in</text>
+<text x="650" y="280" class="small">offset(t) = a + b&middot;t &middot; b is the rate, kept once the window spans 10 s</text>
+</svg></div>
+<figcaption><b>Offset and rate.</b> With at least four clean probes over ten seconds the fit is a least-squares line, and its slope is the rate difference between the two crystals; a slope above a part per thousand is a bad window, not a rate, and is ignored. Before that the fit is the mean of the clean probes' offsets. Each remote event is moved at ingest by the offset evaluated at its own time.</figcaption></figure>
+
+  <p>The fit does what the plan said and no more. It is applied once, at ingest; events already in the ring are not moved when a later probe refines it. The raw probes are not yet written into the bundle, so a saved capture cannot be re-fitted offline; that is one of the deferred items. What the unit test proves is the estimator: a remote 12.345&nbsp;ms ahead and 30&nbsp;ppm fast, probed through jitter that queues one leg in four for up to 2&nbsp;ms, comes back with the rate within 3&nbsp;ppm and a mid-window conversion within 60&nbsp;&micro;s.</p>
+
+  <p>What the e2e measured is the other half, the one with a real socket in it. Two services on one Windows box, debug build, Windows loopback: the true offset is zero, so every microsecond the fit reports is error.</p>
+
+<div class="table-wrap wide"><table>
+<thead><tr><th>Run</th><th>Best round trip</th><th>Offset the fit reported</th><th>Shift of 20 spans crossing the link</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>566 &micro;s</td><td>46 &micro;s</td><td>&minus;80 &micro;s</td></tr>
+<tr><td>2</td><td>841 &micro;s</td><td>145 &micro;s</td><td>&minus;75 &micro;s</td></tr>
+<tr><td>3</td><td>411 &micro;s</td><td>83 &micro;s</td><td>&minus;87 &micro;s</td></tr>
+</tbody></table></div>
+
+  <p>Every shift is inside the half-round-trip band the fit itself promises, and every one is under 90&nbsp;&micro;s. It is also plainly a debug build on a loopback that is slow by Unix standards; the plan expected 20&ndash;60&nbsp;&micro;s round trips on one box and a wired LAN at 100&ndash;300&nbsp;&micro;s, and those measurements are still to be taken with a release build and two machines. The viewer does not yet draw the band; <code>GET /api/peers</code> reports it, per link, as the best round trip and the probe count, and the manual says to read it before trusting a cross-machine delta.</p>
+
+  <h2 id="ingest">The data path at ingest</h2>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 250" role="img" aria-labelledby="path-title"><title id="path-title">A remote's broadcast, filtered by frame type, crosses the link, is decoded, rewritten in four ways and pushed into the hub's ring</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<text x="150" y="26" class="label">REMOTE</text><text x="650" y="26" class="label">HUB</text>
+<rect x="20" y="45" width="130" height="60" rx="8"/><text x="85" y="70" class="small">capture loop</text><text x="85" y="90" class="small">push_events</text>
+<path d="M150 75 H190" class="arrow"/>
+<rect x="195" y="45" width="130" height="60" rx="8"/><text x="260" y="70" class="small">broadcast</text><text x="260" y="90" class="small">(as to a browser)</text>
+<path d="M325 75 H365" class="arrow"/>
+<rect x="370" y="45" width="100" height="60" rx="8" class="soft"/><text x="420" y="70" class="small">type byte</text><text x="420" y="90" class="small">6 of 10 pass</text>
+<path d="M470 75 H520" class="arrow"/><text x="495" y="66" class="small">link</text>
+<rect x="525" y="45" width="110" height="60" rx="8"/><text x="580" y="70" class="small">decode_all</text><text x="580" y="90" class="small">LiveFrame</text>
+<path d="M635 75 H675" class="arrow"/>
+<rect x="680" y="38" width="200" height="130" rx="8" class="accent"/>
+<text x="780" y="60" class="small">rewrite, per event</text>
+<text x="780" y="84" class="small mono">pid, tid &larr; machine &lt;&lt; 24 | id</text>
+<text x="780" y="106" class="small mono">name_id &larr; map[remote id]</text>
+<text x="780" y="128" class="small mono">core &larr; core + base</text>
+<text x="780" y="150" class="small mono">start_ns &larr; to_hub(start_ns)</text>
+<path d="M780 168 V200" class="arrow"/>
+<rect x="680" y="205" width="200" height="36" rx="8"/><text x="780" y="229" class="small">push_events &rarr; ring, every browser</text>
+<rect x="20" y="140" width="450" height="80" rx="8" class="soft"/>
+<text x="245" y="165" class="small">strings and names take the same path: intern into the hub's table, record the id map,</text>
+<text x="245" y="187" class="small">process name + " @host" &middot; the remote never decodes, re-encodes or stamps anything</text>
+<text x="245" y="209" class="small">dropped and counted: ids over 24 bits, cores over 255, frames that will not decode</text>
+</svg></div>
+<figcaption><b>Four rewrites and a push.</b> Everything the hub does is in one function, <code>Ingest::frame</code>, on the already-decoded frame; the batch then enters the ring by the same <code>push_events</code> the hub's own capture loop uses, so every connected browser sees a remote's events exactly as it sees local ones.</figcaption></figure>
+
+  <h2 id="record">Record fans out</h2>
+
+  <p>The hub's process list is its own list plus every link's, each remote entry under its packed pid and named <code>name @host</code>, with a <code>machine</code> field for anything that wants to group. Pick one and press Record: the start handler reads the top byte, sends that machine <code>start</code> with the real pid, sends every other link <code>start</code> with pid 0, and starts its own capture with no target. Pick a local process and every link gets pid 0. Stop goes to every link. A capture with no target is what it has always been, the scheduler, the service, and every process on that machine that instruments itself, so a remote that was not chosen still contributes its manual scopes and its core lanes.</p>
+
+  <p>The hub remembers the packed pid as the capture's target, which is what makes the viewer pin that remote process's track the way it pins a local target. Hook lists are not sent across: a remote target captures with the default settings, and <code>/api/symbols/load</code> or a function search on a packed pid fails with a plain error, because the symbols live on the machine that owns the process and the proxying the plan describes is not built.</p>
+
+  <h2 id="viewer">In the viewer</h2>
+
+  <p>The rail already drew a machine tree per <code>MachineId</code> for the demo's fake remote. The enum gained <code>Peer(u8)</code>, <code>from_pid</code> reads the top byte, and the header that read <em>MACHINE REMOTE</em> now looks for a process of that machine whose name ends in <code>@host</code> and prints the host; the hub's own rail prints the service's machine name from <code>/api/status</code>. That is the whole viewer change, and the wasm pack was rebuilt with it. There is no Machines panel yet: the links are made from the command line or <code>POST /api/peers/connect</code>, and their state is read from <code>GET /api/peers</code>.</p>
+
+  <h2 id="use">How to use it</h2>
+
+<div class="callout"><p>On the machine you will watch from, the hub, start the service as usual and open its page. On every other machine:</p>
+<pre><code>orbit-service --join &lt;hub-host&gt;:44766</code></pre>
+<p>Or, from the hub, reach out to machines it can see:</p>
+<pre><code>orbit-service --connect render-01,build-mac:44766
+curl -X POST http://127.0.0.1:44766/api/peers/connect -d '{"target":"ci-runner"}'</code></pre>
+<p>The remotes' processes appear in the hub's process list as <code>name @host</code>. Record on the hub records everywhere; <code>GET /api/peers</code> shows each link's offset, rate, best round trip and probe count.</p></div>
+
+  <h2 id="not">What is not there</h2>
+
+  <p>Against post 22, these are the parts that stay in the plan, so a reader of that post knows what to expect. No ssh transport and no install-on-demand: a remote needs a running service and a reachable port in one direction. No token on the API: linking a machine is as open as the API was, which the manual says in so many words. No Machines panel in the viewer, no alignment band drawn on the rail, no amber lag glyph. Reports, trees, function search, disassembly and hooks on a remote process are not proxied; the timeline, the names and the manual scopes are what cross. The bundle gets the packed pids and the <code>@host</code> names but no <code>machines</code> entry and no <code>clocks</code> table, so a saved capture cannot be re-fitted. One Scheduler track with the remotes' cores appended, not a Scheduler per machine. And the numbers above are one box, debug build, loopback: the LAN and WAN rows of the plan's precision table are still expectations.</p>
+
+  <h2 id="verify">How it is checked</h2>
+
+  <p>Nine unit tests in <code>peers.rs</code>: the pid packing and its guards, the probe arithmetic, the fit through queued probes, the offset-only fit, target parsing, the frame filter, the machine table's indices and core lanes, the ingest of a remote's frames onto the hub's clock, and two services linked by in-process channels, hello to fit to start to stop. One e2e, <code>multi_machine_smoke.py</code>, with two real services on two ports: the link comes up with a fit, twenty spans posted to the remote's <code>/api/events</code> land on the hub under machine 1 with their stamps moved by less than the band, <code>OrbitTestRust</code> started beside the remote appears in the hub's list as <code>OrbitTestRust.exe @WINBOX</code>, a Record on the hub for that pid starts the remote and streams 10,374 of its scopes back under packed thread ids, and Stop stops both. On Windows the remote and its target get a scope directory of their own, so the hub can only see the target through the link. The smoke runs on the Windows, macOS and Linux workflows.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 25 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="24-the-windows-backend.html">&larr; Post 24</a><br>
+    Plan: <a href="22-every-machine-in-one-timeline.html">Every Machine in One Timeline</a> &middot; Numbers: <a href="metrics/phase-18-multi-machine.txt">phase-18-multi-machine.txt</a>
+  </div>
+</footer>
+
+<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("orbit-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
+</body>
+</html>

@@ -922,6 +922,7 @@ dependencies = [
  "axum",
  "futures-util",
  "libc",
+ "log",
  "orbit-live-event",
  "orbit-live-protocol",
  "orbit-live-render",
@@ -931,6 +932,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "tower-http",
 ]
 

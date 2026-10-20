@@ -19,7 +19,7 @@ use orbit_live_event::dev::{
     NAME_SCHEDULER, NAME_SHIFT_INST, NAME_SPANS_DROPPED, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW,
     NAME_TRACKS, NAME_UPLOAD, NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US, NAME_WASM_MEM,
     NAME_WORKER_SPANS, NAME_LISTING_DISPATCH, NAME_LISTING_FLATTEN, NAME_LISTING_SORT, NAME_POOL_WAKE_US,
-    NAME_POOL_TAIL_US, NAME_LISTING_INLINE, TID_NET, TID_RENDER, TID_STATS, TID_UI, VIEWER_PID,
+    NAME_POOL_TAIL_US, NAME_LISTING_INLINE, MachineId, TID_NET, TID_RENDER, TID_STATS, TID_UI, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent};
 use orbit_live_protocol::{decode_frame, LiveFrame};
@@ -2038,6 +2038,23 @@ impl OrbitLiveApp {
                 });
             });
         self.bench_open = open;
+    }
+
+    /// What the machine rail is headed: the hub's own rail by the
+    /// service's machine name, a linked machine's by the `@host` its
+    /// process names carry, since the hub files them that way.
+    fn machine_label(&self, m: MachineId) -> String {
+        match m {
+            MachineId::Peer(machine) => self
+                .processes
+                .iter()
+                .chain(self.trace_processes.iter())
+                .filter(|p| MachineId::from_pid(p.pid) == MachineId::Peer(machine))
+                .find_map(|p| p.name.rsplit_once(" @").map(|(_, host)| host.to_string()))
+                .unwrap_or_else(|| format!("{machine}")),
+            MachineId::Local if !self.status.machine.is_empty() && self.status.machine != "local" => self.status.machine.clone(),
+            other => other.label().to_string(),
+        }
     }
 
     fn process_display_name(&self, pid: u32) -> String {
@@ -4987,11 +5004,12 @@ impl OrbitLiveApp {
                 hit.on_hover_text("Shows scheduling information for CPU cores");
             }
             RowId::Machine(m) => {
+                let machine_label = self.machine_label(m);
                 if !interactive {
                     ui.painter().text(
                         Pos2::new(r.left() + 22.0, r.center().y),
                         Align2::LEFT_CENTER,
-                        format!("MACHINE  {}", m.label().to_uppercase()),
+                        format!("MACHINE  {}", machine_label.to_uppercase()),
                         FontId::new(9.5, fonts::medium()),
                         theme::MUTED(),
                     );
@@ -5024,7 +5042,7 @@ impl OrbitLiveApp {
                 ui.painter().text(
                     Pos2::new(r.left() + 22.0, r.center().y),
                     Align2::LEFT_CENTER,
-                    format!("MACHINE  {}", m.label().to_uppercase()),
+                    format!("MACHINE  {}", machine_label.to_uppercase()),
                     FontId::new(9.5, fonts::medium()),
                     theme::MUTED(),
                 );

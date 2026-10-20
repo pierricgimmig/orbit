@@ -9,6 +9,7 @@ pub mod demo;
 mod sharing;
 pub mod http;
 pub mod ingest;
+pub mod peers;
 pub mod settings;
 mod stats;
 pub use settings::Settings;
@@ -250,6 +251,15 @@ pub struct LiveService {
     capture_pid: AtomicU64,
     index_cache: Mutex<Option<CachedIndex>>,
     pub(crate) timeline_cache: Mutex<Option<CachedTimeline>>,
+    /// The machines linked to this service (`peers.rs`): empty on a
+    /// service that is nobody's hub.
+    pub peers: peers::Peers,
+    /// The capture clock, when the service behind this server has one
+    /// (CLOCK_MONOTONIC on Unix, QueryPerformanceCounter on Windows). The
+    /// clock probes between machines read it on both ends.
+    clock: Mutex<Option<Arc<dyn Fn() -> u64 + Send + Sync>>>,
+    /// This machine's name, as other machines' viewers label its rows.
+    machine_name: Mutex<String>,
 }
 
 struct CachedIndex {
@@ -378,6 +388,9 @@ impl LiveService {
             capture_pid: AtomicU64::new(0),
             index_cache: Mutex::new(None),
             timeline_cache: Mutex::new(None),
+            peers: peers::Peers::default(),
+            clock: Mutex::new(None),
+            machine_name: Mutex::new(default_machine_name()),
         });
         Ok(svc)
     }
@@ -385,6 +398,32 @@ impl LiveService {
     /// Installs the sampling-report aggregator used by
     /// `GET /api/sampling/report`.
     #[allow(clippy::type_complexity)]
+    /// Installs the capture clock. Without one, `now_ns` is the server's
+    /// own monotonic reading (`ingest::now_monotonic_ns`).
+    pub fn set_clock(&self, clock: Arc<dyn Fn() -> u64 + Send + Sync>) {
+        *self.clock.lock() = Some(clock);
+    }
+
+    /// Now, on the capture clock.
+    pub fn now_ns(&self) -> u64 {
+        let clock = self.clock.lock().clone();
+        match clock {
+            Some(clock) => clock(),
+            None => ingest::now_monotonic_ns(),
+        }
+    }
+
+    pub fn set_machine_name(&self, name: impl Into<String>) {
+        let name = name.into();
+        if !name.trim().is_empty() {
+            *self.machine_name.lock() = name;
+        }
+    }
+
+    pub fn machine_name(&self) -> String {
+        self.machine_name.lock().clone()
+    }
+
     pub fn set_instrumentation_status(&self, status: impl Into<String>) {
         *self.instrumentation_status.lock() = status.into();
     }
@@ -918,6 +957,24 @@ impl LiveService {
         let bytes = encode_frame(frame);
         let _ = self.live_tx.send(bytes);
     }
+}
+
+/// The host's name from the environment: what a hub shows before the
+/// service behind this server says better.
+fn default_machine_name() -> String {
+    for key in ["COMPUTERNAME", "HOSTNAME", "HOST"] {
+        if let Ok(name) = std::env::var(key) {
+            if !name.trim().is_empty() {
+                return name;
+            }
+        }
+    }
+    if let Ok(name) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
+        if !name.trim().is_empty() {
+            return name.trim().to_string();
+        }
+    }
+    "local".into()
 }
 
 #[cfg(test)]

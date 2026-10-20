@@ -21,17 +21,39 @@ pub const VIEWER_PID: u32 = 0x5E1F_0002;
 pub const REMOTE_DEMO_PID: u32 = 20;
 pub const REMOTE_RENDER_PID: u32 = 21;
 
+/// Where a linked machine's index sits in a pid or tid the hub filed
+/// (`orbit-live-server/src/peers.rs`): the top byte, 1..=64. The hub's own
+/// ids have a zero top byte, as do the synthetic ids above that range.
+pub const MACHINE_SHIFT: u32 = 24;
+pub const MAX_MACHINES: u8 = 64;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MachineId {
     Local,
+    /// The demo's spoofed remote.
     Remote,
+    /// A machine linked to the service, by its index on the hub.
+    Peer(u8),
 }
 
 impl MachineId {
     pub fn from_pid(pid: u32) -> Self {
+        let machine = (pid >> MACHINE_SHIFT) as u8;
+        if (1..=MAX_MACHINES).contains(&machine) {
+            return Self::Peer(machine);
+        }
         match pid {
             REMOTE_DEMO_PID | REMOTE_RENDER_PID => Self::Remote,
             _ => Self::Local,
+        }
+    }
+
+    /// The pid as the machine itself knows it.
+    pub fn unpack(pid: u32) -> u32 {
+        if Self::from_pid(pid) == Self::Local {
+            pid
+        } else {
+            pid & ((1 << MACHINE_SHIFT) - 1)
         }
     }
 
@@ -39,13 +61,15 @@ impl MachineId {
         match self {
             Self::Local => "local",
             Self::Remote => "remote",
+            Self::Peer(_) => "machine",
         }
     }
 
     pub fn sort_key(self) -> u8 {
         match self {
             Self::Local => 0,
-            Self::Remote => 1,
+            Self::Peer(machine) => machine,
+            Self::Remote => 200,
         }
     }
 }

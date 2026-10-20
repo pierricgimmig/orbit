@@ -2261,7 +2261,15 @@ fn capture_loop(
 
 /// Starts the live-viewer server and blocks. Returns only on error.
 pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
-    run_on("127.0.0.1", port, gpu_helper, orbit_live_server::env_wire())
+    run_on("127.0.0.1", port, gpu_helper, orbit_live_server::env_wire(), Links::default())
+}
+
+/// The other machines this service links to at startup (`--join`,
+/// `--connect`); see `orbit_live_server::peers`.
+#[derive(Clone, Debug, Default)]
+pub struct Links {
+    pub join: Option<String>,
+    pub connect: Vec<String>,
 }
 
 /// As [`run`], on a chosen host. `0.0.0.0` (the command line's default)
@@ -2272,6 +2280,7 @@ pub fn run_on(
     port: u16,
     gpu_helper: Option<String>,
     wire: orbit_live_server::WireFormat,
+    links: Links,
 ) -> Result<(), String> {
     let log_path = match crate::logging::open_file(None) {
         Ok(path) => Some(path),
@@ -2288,6 +2297,12 @@ pub fn run_on(
     };
     let service = LiveService::new(config)?;
     intern_gpu_lane_names(&service);
+    // The capture clock for the clock probes between machines, and this
+    // machine's name for the other machines' rails.
+    service.set_clock(Arc::new(crate::now_monotonic_ns));
+    if let Some(name) = crate::logging::hostname() {
+        service.set_machine_name(name);
+    }
     // The viewer's own log lines (POST /api/log) go into the same file, so
     // one file has both ends of a session.
     service.set_viewer_log(Arc::new(|batch| {
@@ -2817,6 +2832,21 @@ pub fn run_on(
         .thread_name("orbit-http")
         .build()
         .map_err(|error| error.to_string())?;
+    if let Some(hub) = links.join {
+        let info = orbit_live_server::peers::RemoteInfo {
+            host: service.machine_name(),
+            cores: crate::num_cpus_hint() as u32,
+            os: std::env::consts::OS.into(),
+        };
+        println!("  Joining the service at {hub}: this machine's capture streams into its timeline.");
+        log::info!("joining {hub}");
+        runtime.spawn(orbit_live_server::peers::join(service.clone(), hub, info));
+    }
+    for target in links.connect {
+        println!("  Linking {target}: its processes join this timeline.");
+        log::info!("connecting to {target}");
+        runtime.spawn(orbit_live_server::peers::connect(service.clone(), target));
+    }
     runtime.block_on(http::serve(service))
 }
 
