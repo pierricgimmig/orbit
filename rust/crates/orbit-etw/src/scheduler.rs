@@ -87,6 +87,10 @@ pub struct SchedulerStats {
     pub context_switches: u64,
     pub slices: u64,
     pub slices_without_pid: u64,
+    /// Of those, the ones that got their pid once the thread's rundown entry
+    /// or start event arrived; the kernel delivers the rundown after the
+    /// first switches it describes.
+    pub pids_backfilled: u64,
     /// Switch-outs with no matching open switch-in on the core: the first
     /// event on a core, or lost events (`num_tid_mismatches_` in the C++).
     pub mismatches: u64,
@@ -139,6 +143,20 @@ impl SchedulerFeed {
     /// Records that `tid` belongs to `pid` (from a rundown or a snapshot).
     pub fn map_thread(&mut self, tid: u32, pid: u32) {
         self.pid_by_tid.insert(tid, pid);
+        self.backfill_pid(tid, pid);
+    }
+
+    /// Slices of `tid` closed before its process was known get the pid
+    /// now. The kernel logger emits a thread's rundown entry asynchronously,
+    /// after context switches that already involve the thread, so without
+    /// this a thread that runs at session start has its first slices filed
+    /// under no process.
+    fn backfill_pid(&mut self, tid: u32, pid: u32) {
+        let tid = tid as i32;
+        for slice in self.slices.iter_mut().filter(|s| s.tid == tid && s.pid < 0) {
+            slice.pid = pid as i32;
+            self.stats.pids_backfilled += 1;
+        }
     }
 
     pub fn pid_of(&self, tid: u32) -> Option<u32> {
@@ -159,6 +177,7 @@ impl SchedulerFeed {
     /// threads of focused processes; a thread already known is left alone.
     pub fn seed_state(&mut self, timestamp_ns: u64, tid: u32, pid: u32, state: i32) {
         self.pid_by_tid.insert(tid, pid);
+        self.backfill_pid(tid, pid);
         if !self.focus.contains(&pid) || self.tracked.contains(&tid) {
             return;
         }
@@ -253,6 +272,7 @@ impl SchedulerFeed {
     pub fn on_thread_start(&mut self, timestamp: i64, pid: u32, tid: u32, rundown: bool, by_tid: u32, by_pid: u32) {
         self.stats.thread_events += 1;
         self.pid_by_tid.insert(tid, pid);
+        self.backfill_pid(tid, pid);
         if rundown || !self.focus.contains(&pid) || tid == 0 {
             return;
         }
@@ -383,6 +403,32 @@ mod tests {
         assert_eq!(s.slices, 2);
         assert_eq!(s.slices_without_pid, 1, "cumulative, not recomputed");
         assert_eq!(f.take_slices().len(), 2);
+    }
+
+    /// The rundown arrives after the thread's first switches: the slices
+    /// closed in between are filed under its process once it does.
+    #[test]
+    fn a_late_rundown_entry_names_the_process_of_earlier_slices() {
+        let mut f = feed();
+        switch(&mut f, 0, 0, 1, 2);
+        switch(&mut f, 0, 1, 2, 1);
+        switch(&mut f, 0, 2, 1, 2);
+        switch(&mut f, 0, 3, 2, 1);
+        // Three slices closed: thread 2, thread 1, thread 2, none with a pid.
+        assert_eq!(f.stats().slices_without_pid, 3);
+        f.on_thread_start(3, 5, 2, true, 0, 0);
+        let slices = f.take_slices();
+        assert_eq!(slices.len(), 3);
+        assert_eq!(slices.iter().map(|s| (s.tid, s.pid)).collect::<Vec<_>>(), vec![(2, 5), (1, -1), (2, 5)]);
+        assert_eq!(f.stats().pids_backfilled, 2);
+        assert_eq!(f.stats().slices_without_pid, 3, "counts what was closed without a pid, not what stayed so");
+        // Slices already taken are gone; a later mapping touches nothing.
+        switch(&mut f, 0, 4, 1, 7);
+        switch(&mut f, 0, 5, 7, 1);
+        let taken = f.take_slices();
+        assert_eq!(taken[0].pid, -1);
+        f.map_thread(7, 9);
+        assert_eq!(f.stats().pids_backfilled, 2);
     }
 
     #[test]

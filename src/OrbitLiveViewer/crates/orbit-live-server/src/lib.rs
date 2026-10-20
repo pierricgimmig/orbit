@@ -772,13 +772,18 @@ impl LiveService {
     /// thread is spawned before the request returns), and a viewer that got
     /// the real start and then a 0 threw away everything it had received
     /// and put the capture's origin at zero, which showed as an empty pane.
+    ///
+    /// The pid is recorded either way: the handler's is the one the viewer
+    /// asked for, which for a process on another machine is the packed pid
+    /// the loop never sees (it captures with no target), and the loop can
+    /// have marked first.
     pub fn mark_capture_started(&self, pid: u32, start_ns: u64) {
         let was_capturing = self.capturing.swap(true, Ordering::Relaxed);
-        if start_ns == 0 && was_capturing && self.capture_start_ns.load(Ordering::Relaxed) > 0 {
-            return;
-        }
         if pid > 0 {
             self.capture_pid.store(pid as u64, Ordering::Relaxed);
+        }
+        if start_ns == 0 && was_capturing && self.capture_start_ns.load(Ordering::Relaxed) > 0 {
+            return;
         }
         if start_ns > 0 {
             self.capture_start_ns.store(start_ns, Ordering::Relaxed);
