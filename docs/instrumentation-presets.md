@@ -43,5 +43,5 @@ have since unhooked. **Forget loaded presets** stops that automatic reapplicatio
 and keeps the current hook selection. The downloaded files are the persistent
 copy: reload them after reopening the viewer, or send them to another user.
 
-Version 1 presets work with the Rust service on Linux and macOS. They select
+Version 1 presets work with the Rust service on Linux, macOS and Windows. They select
 functions, not capture settings or an instrumentation backend.

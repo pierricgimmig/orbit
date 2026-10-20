@@ -6,7 +6,7 @@ found in the LICENSE file.
 
 # Quick start
 
-Orbit profiles a process that is already running, with no code change. `orbit-service` runs on Linux and macOS and serves the viewer on the same port. The viewer is a web page.
+Orbit profiles a process that is already running, with no code change. `orbit-service` runs on Linux, macOS and Windows and serves the viewer on the same port. The viewer is a web page.
 
 This is a Rust re-implementation of [Orbit](https://github.com/google/orbit), by the original author.
 
