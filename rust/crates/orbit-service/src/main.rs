@@ -92,6 +92,14 @@ struct Args {
     /// `--out-arrow <dir>`: also write the capture as an Arrow dataset
     /// (events / samples / frames tables + manifest.json) in that directory.
     out_arrow: Option<String>,
+    /// `--serve [port]`: serve the viewer. Implied by `--join` and `--connect`.
+    serve: Option<u16>,
+    /// `--join <hub[:port]>`: stream this machine's capture into that
+    /// service's timeline, and let its Record start captures here.
+    join: Option<String>,
+    /// `--connect <host[:port]>`, repeatable or comma-separated: link those
+    /// machines' services into this one's timeline.
+    connect: Vec<String>,
 }
 
 fn parse_args() -> Args {
@@ -104,8 +112,11 @@ fn parse_args() -> Args {
         host: None,
         wire: orbit_live_server::env_wire(),
         out_arrow: None,
+        serve: None,
+        join: None,
+        connect: Vec::new(),
     };
-    let mut iter = std::env::args().skip(1);
+    let mut iter = std::env::args().skip(1).peekable();
     while let Some(flag) = iter.next() {
         match flag.as_str() {
             "--pid" => args.pid = iter.next().and_then(|v| v.parse().ok()),
@@ -123,6 +134,12 @@ fn parse_args() -> Args {
             "--out-arrow" => args.out_arrow = iter.next(),
             "--gpu-helper" => args.gpu_helper = iter.next(),
             "--host" => args.host = iter.next(),
+            "--join" => args.join = iter.next(),
+            "--connect" => {
+                if let Some(list) = iter.next() {
+                    args.connect.extend(list.split(',').map(str::trim).filter(|t| !t.is_empty()).map(String::from));
+                }
+            }
             "--slice" => {
                 // orbit-service --slice <in.orbit.zip> <out.orbit.zip> <t0_ns> <t1_ns>
                 let input = iter.next().unwrap_or_default();
@@ -190,22 +207,14 @@ fn parse_args() -> Args {
                 }
             }
             "--serve" => {
-                let port = iter
-                    .next()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(serve::DEFAULT_PORT);
-                // The viewer is meant to be opened from another machine on
-                // the network -- that is how a profiler gets used -- so the
-                // default binds every interface. There is no authentication
-                // in front of it; --host 127.0.0.1 keeps it to this machine.
-                let host = args.host.clone().unwrap_or_else(|| "0.0.0.0".to_string());
-                if let Err(error) =
-                    serve::run_on(&host, port, args.gpu_helper.clone().or_else(default_gpu_helper), args.wire)
-                {
-                    log::error!("could not start the live viewer: {error}");
-                    std::process::exit(2);
+                // The port may be the next argument or absent; a flag that
+                // follows is not a port.
+                let mut port = serve::DEFAULT_PORT;
+                if let Some(p) = iter.peek().and_then(|next| next.parse::<u16>().ok()) {
+                    port = p;
+                    iter.next();
                 }
-                std::process::exit(0);
+                args.serve = Some(port);
             }
             "--help" | "-h" => {
                 eprintln!(
@@ -218,6 +227,10 @@ fn parse_args() -> Args {
                      orbit-service --wire raw|packed|deflate --serve  event batches on the \
                      WebSocket as 32-byte records, delta-varint packed (default), or \
                      packed and deflated\n\
+                     orbit-service --join <hub[:port]>   stream this machine into the service at hub, \
+                     whose viewer then shows both machines and whose Record captures both\n\
+                     orbit-service --connect <host[:port]>[,...]  the other way round: pull those \
+                     machines' services into this one's timeline\n\
                      orbit-service --slice <in.orbit.zip> <out.orbit.zip> <t0_ns> <t1_ns>  cut a \
                      saved capture to a window, reading only the row groups inside it\n\
                      orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
@@ -237,6 +250,22 @@ fn parse_args() -> Args {
             }
             other => log::warn!("ignoring unknown argument {other}"),
         }
+    }
+    if args.serve.is_some() || args.join.is_some() || !args.connect.is_empty() {
+        let port = args.serve.unwrap_or(serve::DEFAULT_PORT);
+        // The viewer is meant to be opened from another machine on the
+        // network -- that is how a profiler gets used -- so the default
+        // binds every interface. There is no authentication in front of
+        // it; --host 127.0.0.1 keeps it to this machine.
+        let host = args.host.clone().unwrap_or_else(|| "0.0.0.0".to_string());
+        let links = serve::Links { join: args.join.clone(), connect: args.connect.clone() };
+        if let Err(error) =
+            serve::run_on(&host, port, args.gpu_helper.clone().or_else(default_gpu_helper), args.wire, links)
+        {
+            log::error!("could not start the live viewer: {error}");
+            std::process::exit(2);
+        }
+        std::process::exit(0);
     }
     args
 }

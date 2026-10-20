@@ -214,6 +214,7 @@ MANUAL_NAV = [
     ("troubleshooting.html", "Troubleshooting"),
     ("keys.html", "Keys and mouse"),
     ("mcp.html", "Agents"),
+    ("machines.html", "Several machines"),
 ]
 
 
@@ -428,6 +429,7 @@ def build(out, stream_path, bundle, name, port, service=False):
         ("docs/manual/troubleshooting.md", "troubleshooting.html", "Troubleshooting — Orbit manual"),
         ("docs/manual/keys.md", "keys.html", "Keys and mouse — Orbit manual"),
         ("docs/manual/mcp.md", "mcp.html", "Agents — Orbit manual"),
+        ("docs/manual/machines.md", "machines.html", "Several machines — Orbit manual"),
         ("docs/manual/live-viewer.md", "live-viewer.html", "Live viewer — Orbit manual"),
     ]
     for src, dst, title, root in pages:

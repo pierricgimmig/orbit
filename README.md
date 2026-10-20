@@ -109,6 +109,17 @@ orbit-service mcp --http 127.0.0.1:44767 --url http://127.0.0.1:44766
 
 Sampling and the scheduler need an elevated prompt on Windows and are not in the macOS build, where the same tools say `supported: false` and still hook functions. The tool list and the limits are in [docs/manual/mcp.md](docs/manual/mcp.md).
 
+## Several machines
+
+One viewer can show the processes of several machines on one timeline. The
+service whose page you open is the hub; on every other machine start the
+service with `--join <hub-host>:44766` (or, from the hub, `--connect host,...`).
+The hub measures each link's clock offset with round-trip probes and moves
+every remote event onto its own clock; the remotes' processes appear in the
+hub's list as `name @host`, and Record on the hub records everywhere.
+[docs/manual/machines.md](docs/manual/machines.md) has the details and the
+limits.
+
 ## Platforms
 
 | | |

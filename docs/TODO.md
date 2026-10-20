@@ -504,6 +504,8 @@ we should be able to see the right pane event when we haven't captured anything 
 
 we need a solution to aggregate many machines' services to a single viewer, so there needs to be precise clock synchronization, also, we should have an easy way to either launch a service with the main viewer endpoint as param, or actually from the viewer itself, connect to a service running on a remote machine. Suggestions are welcome for the most streamlined ux. 
 
+  PLAN 2026-10-19: blog post 22. DONE 2026-10-20 (core): `orbit-service --join <hub>:44766` on a remote, `--connect host,...` or `POST /api/peers/connect` on the hub; the hub packs the machine index into the top byte of every pid and tid, remaps string ids, and moves each remote event onto its own clock with a min-RTT-filtered offset-and-rate fit over NTP-style probes on the link; remote processes list as `name @host`; Record fans out. Blog post 25, docs/manual/machines.md, tools/e2e/multi_machine_smoke.py, metrics/phase-18-multi-machine.txt. Not yet: ssh transport, token, Machines panel and the band in the viewer, report proxying, clocks table in the bundle.
+
 make the record icon a 
 make a website that will be the official website, with landing page, manual, but also that will serve the presigned urls that a user can upload their data to. I have an s3 bucket, ask me for credentials once you get to the implementation/testing phase.
 

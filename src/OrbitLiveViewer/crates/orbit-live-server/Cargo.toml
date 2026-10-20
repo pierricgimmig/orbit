@@ -19,6 +19,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal", "fs", "io-util"] }
 tower-http = { version = "0.5.2", features = ["cors"] }
+# The WebSocket client for linking machines (peers.rs); axum's ws feature
+# already brings this exact crate into the tree for the server side.
+tokio-tungstenite = "0.24"
+log = "0.4"
 
 [[bin]]
 name = "orbit-live-service"

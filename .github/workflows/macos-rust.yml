@@ -51,6 +51,10 @@ jobs:
           python3 -m venv /tmp/orbit-smoke
           /tmp/orbit-smoke/bin/pip install pyarrow
           /tmp/orbit-smoke/bin/python tools/e2e/manual_service_smoke.py --service dist/macos/orbit-service --api-lib dist/macos/liborbit_api.dylib
+      - name: Smoke test two services in one timeline
+        run: |
+          cargo +1.88.0 build --locked --manifest-path rust/Cargo.toml -p orbit-test-rust
+          /tmp/orbit-smoke/bin/python tools/e2e/multi_machine_smoke.py --service dist/macos/orbit-service --target rust/target/debug/OrbitTestRust
       - uses: actions/upload-artifact@v4
         with:
           name: orbit-${{ matrix.runner }}

@@ -36,6 +36,7 @@ jobs:
           cargo +1.88.0 build --locked --manifest-path rust/crates/orbit-service/Cargo.toml
           cargo +1.88.0 build --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent -p orbit-api --features orbit-frida-agent/native
           cargo +1.88.0 build --locked --manifest-path rust/crates/orbit-frida-helper/Cargo.toml
+          cargo +1.88.0 build --locked --manifest-path rust/Cargo.toml -p orbit-test-rust
       - name: Build target and install test runtime
         run: |
           python3 -m venv /tmp/orbit-frida-test
@@ -82,6 +83,8 @@ jobs:
       - name: Verify retained Linux uprobe backend
         if: runner.os == 'Linux'
         run: sudo /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --engine kernel_uprobes
+      - name: Smoke test two services in one timeline
+        run: /tmp/orbit-frida-test/bin/python tools/e2e/multi_machine_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --target rust/target/debug/OrbitTestRust
       - name: Collect macOS crash reports
         if: failure() && runner.os == 'macOS'
         run: |

@@ -45,6 +45,10 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/ws", get(ws_upgrade))
         .route("/api/status", get(status))
         .route("/api/processes", get(processes))
+        .route("/api/peers", get(peers_list))
+        .route("/api/peers/connect", post(peers_connect))
+        .route("/api/peer", get(peer_ws))
+        .route("/api/join", get(join_ws))
         .route("/api/capture/start", post(capture_start))
         .route("/api/capture/stop", post(capture_stop))
         .route("/api/symbols/load", post(symbols_load))
@@ -287,6 +291,8 @@ struct StatusBody {
     target_pid: u32,
     /// The service's own pid, so the viewer can put its rows last.
     service_pid: u32,
+    /// Machines linked to this one (`GET /api/peers` lists them).
+    peers: usize,
 }
 
 impl StatusBody {
@@ -321,6 +327,7 @@ impl StatusBody {
             dropped_before_start: svc.dropped_before_start(),
             target_pid: svc.capture_pid(),
             service_pid: std::process::id(),
+            peers: svc.peers.len(),
         }
     }
 }
@@ -348,7 +355,83 @@ async fn processes(State(svc): State<Arc<LiveService>>) -> Response {
             serde_json::to_string(&list).unwrap_or_else(|_| "[]".into())
         }
     };
+    let raw = with_peer_processes(&svc, raw);
     ([(header::CONTENT_TYPE, "application/json")], raw).into_response()
+}
+
+/// The remotes' processes appended to this machine's list, under their
+/// packed pids and `@host` names.
+fn with_peer_processes(svc: &LiveService, raw: String) -> String {
+    if svc.peers.is_empty() {
+        return raw;
+    }
+    let mut list: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap_or_default();
+    list.extend(svc.peers.processes());
+    serde_json::to_string(&list).unwrap_or(raw)
+}
+
+/// This machine's process list, as `GET /api/processes` gives it without
+/// the remotes: what a remote sends its hub.
+pub fn process_list_json(svc: &LiveService) -> String {
+    match hooks_clone(svc) {
+        Some(h) => (h.list_processes_json)().unwrap_or_else(|_| "[]".into()),
+        None => "[]".into(),
+    }
+}
+
+/// `GET /api/peers`: the machines linked to this one.
+async fn peers_list(State(svc): State<Arc<LiveService>>) -> Response {
+    let body = serde_json::json!({
+        "machine": svc.machine_name(),
+        "peers": svc.peers.list(),
+        "dialing": svc.peers.dialing(),
+    });
+    ([(header::CONTENT_TYPE, "application/json")], body.to_string()).into_response()
+}
+
+#[derive(Deserialize)]
+struct ConnectBody {
+    target: String,
+}
+
+/// `POST /api/peers/connect {"target": "host[:port]"}`: this service, as a
+/// hub, dials that machine's service and keeps dialing it.
+async fn peers_connect(State(svc): State<Arc<LiveService>>, Json(body): Json<ConnectBody>) -> Response {
+    if let Err(error) = crate::peers::ws_url(&body.target, "/api/peer") {
+        return (StatusCode::BAD_REQUEST, error).into_response();
+    }
+    if svc.peers.dialing().iter().any(|t| t == &body.target) {
+        return (StatusCode::OK, "already dialing").into_response();
+    }
+    tokio::spawn(crate::peers::connect(svc, body.target));
+    StatusCode::OK.into_response()
+}
+
+/// `GET /api/peer` (WebSocket): a hub links this service as one of its
+/// machines; this side runs the remote role.
+async fn peer_ws(ws: WebSocketUpgrade, State(svc): State<Arc<LiveService>>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| async move {
+        let link = crate::peers::link_axum(socket);
+        let info = crate::peers::RemoteInfo {
+            host: svc.machine_name(),
+            cores: std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(1),
+            os: std::env::consts::OS.into(),
+        };
+        if let Err(error) = crate::peers::remote_role(svc, link, info).await {
+            log::warn!("a hub's link ended: {error}");
+        }
+    })
+}
+
+/// `GET /api/join` (WebSocket): a remote dials in to be one of this
+/// service's machines; this side runs the hub role.
+async fn join_ws(ws: WebSocketUpgrade, State(svc): State<Arc<LiveService>>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| async move {
+        let link = crate::peers::link_axum(socket);
+        if let Err(error) = crate::peers::hub_role(svc, link, "joined").await {
+            log::warn!("a joined machine's link ended: {error}");
+        }
+    })
 }
 
 /// `GET /api/sampling/report?start_ns=&end_ns=` -- aggregates the sampled
@@ -659,7 +742,9 @@ async fn ingest_events(
     State(svc): State<Arc<LiveService>>,
     Json(body): Json<crate::ingest::EventsBody>,
 ) -> Response {
-    let now = crate::ingest::ClockNow::read();
+    // Both clocks now: the capture clock from the service, so a Windows
+    // service stamps on the same QueryPerformanceCounter axis its capture uses.
+    let now = crate::ingest::ClockNow { monotonic_ns: svc.now_ns(), unix_ns: crate::ingest::now_unix_ns() };
     let summary = crate::ingest::ingest(&svc, body, now);
     Json(summary).into_response()
 }
@@ -973,17 +1058,27 @@ async fn capture_start(
     Json(body): Json<StartBody>,
 ) -> Response {
     // pid 0 is a capture without a target: the scheduler, the service, and
-    // every process instrumenting itself.
-    let json = body.to_json();
+    // every process instrumenting itself. A pid of another machine's is
+    // that machine's target: it captures that process, this one captures
+    // with no target, and every other linked machine likewise.
+    let remote_target = crate::peers::machine_of(body.pid).map(|m| (m, crate::peers::unpack(body.pid)));
+    let mut local = body.clone();
+    if remote_target.is_some() {
+        local.pid = 0;
+        local.instrumented_functions.clear();
+        local.auto_profile = false;
+    }
+    let json = local.to_json();
     // Each Record says whether its capture auto-profiles; set before the
     // loop starts so its first pass already knows.
-    svc.set_auto_profile(body.auto_profile);
+    svc.set_auto_profile(local.auto_profile);
     match hooks_clone(&svc) {
         Some(h) => {
             let result = tokio::task::spawn_blocking(move || (h.start_capture)(&json)).await;
             match result {
                 Ok(Ok(())) => {
                     svc.mark_capture_started(body.pid, 0);
+                    svc.peers.send_start(remote_target);
                     StatusCode::OK.into_response()
                 }
                 Ok(Err(e)) => (StatusCode::CONFLICT, e).into_response(),
@@ -1000,6 +1095,38 @@ async fn capture_start(
                     .into_response(),
                 Err(e) => (StatusCode::CONFLICT, e).into_response(),
             }
+        }
+    }
+}
+
+/// Starts a capture of `pid` (0 for none) the way `POST /api/capture/start`
+/// does with every other setting at its default: what a remote does when
+/// its hub presses Record. Blocking.
+pub fn start_capture_pid(svc: &Arc<LiveService>, pid: u32) -> Result<(), String> {
+    let body: StartBody = serde_json::from_value(serde_json::json!({"pid": pid})).map_err(|e| e.to_string())?;
+    svc.set_auto_profile(false);
+    match hooks_clone(svc) {
+        Some(h) => {
+            (h.start_capture)(&body.to_json())?;
+            svc.mark_capture_started(pid, 0);
+            Ok(())
+        }
+        None => crate::demo::start(svc, 50_000),
+    }
+}
+
+/// Stops the capture the way `POST /api/capture/stop` does. Blocking.
+pub fn stop_capture(svc: &Arc<LiveService>) -> Result<(), String> {
+    match hooks_clone(svc) {
+        Some(h) => {
+            (h.stop_capture)()?;
+            svc.mark_capture_finished();
+            Ok(())
+        }
+        None => {
+            crate::demo::stop(svc);
+            svc.mark_capture_finished();
+            Ok(())
         }
     }
 }
@@ -1117,6 +1244,7 @@ async fn functions_search(
 }
 
 async fn capture_stop(State(svc): State<Arc<LiveService>>) -> Response {
+    svc.peers.send_stop();
     match hooks_clone(&svc) {
         Some(h) => {
             let result = tokio::task::spawn_blocking(move || (h.stop_capture)()).await;

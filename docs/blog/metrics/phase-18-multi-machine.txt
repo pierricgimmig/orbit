@@ -1,0 +1,37 @@
+Several machines in one timeline: two services on one box
+Measured 2026-10-20 on Windows 11 10.0.26200, 13th Gen Intel Core i7-1365U
+(10 cores, 12 threads), debug build of orbit-service, both services on
+127.0.0.1 (Windows loopback). Script: tools/e2e/multi_machine_smoke.py,
+run three times:
+
+  python tools/e2e/multi_machine_smoke.py \
+      --service rust/crates/orbit-service/target/debug/orbit-service.exe \
+      --target rust/target/release/OrbitTestRust.exe
+
+The hub is one service; the second joins it with --join 127.0.0.1:<port>.
+The true clock offset between the two is zero (one clock), so every
+microsecond the fit reports is estimator error. The fit at this point had
+the first 8 probes of the 50 ms burst, so no rate term yet.
+
+  run   best rtt     offset reported   shift of 20 spans crossing the link
+  1     565.7 us      46.2 us           -79.7 us (all twenty identical)
+  2     841.4 us     144.7 us           -75.1 us
+  3     410.6 us      82.9 us           -86.9 us
+
+  Every shift is inside the half-round-trip band the probe promises
+  (|error| <= rtt/2 = 205..420 us) and under 90 us. The loopback round trip
+  of a debug build on Windows is an order of magnitude above what post 22
+  expected for one box (20-60 us); a release build and a wired LAN are
+  still to be measured.
+
+Record fan-out, run 1: OrbitTestRust started beside the remote (its own
+%LOCALAPPDATA%, so only the remote could see its scope segment), listed on
+the hub as 'OrbitTestRust.exe @WINBOX' with pid 0x1002128, captured from
+the hub for 2 s: 10,374 of its scopes reached the hub under packed thread
+ids; the remote reported capturing while the hub did and stopped with it.
+
+Estimator alone (orbit-live-server/src/peers.rs, test
+the_fit_recovers_offset_and_rate_through_queued_probes): a remote
+12.345 ms ahead and 30 ppm fast, 100 probes over 60 s with 20 us of jitter
+and one leg in four queued for up to 2 ms, recovers the rate within 3 ppm
+and converts a mid-window stamp within 60 us.
