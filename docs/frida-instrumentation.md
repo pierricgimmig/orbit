@@ -140,7 +140,7 @@ repository's BSD license. Devkit archives remain build inputs, not runtime files
 The service records `Frida:` phases in its own timeline: arming hooks, launching
 and waiting for the helper, native-agent injection, Gum initialization, connecting
 the scope API, executable-address resolution, installing each named trampoline,
-and normal detach. Recording begins before attachment on Linux, macOS and Windows.
+and normal detach. Recording begins before attachment.
 
 The installation span surrounds `gum_interceptor_attach`: it includes Gum's
 relocation, trampoline construction and entry-patch work, rather than separate

@@ -64,7 +64,7 @@
       </figure>
       <div class="copy">
         <h3>Hit Record, and the timeline starts</h3>
-        <p>Pick the process and hit Record. Nothing to rebuild. The timeline streams live and the capture timer ticks. Function hooks need no code change; Frida is the default on Linux, macOS and Windows.</p>
+        <p>Pick the process and hit Record. Nothing to rebuild. The timeline streams live and the capture timer ticks. Function hooks need no code change; Frida is the default.</p>
         <p class="manual-link"><a href="manual/capture.html">In the manual</a></p>
       </div>
     </article>
@@ -133,7 +133,7 @@
       <p class="manual-link"><a href="manual/index.html#what-runs-where">In the manual</a></p>
     </header>
 
-    <figure class="arch" aria-label="The service runs on Linux, on macOS and on Windows. The viewer is a web app on a desktop, tablet, or phone, and it connects to the service.">
+    <figure class="arch" aria-label="The service runs on the machine you profile. The viewer is a web app on a desktop, tablet, or phone, and it connects to the service.">
       <div class="arch-hosts">
         <div class="arch-node">
           <span class="mark yes">Supported</span>
@@ -301,7 +301,7 @@
   <section class="section" id="start">
     <header class="section-head">
       <h2>Get started</h2>
-      <p class="sub">Linux, macOS and Windows. The script installs the build for this machine, including the Frida files function hooks need.</p>
+      <p class="sub">The script installs the build for this machine, including the Frida files function hooks need.</p>
     </header>
     <div class="two">
       <div class="card">
@@ -320,8 +320,7 @@ orbit-service
       </div>
       <div class="card">
         <h3>Where it runs</h3>
-        <p>The service runs on Linux, macOS and Windows. The viewer runs in any browser, on any device, including a phone.</p>
-        <p>Linux x86-64 is one static binary: sampling, the scheduler, function hooks, and auto-profiling. Windows x86-64 records sampling, the scheduler and thread states through the kernel logger, plus function hooks and manual scopes. macOS records manual scopes and Frida function hooks.</p>
+        <p>The service runs on the machine you profile. The viewer runs in any browser, on any device, including a phone.</p>
         <p>One small API for Rust, C, C++ and Python is in the manual, alongside the HTTP API. The <a href="#platforms">platform table</a> is the feature-by-feature status.</p>
         <a class="more" href="manual/index.html#instrument-your-code">Instrumentation and the HTTP API</a>
       </div>

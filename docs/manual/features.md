@@ -469,7 +469,7 @@ in the URL opens a tab on load.
   `orbit-profiler` (`rust/crates/orbit-service/python`) carries the static
   `orbit-service` binary, the library and `orbit.h`, installs an
   `orbit-service` command, and depends on `orbit-api`. The
-  `.github/workflows/python-wheels.yml` matrix builds Linux, macOS and Windows wheels
+  `.github/workflows/python-wheels.yml` matrix builds a wheel per platform
   and publishes to PyPI on a version tag. The `curl … | sh` installer and the
   release archives stay for users who do not want Python in the loop. Because
   the service is the authority on the ring version, the Python loader and

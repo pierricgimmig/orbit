@@ -107,7 +107,7 @@ orbit-service mcp --http 127.0.0.1:44767 --url http://127.0.0.1:44766
 }
 ```
 
-Sampling and the scheduler are Linux and Windows (Windows needs an elevated prompt). On macOS the same tools say `supported: false` and still hook functions. The tool list and the limits are in [docs/manual/mcp.md](docs/manual/mcp.md).
+Sampling and the scheduler need an elevated prompt on Windows and are not in the macOS build, where the same tools say `supported: false` and still hook functions. The tool list and the limits are in [docs/manual/mcp.md](docs/manual/mcp.md).
 
 ## Platforms
 
@@ -119,8 +119,6 @@ Sampling and the scheduler are Linux and Windows (Windows needs an elevated prom
 | Windows x86-64 | Sampling at a fixed 1 kHz with the kernel's stack walks, scheduler, thread states, Frida hooks, manual scopes, disassembly (no source lines yet), symbols from PDBs and export tables. The scheduler, thread states and sampling come from the NT Kernel Logger (ETW) and need an elevated prompt; scopes and hooks do not. No auto-profiling, kernel hook engine, or GPU lanes. The release binaries link the C runtime statically and are not code-signed. |
 
 ## Build from source
-
-The service builds on Linux, on macOS and on Windows.
 
 Linux x86-64, static binary, with the Frida files beside it:
 

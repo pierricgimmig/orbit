@@ -97,7 +97,7 @@ At most 16 functions are armed. That is the service's own cap. Names that exist 
 
 A capture that is already running keeps the hooks it started with. `orbit_unhook` edits the set for the next `orbit_start_capture`.
 
-## Linux, Windows and macOS
+## Platforms
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
