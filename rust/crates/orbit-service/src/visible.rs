@@ -33,6 +33,8 @@
 use std::collections::HashSet;
 #[cfg(target_os = "macos")]
 use crate::macos::read_parent_map;
+#[cfg(target_os = "windows")]
+use crate::windows::read_parent_map;
 
 /// How often the descendant set is rebuilt from `/proc` during a capture.
 /// Children appear at any time; a second is well under human patience and

@@ -13,6 +13,7 @@
 //! Interfaces come from `getifaddrs`, through the `libc` crate the service
 //! already carries -- no extra dependency, and it works in the static binary.
 
+#[cfg(unix)]
 use std::ffi::CStr;
 use std::net::Ipv4Addr;
 
@@ -24,9 +25,16 @@ pub struct Interface {
     pub addr: Ipv4Addr,
 }
 
+/// Every up, non-loopback IPv4 interface, from `GetAdaptersAddresses`.
+#[cfg(windows)]
+pub fn lan_interfaces() -> Vec<Interface> {
+    crate::windows::lan_interfaces()
+}
+
 /// Every up, running, non-loopback IPv4 interface, in kernel order. Empty
 /// when the machine has no network, or when the lookup fails -- the banner
 /// then just shows loopback, which is never wrong.
+#[cfg(unix)]
 pub fn lan_interfaces() -> Vec<Interface> {
     let mut found = Vec::new();
     let mut list: *mut libc::ifaddrs = std::ptr::null_mut();

@@ -56,6 +56,10 @@ pub mod intern;
 pub mod merge;
 pub mod platform;
 pub mod ring;
+#[cfg(unix)]
+pub mod shm;
+#[cfg(windows)]
+#[path = "shm_windows.rs"]
 pub mod shm;
 pub mod text;
 

@@ -108,6 +108,12 @@ pub fn system_info(capture_start_unix_ns: u64, capture_start_monotonic_ns: u64) 
     }
 }
 
+// The Windows file capture does not write a SystemInfo event yet; the
+// function is tested in windows.rs and kept here for the day it does.
+#[cfg(target_os = "windows")]
+#[allow(unused_imports)]
+pub use crate::windows::system_info;
+
 /// Read a public sysctl value without assuming its string or integer width.
 #[cfg(target_os = "macos")]
 fn sysctl(name: &std::ffi::CStr) -> Vec<u8> {

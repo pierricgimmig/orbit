@@ -3,8 +3,12 @@
 // found in the LICENSE file.
 
 //! Capture lease and counters only. Scope events use the ordinary Orbit API.
+#[cfg(windows)]
+use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::{fs::File, io, os::fd::AsRawFd};
+use std::{fs::File, io};
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 
 const MAGIC: u64 = 0x46524944414c5332;
 #[repr(C)]
@@ -50,6 +54,7 @@ impl Transport {
         }
         Ok(mapping)
     }
+    #[cfg(unix)]
     fn map(file: &File) -> io::Result<Self> {
         let len = std::mem::size_of::<Control>();
         if file.metadata()?.len() != len as u64 {
@@ -73,6 +78,41 @@ impl Transport {
         }
         Ok(Self { base: base.cast() })
     }
+    // A section over the lease file, mapped read-write: the same two calls
+    // orbit-scope-ring makes for its segment. The section handle is closed
+    // once the view exists; the view keeps it alive.
+    #[cfg(windows)]
+    fn map(file: &File) -> io::Result<Self> {
+        use std::os::windows::io::AsRawHandle;
+        let len = std::mem::size_of::<Control>();
+        if file.metadata()?.len() != len as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid Frida capture lease size",
+            ));
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn CreateFileMappingW(file: *mut c_void, attributes: *const c_void, protect: u32, high: u32, low: u32, name: *const u16) -> *mut c_void;
+            fn MapViewOfFile(mapping: *mut c_void, access: u32, offset_high: u32, offset_low: u32, bytes: usize) -> *mut c_void;
+            fn CloseHandle(handle: *mut c_void) -> i32;
+        }
+        const PAGE_READWRITE: u32 = 0x04;
+        const FILE_MAP_WRITE: u32 = 0x0002;
+        // SAFETY: the file handle is open; every result is checked.
+        unsafe {
+            let section = CreateFileMappingW(file.as_raw_handle(), std::ptr::null(), PAGE_READWRITE, 0, 0, std::ptr::null());
+            if section.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let base = MapViewOfFile(section, FILE_MAP_WRITE, 0, 0, len);
+            CloseHandle(section);
+            if base.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Self { base: base.cast() })
+        }
+    }
     fn control(&self) -> &Control {
         unsafe { &*self.base }
     }
@@ -94,8 +134,17 @@ impl Transport {
 }
 impl Drop for Transport {
     fn drop(&mut self) {
+        #[cfg(unix)]
         unsafe {
             libc::munmap(self.base.cast(), std::mem::size_of::<Control>());
+        }
+        #[cfg(windows)]
+        unsafe {
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn UnmapViewOfFile(base: *const c_void) -> i32;
+            }
+            UnmapViewOfFile(self.base.cast());
         }
     }
 }

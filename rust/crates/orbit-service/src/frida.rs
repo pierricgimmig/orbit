@@ -13,7 +13,13 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 fn agent_path() -> Result<std::path::PathBuf, String> {
-    let name = if cfg!(target_os = "macos") { "liborbit_frida_agent.dylib" } else { "liborbit_frida_agent.so" };
+    let name = if cfg!(target_os = "macos") {
+        "liborbit_frida_agent.dylib"
+    } else if cfg!(target_os = "windows") {
+        "orbit_frida_agent.dll"
+    } else {
+        "liborbit_frida_agent.so"
+    };
     let path = std::env::var_os("ORBIT_FRIDA_AGENT").map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::current_exe().unwrap_or_default().with_file_name(name));
     path.canonicalize().map_err(|e| format!("Frida agent {}: {e}; run tools/frida/build.sh or set ORBIT_FRIDA_AGENT", path.display()))
@@ -60,8 +66,9 @@ impl Helper {
         let _phase = orbit_api::scope("Frida: launch helper");
         config["self_profile"] = true.into();
         config["agent"] = agent_path()?.into_os_string().to_string_lossy().into_owned().into();
+        let helper_name = if cfg!(target_os = "windows") { "orbit-frida-helper.exe" } else { "orbit-frida-helper" };
         let helper_path = std::env::var_os("ORBIT_FRIDA_HELPER").map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::env::current_exe().unwrap_or_default().with_file_name("orbit-frida-helper"));
+            .unwrap_or_else(|| std::env::current_exe().unwrap_or_default().with_file_name(helper_name));
         let mut child = Command::new(helper_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -170,9 +177,12 @@ impl FridaSession {
             return Err("Frida requires a target process other than orbit-service".into());
         }
         let agent = agent_path()?;
+        // /tmp on POSIX, where an unprivileged target can reach it; the
+        // user's temp directory on Windows.
+        let lease_dir = if cfg!(windows) { std::env::temp_dir() } else { std::path::PathBuf::from("/tmp") };
         let file = tempfile::Builder::new()
             .prefix("orbit-frida-")
-            .tempfile_in("/tmp")
+            .tempfile_in(lease_dir)
             .map_err(|e| e.to_string())?;
         let mapping = Transport::create(file.as_file(), pid as u32).map_err(|e| e.to_string())?;
         // A privileged Linux service must allow its unprivileged target to

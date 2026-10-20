@@ -36,7 +36,12 @@ jobs:
         - { runner: ubuntu-22.04, key: linux-aarch64 }
         - { runner: macos-14,     key: macos-arm64 }
         - { runner: macos-14,     key: macos-x86_64 }
+        - { runner: windows-2022, key: windows-x86_64 }
     runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        # Git Bash on the Windows runner: build_wheels.sh is the one script.
+        shell: bash
     timeout-minutes: 120
     steps:
     - uses: actions/checkout@v4
@@ -52,6 +57,14 @@ jobs:
 
     - name: Build tooling
       run: pip install cargo-zigbuild ziglang build wheel
+
+    - name: MSVC on PATH (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        . .\tools\windows\msvc-env.ps1
+        "PATH=$env:PATH" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        foreach ($name in 'INCLUDE', 'LIB', 'LIBPATH') { "$name=$((Get-Item Env:$name).Value)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
 
     - name: Build wheels
       run: tools/release/build_wheels.sh ${{ matrix.key }}

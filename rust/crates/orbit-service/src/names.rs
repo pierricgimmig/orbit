@@ -24,6 +24,8 @@ use orbit_live_event::{InternTable, LiveEvent};
 use crate::report::SampleStore;
 #[cfg(target_os = "macos")]
 pub use crate::macos::{process_comm, thread_comm, thread_ids};
+#[cfg(target_os = "windows")]
+pub use crate::windows::{process_comm, thread_comm, thread_ids};
 
 /// Reads `/proc/<pid>/comm`, trimmed; `None` when the process is gone.
 #[cfg(target_os = "linux")]
@@ -199,6 +201,18 @@ mod tests {
         let tids = thread_ids(me);
         let current = orbit_scope_ring::platform::thread_id() as u32;
         assert!(tids.contains(&current));
+        // Linux threads always have a comm; a Windows thread has a name only
+        // once something set one, so give this one a description first.
+        #[cfg(windows)]
+        {
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn SetThreadDescription(thread: *mut std::ffi::c_void, description: *const u16) -> i32;
+                fn GetCurrentThread() -> *mut std::ffi::c_void;
+            }
+            let name: Vec<u16> = "names test ".encode_utf16().collect();
+            unsafe { SetThreadDescription(GetCurrentThread(), name.as_ptr()) };
+        }
         assert!(thread_comm(me, current).is_some());
         // A named thread shows up under its name.
         let t = std::thread::Builder::new()

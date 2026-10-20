@@ -5,7 +5,8 @@
 > and the work in order with an acceptance test for each item.
 
 Target platforms: Linux x86-64 (done), Linux aarch64, macOS (x86-64 + Apple
-silicon), Windows x86-64.
+silicon), Windows x86-64 (done, 2026-10-17: see "Windows, done and verified"
+below and [building_windows.md](building_windows.md)).
 
 Development runs on Linux x86-64. Native validation must be distinguished from
 cross-compilation: the macOS manual capture backend now compile-checks for both
@@ -15,6 +16,38 @@ for the implemented service, SDK, smoke test and current limitations. ETW and
 macOS sampling/scheduling remain roadmap work.
 
 ## Done and verified
+
+**Windows x86-64 (2026-10-17, on a Windows 11 box; CI on `windows-2022`).**
+Everything the brief listed, built and run on the OS:
+
+- The producer: `orbit-scope-ring/src/shm_windows.rs`, a file-backed section
+  per process under `%LOCALAPPDATA%\Orbit\scopes` (the macOS pattern, so
+  discovery is a directory listing); rings mapped read-only and the control
+  page read-write as two views of one section; the producer lease a
+  `LockFileEx` byte-range lock; unlink-while-mapped done by renaming out of
+  the namespace plus `FILE_FLAG_DELETE_ON_CLOSE`, because NTFS will not
+  delete a mapped file. The crate's tests pass unchanged plus Windows ones.
+- The scheduler and sampling: `rust/crates/orbit-etw`, the NT Kernel Logger
+  through hand-declared advapi32 bindings (not ferrisetw: the classic kernel
+  events are decoded from their fixed MOF layouts, after the C++ tracer lost
+  every `CSwitch` through TDH on a newer Windows, `52787b085`). Context
+  switches feed the same `ContextSwitchManager` and `ThreadStateManager`;
+  the six C++ `ContextSwitchManagerTest` cases are reproduced through the
+  feed. Stack walks become samples with the kernel half dropped and a
+  deferred user half merged. The session needs an elevated token; the
+  capture degrades to scopes and hooks without one and says so.
+- The service: `orbit-service/src/windows.rs`, the capture loop with the
+  Linux loop's scope names; processes and threads from
+  `NtQuerySystemInformation`, modules from Toolhelp, symbols from PDBs,
+  export tables and exception tables, MSVC demangling.
+- Frida: the same agent and helper, with a named pipe as the control
+  channel and the client authenticated by `GetNamedPipeClientProcessId`.
+- Static CRT for every binary (`rust/.cargo/config.toml`), checked with
+  `dumpbin /dependents` by `build-service-windows.ps1`.
+
+Not done: auto-profiling (rides on uprobes), the GPU helper, PDB line
+tables in the disassembler, Windows on ARM64. The metrics are in
+`docs/blog/metrics/phase-17-windows.txt`.
 
 **aarch64-linux compiles.** The whole capture tree -- every crate, the
 service, the instrumentation API -- `cargo check`s clean for
@@ -43,15 +76,8 @@ Windows arm is written against `QueryPerformanceCounter` and
 
 ## Written but unverified (needs the target OS to confirm)
 
-**Windows producer shared memory (planned).** Linux uses POSIX shm; macOS uses
-private file-backed shared mappings so the service can discover producers. Windows needs
-`CreateFileMapping`/`MapViewOfFile`/`OpenFileMapping` and a named-object
-namespace instead of `/dev/shm`. This is a contained piece -- the `shm` module
-is ~200 lines -- but it touches the mapping split (the read-only rings plus the
-writable control page), which maps to Windows differently (two views of one
-section). Planned as a `#[cfg(windows)]` sibling of the POSIX `shm` module,
-behind the same `ScopeRingWriter`/`ScopeRingReader` API. Cannot be written
-without a Windows compiler to check the Win32 signatures.
+Nothing for Windows any more: the producer shared memory planned here is
+`shm_windows.rs`, written and tested on the OS (above).
 
 ## Roadmap -- deliberately not written blind
 
@@ -61,7 +87,7 @@ undocumented in places, and untestable anywhere else. Writing them from a
 Linux box and claiming they work would be the one thing this project has
 refused to do.
 
-### Windows scheduling capture -- ETW
+### Windows scheduling capture -- ETW (done; kept as the record of the plan)
 
 - **Consume**: `ferrisetw` for session control and event consumption. Start a
   session, enable the kernel scheduler provider (`PERF_INFO` / `Thread`

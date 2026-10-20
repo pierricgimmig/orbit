@@ -7,7 +7,9 @@
 use serde_json::{json, Value};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::sync::Mutex;
 
@@ -36,7 +38,9 @@ extern "C" {
 }
 // A C/C++ target need not ignore SIGPIPE (a Rust executable normally does).
 // Never change the application's process-wide signal disposition.
+#[cfg(unix)]
 struct ControlStream(UnixStream);
+#[cfg(unix)]
 impl Write for ControlStream {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         #[cfg(target_os = "linux")]
@@ -60,6 +64,35 @@ impl Write for ControlStream {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+// On Windows the control channel is a named pipe the helper created; a
+// File over its handle reads and writes it, and there is no SIGPIPE.
+#[cfg(windows)]
+struct ControlStream(std::fs::File);
+#[cfg(windows)]
+impl Write for ControlStream {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+#[cfg(windows)]
+fn connect_pipe(path: &str) -> Option<std::fs::File> {
+    // The helper's pipe has one instance; while it is busy with a stranger
+    // the open fails with ERROR_PIPE_BUSY, so wait and retry briefly.
+    const ERROR_PIPE_BUSY: i32 = 231;
+    for _ in 0..100 {
+        match std::fs::OpenOptions::new().read(true).write(true).open(path) {
+            Ok(file) => return Some(file),
+            Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
+    None
 }
 static CONTROL: Mutex<()> = Mutex::new(());
 struct Capture {
@@ -189,11 +222,20 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
         json!({"armed":capture.listeners.len(),"arch":std::env::consts::ARCH})
     )?;
     line.clear();
-    reader.read_line(&mut line)?; // Explicit stop or EOF on controller death.
+    // EOF (the controller dropped the pipe) is a stop, like an explicit
+    // "stop" line; detach either way.
+    // EOF (the controller dropped the pipe) is a stop, like an explicit
+    // "stop" line; detach either way.
+    reader.read_line(&mut line)?;
+    // On Unix the controller half-closes its write side and keeps reading,
+    // so this detach-profile span and the ack below reach it. A Windows
+    // named pipe has no half-close: by the time a stop is seen the pipe is
+    // already closing, so these writes may fail -- the detach itself is what
+    // matters, and the controller waits for process exit, not the ack.
     profile::measure(stream, profiling, "Frida: detach trampolines", || {
         drop(capture)
     });
-    writeln!(stream, "{}", json!({"stopped":true}))?;
+    let _ = writeln!(stream, "{}", json!({"stopped":true}));
     Ok(())
 }
 
@@ -206,15 +248,20 @@ pub unsafe extern "C" fn orbit_frida_main(
     _: *mut c_void,
 ) {
     *unload_policy = 1;
-    if super::FORK_CHILD.load(std::sync::atomic::Ordering::Relaxed)
-        || *super::ATFORK.get_or_init(|| libc::pthread_atfork(None, None, Some(super::after_fork)))
-            != 0
-    {
+    if super::FORK_CHILD.load(std::sync::atomic::Ordering::Relaxed) || !super::arm_fork_guard() {
         return;
     }
     let Ok(path) = CStr::from_ptr(data).to_str() else {
         return;
     };
+    #[cfg(windows)]
+    if let Some(pipe) = connect_pipe(path) {
+        let mut stream = ControlStream(pipe);
+        if let Err(error) = run(&mut stream) {
+            let _ = writeln!(stream, "{}", json!({"error":error.to_string()}));
+        }
+    }
+    #[cfg(unix)]
     if let Ok(socket) = UnixStream::connect(path) {
         #[cfg(target_os = "macos")]
         {

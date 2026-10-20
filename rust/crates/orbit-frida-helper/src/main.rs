@@ -5,7 +5,9 @@
 // Native Frida Core injector and control relay. Events never cross this pipe.
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::{
     fs::PermissionsExt,
     net::{UnixListener, UnixStream},
@@ -14,6 +16,44 @@ use std::time::{Duration, Instant};
 
 #[path = "../../../frida-profile.rs"]
 mod profile;
+#[cfg(windows)]
+mod pipe;
+
+/// Reads one line from stdin for the stop signal. On Unix the shared
+/// `std::io::Stdin` reads fine from a second thread. On Windows a second
+/// threaded read of the global buffered `Stdin` never delivers a piped
+/// line, so the stop reader gets its own duplicated STD_INPUT_HANDLE and
+/// reads it directly. The service's EOF (it drops the helper's stdin) and
+/// an explicit "stop" line both end this read.
+#[cfg(not(windows))]
+fn wait_for_stop() {
+    let mut line = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut line);
+}
+#[cfg(windows)]
+fn wait_for_stop() {
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+    type Handle = *mut std::ffi::c_void;
+    const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6; // (DWORD)-10
+    const DUPLICATE_SAME_ACCESS: u32 = 0x2;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetStdHandle(which: u32) -> Handle;
+        fn GetCurrentProcess() -> Handle;
+        fn DuplicateHandle(sp: Handle, s: Handle, tp: Handle, t: *mut Handle, a: u32, inherit: i32, opts: u32) -> i32;
+    }
+    // SAFETY: duplicating the process's own stdin handle into an owned File.
+    let file = unsafe {
+        let stdin = GetStdHandle(STD_INPUT_HANDLE);
+        let mut dup: Handle = std::ptr::null_mut();
+        if DuplicateHandle(GetCurrentProcess(), stdin, GetCurrentProcess(), &mut dup, 0, 0, DUPLICATE_SAME_ACCESS) == 0 {
+            return;
+        }
+        std::fs::File::from(OwnedHandle::from_raw_handle(dup))
+    };
+    let mut line = String::new();
+    let _ = BufReader::new(file).read_line(&mut line);
+}
 
 extern "C" {
     fn orbit_core_inject(
@@ -36,6 +76,7 @@ impl Drop for Injector {
     }
 }
 
+#[cfg(unix)]
 fn peer_pid(stream: &UnixStream) -> std::io::Result<u32> {
     #[cfg(target_os = "linux")]
     unsafe {
@@ -80,17 +121,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|&p| p > 0 && p <= i32::MAX as u64)
         .ok_or("invalid pid")? as u32;
     let agent = CString::new(value["agent"].as_str().ok_or("missing agent path")?)?;
-    let dir = tempfile::Builder::new()
-        .prefix("orbit-core-")
-        .tempdir_in("/tmp")?;
-    // Permit an unprivileged target to traverse, but not list or modify, our
-    // private directory. Authenticate the socket peer by kernel-reported PID.
-    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o711))?;
-    let path = dir.path().join("control");
-    let listener = UnixListener::bind(&path)?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o622))?;
-    listener.set_nonblocking(true)?;
-    let data = CString::new(path.to_str().ok_or("invalid socket path")?)?;
+    #[cfg(unix)]
+    let (listener, data, _dir) = {
+        let dir = tempfile::Builder::new()
+            .prefix("orbit-core-")
+            .tempdir_in("/tmp")?;
+        // Permit an unprivileged target to traverse, but not list or modify, our
+        // private directory. Authenticate the socket peer by kernel-reported PID.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o711))?;
+        let path = dir.path().join("control");
+        let listener = UnixListener::bind(&path)?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o622))?;
+        listener.set_nonblocking(true)?;
+        let data = CString::new(path.to_str().ok_or("invalid socket path")?)?;
+        (listener, data, dir)
+    };
+    #[cfg(windows)]
+    let (listener, data) = {
+        let server = pipe::Server::create()?;
+        let data = CString::new(server.name())?;
+        (server, data)
+    };
     let mut error = [0 as c_char; 1024];
     #[cfg(target_os = "macos")]
     let loader: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/loader.dylib"));
@@ -120,21 +171,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let _injector = Injector(raw);
     let deadline = Instant::now() + Duration::from_secs(20);
-    let mut stream = loop {
-        match listener.accept() {
-            Ok((s, _)) if peer_pid(&s)? == pid => break s,
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(e) => return Err(e.into()),
-        }
-        if Instant::now() >= deadline {
-            return Err("agent connection timed out".into());
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    #[cfg(unix)]
+    let mut stream = {
+        let stream = loop {
+            match listener.accept() {
+                Ok((s, _)) if peer_pid(&s)? == pid => break s,
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => return Err(e.into()),
+            }
+            if Instant::now() >= deadline {
+                return Err("agent connection timed out".into());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // Darwin inherits O_NONBLOCK from the listening socket; Linux does not.
+        // Only accept is polled. The connected control stream is blocking on both.
+        stream.set_nonblocking(false)?;
+        stream
     };
-    // Darwin inherits O_NONBLOCK from the listening socket; Linux does not.
-    // Only accept is polled. The connected control stream is blocking on both.
-    stream.set_nonblocking(false)?;
+    #[cfg(windows)]
+    let mut stream = listener.accept(pid, deadline)?;
     stream.write_all(config.as_bytes())?;
     // A symbols request is one-shot. Sending an EOF-triggered Stop would
     // leave unread bytes when the agent closes, resetting a valid reply.
@@ -145,6 +202,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let _ = std::io::stdin().lock().read_line(&mut line);
             // Both an explicit stop and service EOF close the agent's control path.
             let _ = stop.write_all(b"stop\n");
+            #[cfg(unix)]
             let _ = stop.shutdown(std::net::Shutdown::Write);
         });
     }
@@ -162,7 +220,7 @@ fn main() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     #[test]

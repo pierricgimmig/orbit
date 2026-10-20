@@ -869,6 +869,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-etw"
+version = "0.1.0"
+dependencies = [
+ "orbit-thread-states",
+ "orbit-tracing-state",
+]
+
+[[package]]
 name = "orbit-frida-transport"
 version = "0.1.0"
 dependencies = [
@@ -972,6 +980,7 @@ dependencies = [
  "object",
  "orbit-api",
  "orbit-capture",
+ "orbit-etw",
  "orbit-frida-transport",
  "orbit-live-event",
  "orbit-live-server",

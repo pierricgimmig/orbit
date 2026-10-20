@@ -173,7 +173,7 @@ const _: () = assert!(std::mem::size_of::<Slot>() == CACHE_LINE);
 /// read-write to set `capturing` while mapping the rings read-only, and the
 /// two mappings never overlap a byte of ring data. Page-sized so the rings
 /// that follow begin at a page boundary, which the split mapping needs.
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn control_bytes() -> usize {
     // SAFETY: sysconf(_SC_PAGESIZE) is always safe and never fails here.
     let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
@@ -185,6 +185,13 @@ pub fn control_bytes() -> usize {
 // on both 4 KiB and 16 KiB hosts.
 #[cfg(target_os = "macos")]
 pub fn control_bytes() -> usize { 16 * 1024 }
+
+// Windows pages are 4 KiB on every architecture the OS ships for (x64 and
+// arm64 both), and the control page is mapped at offset zero, so the 64 KiB
+// allocation granularity that constrains view *offsets* never applies here.
+// A constant keeps the write path free of a GetSystemInfo call.
+#[cfg(windows)]
+pub fn control_bytes() -> usize { 4096 }
 
 /// Total bytes for a mapping with these dimensions.
 pub fn layout_size(ring_count: usize, slots_per_ring: usize) -> usize {

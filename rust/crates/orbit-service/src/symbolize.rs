@@ -23,8 +23,11 @@
 //! and applies it at the target's address. That one mapping is where a
 //! process that asks the time in a loop spends most of its samples.
 
-use orbit_maps::{parse_maps, PROT_EXEC};
+use orbit_maps::parse_maps;
+#[cfg(not(windows))]
+use orbit_maps::PROT_EXEC;
 use orbit_object::{detached_debug_file, load_symbols, parse_elf_metadata, ObjectSegment, SymbolTable};
+use orbit_object::{is_pe, parse_coff_metadata};
 use std::sync::{Arc, Mutex};
 
 use crate::functions::{file_offset_of, function_id};
@@ -36,6 +39,10 @@ struct LoadedFile {
     segments: Vec<ObjectSegment>,
     /// Function symbols sorted by address, for binary search.
     symbols: Vec<(u64, u64, String)>,
+    /// Where the file's virtual addresses start: the first PT_LOAD's vaddr
+    /// minus its file offset for ELF, `ImageBase` for PE. A mapping's bias
+    /// is its load address minus this.
+    image_base: u64,
 }
 
 /// One executable mapping, and the symbols of the file behind it.
@@ -150,14 +157,51 @@ impl Symbolizer {
                     bias,
                     name,
                     path: String::new(),
-                    file: Arc::new(LoadedFile { segments: Vec::new(), symbols }),
+                    file: Arc::new(LoadedFile { segments: Vec::new(), symbols, image_base: 0 }),
                 })
                 .collect(),
         }
     }
 
+    /// Builds a symbolizer for a process from its module list (Toolhelp) and
+    /// the PDB or export table of every module.
+    #[cfg(windows)]
+    pub fn for_pid(pid: i32) -> Symbolizer {
+        let specs: Vec<ModuleSpec> = crate::windows::modules_of(pid.max(0) as u32)
+            .into_iter()
+            .map(|m| ModuleSpec {
+                start: m.base,
+                end: m.base.saturating_add(m.size),
+                bias: m.base,
+                name: basename(&m.path).to_string(),
+                path: m.path,
+                vdso: false,
+            })
+            .collect();
+        let mut keys: Vec<String> = Vec::new();
+        for spec in &specs {
+            let key = spec.file_key();
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        let files = Self::load_files(&keys);
+        let modules: Vec<Module> = specs
+            .into_iter()
+            .filter_map(|spec| {
+                let file = files.iter().find(|(key, _)| *key == spec.file_key())?.1.clone();
+                // Loaded at `start`, linked at `image_base`: the difference
+                // is what turns a runtime address into the PDB's.
+                let bias = spec.start.wrapping_sub(file.image_base);
+                Some(Module { start: spec.start, end: spec.end, bias, name: spec.name, path: spec.path, file })
+            })
+            .collect();
+        Symbolizer { modules }
+    }
+
     /// Builds a symbolizer for a process by reading its maps and loading the
     /// symbol table of every executable file mapped into it.
+    #[cfg(not(windows))]
     pub fn for_pid(pid: i32) -> Symbolizer {
         let Ok(content) = std::fs::read(format!("/proc/{pid}/maps")) else {
             return Symbolizer { modules: Vec::new() };
@@ -216,7 +260,7 @@ impl Symbolizer {
                 let file = files.iter().find(|(key, _)| *key == spec.file_key())?.1.clone();
                 // The vDSO's bias is its mapping's start; a file's is adjusted
                 // by the image base its segments declare (see `Module::bias`).
-                let bias = if spec.vdso { spec.bias } else { spec.bias.wrapping_sub(image_base(&file.segments)) };
+                let bias = if spec.vdso { spec.bias } else { spec.bias.wrapping_sub(file.image_base) };
                 Some(Module { start: spec.start, end: spec.end, bias, name: spec.name, path: spec.path, file })
             })
             .collect();
@@ -259,16 +303,16 @@ impl Symbolizer {
     /// Loads one file's symbols, on a worker thread. A self-profile scope
     /// names the file so the cost of each load shows on the service's track.
     fn load_file(key: &str) -> LoadedFile {
-        let name = key.rsplit('/').next().unwrap_or(key);
+        let name = basename(key);
         let _load = orbit_api::scope(format!("load symbols: {name}"));
         if key == VDSO {
             let symbols = vdso_image().map(|image| sorted_symbols(&image, None)).unwrap_or_default();
-            return LoadedFile { segments: Vec::new(), symbols };
+            return LoadedFile { segments: Vec::new(), symbols, image_base: 0 };
         }
         let bytes = map_file(key);
         let symbols = sorted_symbols(&bytes, Some(key));
-        let segments = parse_elf_metadata(&bytes, key).map(|m| m.loadable_segments).unwrap_or_default();
-        LoadedFile { segments, symbols }
+        let (segments, image_base) = module_layout(&bytes, key);
+        LoadedFile { segments, symbols, image_base }
     }
 
     /// Executable mappings, one per mapping in the process.
@@ -363,6 +407,22 @@ impl Module {
     }
 }
 
+/// The last path component, whichever separator the OS uses.
+pub(crate) fn basename(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+/// A module file's loadable segments (ELF) or sections (PE), and the
+/// virtual address its symbols are keyed from.
+pub(crate) fn module_layout(bytes: &[u8], path: &str) -> (Vec<ObjectSegment>, u64) {
+    if is_pe(bytes) {
+        return parse_coff_metadata(bytes, path).map(|m| (m.sections, m.image_base)).unwrap_or_default();
+    }
+    let segments = parse_elf_metadata(bytes, path).map(|m| m.loadable_segments).unwrap_or_default();
+    let base = image_base(&segments);
+    (segments, base)
+}
+
 /// The first PT_LOAD's virtual address minus its file offset: where the
 /// file's virtual address space starts relative to its bytes. Zero for the
 /// usual layout, 0x200000 for a binary linked with an image base (Unreal).
@@ -398,6 +458,9 @@ fn demangle(name: &str) -> String {
 /// detached debug file when `path` names a file that has one, else its own
 /// `.symtab`, else its `.dynsym`.
 pub(crate) fn symbol_source(bytes: &[u8], path: Option<&str>) -> Result<Vec<orbit_object::Symbol>, String> {
+    if is_pe(bytes) {
+        return pe_symbols(bytes, path.unwrap_or_default());
+    }
     if let Some(path) = path {
         if let Ok(metadata) = parse_elf_metadata(bytes, path) {
             if let Some(debug) = detached_debug_file(std::path::Path::new(path), &metadata) {
@@ -413,6 +476,92 @@ pub(crate) fn symbol_source(bytes: &[u8], path: Option<&str>) -> Result<Vec<orbi
         }
     }
     load_symbols(bytes, SymbolTable::Debug).or_else(|_| load_symbols(bytes, SymbolTable::Dynamic))
+}
+
+/// The function symbols of a PE image: its PDB when one can be found and
+/// matches, plus the export table, plus the exception table's function
+/// ranges (`[function@0x...]`) for every function neither named -- the
+/// same three sources C++ Orbit's `CoffFile` read, merged by address with
+/// the named entry winning.
+fn pe_symbols(bytes: &[u8], path: &str) -> Result<Vec<orbit_object::Symbol>, String> {
+    let metadata = parse_coff_metadata(bytes, path)?;
+    let mut by_address: std::collections::BTreeMap<u64, orbit_object::Symbol> = std::collections::BTreeMap::new();
+    let mut add = |symbols: Vec<orbit_object::Symbol>, named: bool| {
+        for symbol in symbols {
+            if symbol.address == 0 || symbol.mangled_name.is_empty() {
+                continue;
+            }
+            match by_address.get_mut(&symbol.address) {
+                // Keep a name over a range, and a known size over none.
+                Some(existing) => {
+                    if named && existing.mangled_name.starts_with("[function@") {
+                        let size = if existing.size != 0 && existing.size != orbit_object::UNKNOWN_SYMBOL_SIZE { existing.size } else { symbol.size };
+                        *existing = orbit_object::Symbol { size, ..symbol };
+                    } else if (existing.size == 0 || existing.size == orbit_object::UNKNOWN_SYMBOL_SIZE) && symbol.size != 0 {
+                        existing.size = symbol.size;
+                    }
+                }
+                None => {
+                    by_address.insert(symbol.address, symbol);
+                }
+            }
+        }
+    };
+    if let Some(info) = &metadata.pdb_debug_info {
+        if let Some(pdb_path) = find_pdb(path, info) {
+            let pdb_bytes = map_file(&pdb_path);
+            match orbit_object::load_pdb_symbols(&pdb_bytes, metadata.image_base) {
+                Ok(symbols) => add(symbols, true),
+                Err(error) => log::debug!("{pdb_path}: {error}"),
+            }
+        }
+    }
+    if let Ok(exports) = orbit_object::export_table_symbols(bytes) {
+        add(exports, true);
+    }
+    if let Ok(ranges) = orbit_object::exception_table_symbols(bytes) {
+        add(ranges, false);
+    }
+    let mut symbols: Vec<orbit_object::Symbol> = by_address.into_values().collect();
+    for symbol in &mut symbols {
+        if symbol.size == orbit_object::UNKNOWN_SYMBOL_SIZE {
+            symbol.size = 0;
+        }
+    }
+    Ok(symbols)
+}
+
+/// Where a module's PDB is: the path its CodeView record names, else a
+/// file of that name beside the module, else the module's own name with
+/// `.pdb`; each candidate must carry the record's GUID and age.
+pub(crate) fn find_pdb(module_path: &str, info: &orbit_object::PdbDebugInfo) -> Option<String> {
+    let module = std::path::Path::new(module_path);
+    let recorded = std::path::PathBuf::from(&info.pdb_file_path);
+    let mut candidates: Vec<std::path::PathBuf> = vec![recorded.clone()];
+    if let Some(dir) = module.parent() {
+        if let Some(name) = recorded.file_name() {
+            candidates.push(dir.join(name));
+        }
+        candidates.push(module.with_extension("pdb"));
+    }
+    if let Some(cache) = std::env::var_os("ORBIT_PDB_DIR") {
+        if let Some(name) = recorded.file_name() {
+            candidates.push(std::path::PathBuf::from(cache).join(name));
+        }
+    }
+    for candidate in candidates {
+        if !candidate.is_file() {
+            continue;
+        }
+        let path = candidate.to_string_lossy().into_owned();
+        let bytes = map_file(&path);
+        match orbit_object::pdb_info(&bytes) {
+            Ok(found) if found.guid == info.guid && found.age == info.age => return Some(path),
+            Ok(found) => log::debug!("{path}: GUID/age {:x?}/{} do not match the module's {:x?}/{}", found.guid, found.age, info.guid, info.age),
+            Err(error) => log::debug!("{path}: {error}"),
+        }
+    }
+    None
 }
 
 /// A file's bytes as a read-only mapping, so parsing a large image touches

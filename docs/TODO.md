@@ -104,12 +104,18 @@ theme follows the reader's colour scheme.
 - Static capture binary, backend-swappable via env var, on all three
   platforms. Differential test suite fails the build on any mismatch.
 
-**Status: macOS manual capture implemented; native runtime validation pending.**
-The Mac service serves the viewer, discovers processes/threads and records manual
-instrumentation on Intel and Apple Silicon. See [building_macos.md](building_macos.md).
-Native CI covers both architectures. PDB parsing is done; ETW, macOS sampling,
-scheduling and dynamic hooks remain deferred. Multi-service live aggregation
-needs host identity and clock synchronization before merging Linux/Mac timelines.
+**Status: macOS manual capture implemented; native runtime validation pending.
+Windows done (2026-10-17).** The Mac service serves the viewer, discovers
+processes/threads and records manual instrumentation on Intel and Apple
+Silicon. See [building_macos.md](building_macos.md). Native CI covers both
+architectures. PDB parsing is done. The Windows service records the scheduler,
+thread states and samples from the NT Kernel Logger (`rust/crates/orbit-etw`,
+raw advapi32 bindings rather than ferrisetw; the MOF layouts are decoded from
+bytes), Frida hooks over a named pipe, and manual scopes; see
+[building_windows.md](building_windows.md) and
+`docs/blog/metrics/phase-17-windows.txt`. macOS sampling and scheduling remain
+deferred. Multi-service live aggregation needs host identity and clock
+synchronization before merging Linux/Mac/Windows timelines.
 
 ## 8. Shared-memory ring buffer — Windows + macOS
 
@@ -118,8 +124,10 @@ mappings, discovery and dead-process cleanup, with a fixed 16 KiB control area
 for Intel/Apple Silicon/Rosetta layout compatibility.
 
 **Status: macOS implemented and cross-checked for both architectures; native CI
-added, runtime results pending.** Windows CreateFileMapping/OpenFileMapping and
-its discovery namespace remain deferred.
+added, runtime results pending. Windows implemented (2026-10-17):** a
+file-backed section per process under `%LOCALAPPDATA%\Orbit\scopes`, two views
+(rings read-only, control page read-write), a `LockFileEx` producer lease, and
+rename-plus-delete-on-close for unlink-while-mapped. Tests pass natively.
 
 ## 9. Scope-scoped sampling report
 

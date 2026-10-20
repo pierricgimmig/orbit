@@ -30,6 +30,12 @@ Instructions for the manual writer:
   another machine on the network. `--host` picks the bind address (default
   `0.0.0.0`); `--wire raw|packed|deflate` (env `ORBIT_LIVE_WIRE`) picks the
   WebSocket encoding, default `packed`. Screenshot: `01-viewer-idle.png`.
+- **Windows.** The same binary shape (`orbit-service.exe`, the viewer embedded)
+  on x86-64. Sampling, the scheduler and thread states come from the NT
+  Kernel Logger and need the service started from an elevated prompt; the
+  status line under the Capture strip says so otherwise. Manual scopes and
+  Frida hooks need no privilege. Auto-profiling and kernel uprobes are
+  refused with a sentence. See `docs/building_windows.md`.
 - **Privileges.** Sampling this process needs `perf_event_paranoid` <= 2.
   System-wide scheduling (the CSW track) needs `perf_event_paranoid` <= 0.
   Root, `CAP_PERFMON` or `CAP_SYS_ADMIN` bypass the sysctl. The process
@@ -463,7 +469,7 @@ in the URL opens a tab on load.
   `orbit-profiler` (`rust/crates/orbit-service/python`) carries the static
   `orbit-service` binary, the library and `orbit.h`, installs an
   `orbit-service` command, and depends on `orbit-api`. The
-  `.github/workflows/python-wheels.yml` matrix builds Linux and macOS wheels
+  `.github/workflows/python-wheels.yml` matrix builds a wheel per platform
   and publishes to PyPI on a version tag. The `curl … | sh` installer and the
   release archives stay for users who do not want Python in the loop. Because
   the service is the authority on the ring version, the Python loader and

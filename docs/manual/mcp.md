@@ -97,18 +97,18 @@ At most 16 functions are armed. That is the service's own cap. Names that exist 
 
 A capture that is already running keeps the hooks it started with. `orbit_unhook` edits the set for the next `orbit_start_capture`.
 
-## Linux and macOS
+## Platforms
 
-| | Linux | macOS |
-|---|---|---|
-| Frida hooks, no rebuild | yes | yes |
-| Manual scopes (`orbit_function_stats`) | yes | yes |
-| Sampling and call stacks | yes | the tool returns `supported: false` |
-| Scheduler and thread states | yes | `supported: false` |
-| Kernel uprobes | yes, when you ask, needs root or `CAP_SYS_ADMIN` | refused |
-| Auto-profiling | yes, off unless you set it | refused |
+| | Linux | Windows | macOS |
+|---|---|---|---|
+| Frida hooks, no rebuild | yes | yes | yes |
+| Manual scopes (`orbit_function_stats`) | yes | yes | yes |
+| Sampling and call stacks | yes | yes, from an elevated prompt | the tool returns `supported: false` |
+| Scheduler and thread states | yes | yes, from an elevated prompt | `supported: false` |
+| Kernel uprobes | yes, when you ask, needs root or `CAP_SYS_ADMIN` | refused | refused |
+| Auto-profiling | yes, off unless you set it | refused | refused |
 
-Asking to start a capture with sampling on macOS does not start the capture. The result names the unsupported fields. Start again without them. `orbit_function_stats` is the reading for a Frida hook on either platform. Times are integer nanoseconds.
+Asking to start a capture with sampling on macOS does not start the capture. The result names the unsupported fields. Start again without them. On Windows the capture starts either way; without an elevated prompt the sampling report is empty and the service's `instrumentation` status line says the kernel logger needs one. `orbit_function_stats` is the reading for a Frida hook on every platform. Times are integer nanoseconds.
 
 Sampling can also come back with `"samples": 0` on Linux when `perf_event_paranoid` is too high. That is an empty profile, not an unsupported feature. [Troubleshooting](troubleshooting.md) has the sysctl.
 

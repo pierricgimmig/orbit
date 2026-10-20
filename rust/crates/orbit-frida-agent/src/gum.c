@@ -4,11 +4,14 @@
 
 // Thin ABI adapter; Gum owns code generation, relocation and listener lifetime.
 #include "frida-gum.h"
-#include <pthread.h>
 #include <stdint.h>
 #include <string.h>
 #ifdef __APPLE__
 #include <mach-o/loader.h>
+#endif
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #endif
 
 extern uint64_t orbit_frida_start(uint32_t, const char *, size_t);
@@ -22,14 +25,29 @@ typedef struct {
   uint32_t generation;
   char * name; size_t len;
   char * unhook_token; size_t unhook_len;
-  volatile gint64 calls;          // entries in the current window
+  volatile gint calls;            // entries in the current window
   volatile gint64 window_start_us;
   volatile gint muted;
 } Hook;
 typedef struct { uint32_t generation; uint64_t handle; } Invocation;
+// The OS's own once: nothing of GLib may run before gum_init_embedded has
+// set up its thread backend (on Windows that backend is a table of function
+// pointers that an uninitialized g_once_init_enter calls through -- a null
+// call, found with cdb on the first injection).
+#ifdef _WIN32
+static INIT_ONCE initialized = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK initialize(PINIT_ONCE once, PVOID parameter, PVOID * context) {
+  (void)once; (void)parameter; (void)context;
+  gum_init_embedded();
+  return TRUE;
+}
+void orbit_gum_init(void) { InitOnceExecuteOnce(&initialized, initialize, NULL, NULL); }
+#else
+#include <pthread.h>
 static pthread_once_t initialized = PTHREAD_ONCE_INIT;
 static void initialize(void) { gum_init_embedded(); }
 void orbit_gum_init(void) { pthread_once(&initialized, initialize); }
+#endif
 void orbit_gum_ignore(int ignore) {
   GumInterceptor * i = gum_interceptor_obtain();
   if (ignore) gum_interceptor_ignore_current_thread(i);
@@ -46,7 +64,8 @@ static void enter(GumInvocationContext * ic, gpointer data) {
     // a function at a million calls a second is muted after ~10k calls,
     // before its burst can lap a ring, rather than after 100k.
     gint64 now_us = g_get_monotonic_time();
-    gint64 n = __atomic_add_fetch(&h->calls, 1, __ATOMIC_RELAXED);
+    // A 100 ms window never approaches 2^31 calls, so a 32-bit counter does.
+    gint64 n = (gint64) g_atomic_int_add(&h->calls, 1) + 1;
     if (now_us - h->window_start_us >= 100000) {
       // A new window; the race between threads here only blurs the count.
       h->window_start_us = now_us;
@@ -101,6 +120,12 @@ void orbit_gum_detach(void * listener) {
 
 typedef struct { uint64_t address, offset, size; } Segment;
 typedef struct { GArray * segments; } Ranges;
+#ifdef _WIN32
+// Same path, however the shell spelled it: Windows paths are case-blind.
+static int same_path(const char * a, const char * b) { return _stricmp(a, b) == 0; }
+#else
+static int same_path(const char * a, const char * b) { return strcmp(a, b) == 0; }
+#endif
 static gboolean add_range(const GumRangeDetails * r, gpointer data) {
   Ranges * out = data;
   if (r->file != NULL) {
@@ -135,6 +160,20 @@ static GArray * segments(GumModule * module) {
     }
   }
 done:
+#elif defined(_WIN32)
+  // The section table of the in-memory PE header: file offset to RVA, the
+  // same arithmetic the service does from the file on disk.
+  const BYTE * base = GSIZE_TO_POINTER(gum_module_get_range(module)->base_address);
+  const IMAGE_DOS_HEADER * dos = (const IMAGE_DOS_HEADER *) base;
+  if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 || dos->e_lfanew > 4096) return result;
+  const IMAGE_NT_HEADERS * nt = (const IMAGE_NT_HEADERS *) (base + dos->e_lfanew);
+  if (nt->Signature != IMAGE_NT_SIGNATURE || nt->FileHeader.NumberOfSections > 256) return result;
+  const IMAGE_SECTION_HEADER * section = IMAGE_FIRST_SECTION(nt);
+  for (unsigned n = 0; n != nt->FileHeader.NumberOfSections; n++, section++) {
+    if ((section->Characteristics & IMAGE_SCN_MEM_EXECUTE) == 0 || section->SizeOfRawData == 0) continue;
+    Segment s = { (uint64_t) (uintptr_t) (base + section->VirtualAddress), section->PointerToRawData, section->SizeOfRawData };
+    g_array_append_val(result, s);
+  }
 #else
   Ranges ranges = { result };
   gum_module_enumerate_ranges(module, GUM_PAGE_EXECUTE, add_range, &ranges);
@@ -144,7 +183,7 @@ done:
 typedef struct { const char * path; GumModule * module; } FindModule;
 static gboolean find_module(GumModule * module, gpointer data) {
   FindModule * f = data;
-  if (strcmp(gum_module_get_path(module), f->path) != 0) return TRUE;
+  if (!same_path(gum_module_get_path(module), f->path)) return TRUE;
   f->module = g_object_ref(module);
   return FALSE;
 }

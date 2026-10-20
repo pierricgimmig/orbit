@@ -48,7 +48,9 @@ arch=$(uname -m 2>/dev/null || echo unknown)
 case "$os" in
     Linux)  os=linux ;;
     Darwin) os=macos ;;
-    *) die "unsupported OS '$os'. Linux and macOS have release binaries. Windows is not supported." ;;
+    MINGW* | MSYS* | CYGWIN*)
+        die "this is a POSIX shell on Windows. Use the PowerShell installer: irm https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.ps1 | iex" ;;
+    *) die "unsupported OS '$os'. Linux and macOS use this script; Windows uses tools/install/install.ps1." ;;
 esac
 case "$arch" in
     x86_64 | amd64)        arch=x86_64 ;;

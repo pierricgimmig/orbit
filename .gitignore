@@ -58,3 +58,20 @@ tools/media-kit/node/node_modules/
 /rust/crates/orbit-service/python/*.egg-info/
 integrations/unreal/OrbitProfiler/Intermediate/
 integrations/unreal/OrbitProfiler/Binaries/
+
+# MSVC outputs of the test apps (src/OrbitTestC/build.ps1, src/OrbitTestCpp/build.ps1)
+src/OrbitTestC/*.exe
+src/OrbitTestC/*.obj
+src/OrbitTestC/*.pdb
+src/OrbitTestC/*.ilk
+src/OrbitTestCpp/*.exe
+src/OrbitTestCpp/*.obj
+src/OrbitTestCpp/*.pdb
+src/OrbitTestCpp/*.ilk
+
+# Packaged Windows service and SDK (build-service-windows.ps1)
+/dist/windows/
+
+# Local CMake build tree and the elevated-test log on Windows
+/build/
+/tools/windows/elevated-tests.log

@@ -128,6 +128,17 @@ fn pin_to_cpu(_cpu: usize) {
     // Normal manual-instrumentation scenarios do not need CPU pinning.
 }
 
+#[cfg(windows)]
+fn pin_to_cpu(cpu: usize) {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentThread() -> *mut std::ffi::c_void;
+        fn SetThreadAffinityMask(thread: *mut std::ffi::c_void, mask: usize) -> usize;
+    }
+    // SAFETY: the pseudo-handle for the current thread; a mask of one bit.
+    unsafe { SetThreadAffinityMask(GetCurrentThread(), 1usize << (cpu % (usize::BITS as usize))) };
+}
+
 /// One stress thread: `calls` outer calls at `hz`, paced by a spin-wait so
 /// the rate holds at frequencies a sleep could not. With `migrate_every`
 /// above zero the thread moves to the next CPU every that many calls,
@@ -158,8 +169,7 @@ fn stress_thread(index: u64, calls: u64, hz: u64, migrate_every: u64, cpus: usiz
 }
 
 fn stress_main(threads: u64, hz: u64, calls: u64, migrate_every: u64, wait_go: bool) {
-    // SAFETY: sysconf is always safe to call.
-    let cpus = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) }.max(1) as usize;
+    let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     println!(
         "OrbitTestRust pid={} stress threads={threads} hz={hz} calls={calls} migrate_every={migrate_every} cpus={cpus}",
         std::process::id()

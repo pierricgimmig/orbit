@@ -44,7 +44,6 @@ tempfile = "3"
 # The log facade; logging.rs is the one implementation (stderr and a file).
 log = "0.4"
 orbit-frida-transport = { path = "../orbit-frida-transport" }
-libc = "0.2"
 # Pure Rust; already in the tree through orbit-capture. Used by the wire bench only.
 miniz_oxide = "0.8"
 # The disassembler behind the code views (pure Rust); the trampoline crate
@@ -70,6 +69,13 @@ orbit-thread-states = { path = "../orbit-thread-states" }
 orbit-tracing-state = { path = "../orbit-tracing-state" }
 orbit-wire = { path = "../orbit-wire" }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 orbit-perf-ring = { path = "../orbit-perf-ring" }
 orbit-unwind = { path = "../orbit-unwind" }
+
+# The kernel logger: scheduler, thread states and stack samples on Windows.
+[target.'cfg(windows)'.dependencies]
+orbit-etw = { path = "../orbit-etw" }

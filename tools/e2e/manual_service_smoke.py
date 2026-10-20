@@ -3,7 +3,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""Manual instrumentation smoke test for Linux and macOS (requires pyarrow).
+"""Manual instrumentation smoke test for Linux, macOS and Windows (requires pyarrow).
 
 Exercises a separate, late-starting Python producer through the real C ABI,
 HTTP controls, shared mappings, and Parquet export/import. No root or browser.
@@ -25,6 +25,17 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 LONG_NAME = "manual smoke: " + "long-name-" * 20
+
+
+def read_line_within(child, seconds):
+    """One line of the producer's stdout, or None after `seconds`: a reader
+    thread, because `select` on a pipe is POSIX-only and this runs on
+    Windows too."""
+    box = []
+    reader = threading.Thread(target=lambda: box.append(child.stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(seconds)
+    return box[0].strip() if box else None
 
 
 def producer():
@@ -70,10 +81,10 @@ def main():
         port = reservation.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
 
-    def request(path, body=None):
+    def request(path, body=None, timeout=30):
         content_type = "application/octet-stream" if path.endswith("/import") else "application/json"
         req = urllib.request.Request(base + path, data=body, headers={"Content-Type": content_type})
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             return response.read()
 
     def get(path):
@@ -88,8 +99,11 @@ def main():
         try:
             deadline = time.monotonic() + 30
             while True:
+                # A short timeout: a probe sent before the service listens can
+                # be dropped rather than refused (Windows), and a long one would
+                # then sit on SYN retries instead of trying a fresh socket.
                 try:
-                    get("/api/status")
+                    request("/api/status", timeout=1)
                     break
                 except OSError:
                     if service.poll() is not None or time.monotonic() >= deadline:
@@ -97,13 +111,13 @@ def main():
                     time.sleep(0.1)
             assert b"<html" in request("/").lower(), "embedded viewer missing"
             assert any(p["pid"] == service.pid for p in get("/api/processes"))
-            if sys.platform == "darwin":
+            if sys.platform in ("darwin", "win32"):
                 try:
                     request("/api/capture/start", b'{"pid":0,"dynamic_instrumentation_method":"kernel_uprobes","instrumented_functions":[{"function_id":1}]}')
                 except urllib.error.HTTPError as error:
                     assert b"Kernel uprobes are only available on Linux" in error.read()
                 else:
-                    raise AssertionError("macOS silently accepted a dynamic hook")
+                    raise AssertionError(f"{sys.platform} silently accepted a kernel uprobe")
                 assert not get("/api/status")["capturing"]
             for label in ("first capture", "second capture"):
                 request("/api/capture/start", b'{"pid":0}')
@@ -115,10 +129,7 @@ def main():
                                              text=True, env=env)
                 child.stdin.write(label + "\n")
                 child.stdin.flush()
-                # Bound the producer handshake without blocking forever on a pipe.
-                import select
-                ready, _, _ = select.select([child.stdout], [], [], 15)
-                assert ready and child.stdout.readline().strip() == "done", "producer failed"
+                assert read_line_within(child, 15) == "done", "producer failed"
                 request("/api/capture/stop", b"")
                 status = get("/api/status")
                 assert not status["capturing"], "stop returned before capture finished"
@@ -139,7 +150,7 @@ def main():
                 assert any(p["pid"] == child.pid for p in manifest["bundle"]["processes"])
                 imported = json.loads(request("/api/capture/import", bundle))
                 assert imported["events"] == len(rows), "bundle did not round trip"
-            if sys.platform == "darwin":
+            if sys.platform in ("darwin", "win32"):
                 with tempfile.TemporaryDirectory() as directory:
                     output = Path(directory) / "timed.orbit.zip"
                     timed = subprocess.Popen(
@@ -149,8 +160,7 @@ def main():
                     try:
                         child.stdin.write("timed capture\n")
                         child.stdin.flush()
-                        ready, _, _ = select.select([child.stdout], [], [], 15)
-                        assert ready and child.stdout.readline().strip() == "done"
+                        assert read_line_within(child, 15) == "done"
                         assert timed.wait(timeout=10) == 0
                         with zipfile.ZipFile(output) as capture:
                             manifest = json.loads(capture.read("manifest.json"))

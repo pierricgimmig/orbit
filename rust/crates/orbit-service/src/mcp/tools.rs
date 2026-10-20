@@ -39,6 +39,8 @@ impl Platform {
             Self::macos()
         } else if cfg!(target_os = "linux") {
             Self::linux()
+        } else if cfg!(target_os = "windows") {
+            Self::windows()
         } else {
             Self {
                 name: "other",
@@ -59,6 +61,22 @@ impl Platform {
             scheduler: true,
             kernel_uprobes: true,
             auto_profile: true,
+            disassembly: true,
+            dynamic_hooks: true,
+        }
+    }
+
+    /// Windows: the kernel logger gives sampling, the scheduler and thread
+    /// states (with an elevated prompt); Frida hooks and manual scopes
+    /// need no privilege. Kernel uprobes are Linux, and auto-profiling
+    /// rides on them.
+    pub fn windows() -> Self {
+        Self {
+            name: "windows",
+            sampling: true,
+            scheduler: true,
+            kernel_uprobes: false,
+            auto_profile: false,
             disassembly: true,
             dynamic_hooks: true,
         }
@@ -193,15 +211,15 @@ impl Mcp {
             "service_reachable": reachable,
             "service_error": error,
             "features": {
-                "sampling": feature(p.sampling, "Call-stack sampling. Linux only; macOS has no sampler."),
-                "scheduler": feature(p.scheduler, "Context switches and thread states. Linux only."),
+                "sampling": feature(p.sampling, "Call-stack sampling. Linux and Windows (elevated prompt); macOS has no sampler."),
+                "scheduler": feature(p.scheduler, "Context switches and thread states. Linux and Windows (elevated prompt)."),
                 "dynamic_hooks": {
                     "supported": p.dynamic_hooks,
                     "engines": engines,
                     "detail": "Frida hooks a running process with no rebuild. kernel_uprobes is Linux-only and needs root or CAP_SYS_ADMIN; it is never the default.",
                 },
                 "auto_profile": feature(p.auto_profile, "The service chooses hooks from samples and prunes them to a budget. Linux only, off unless requested."),
-                "disassembly": feature(p.disassembly, "Disassembly next to source. Linux only."),
+                "disassembly": feature(p.disassembly, "Disassembly next to source. Linux and Windows (no source lines from a PDB yet)."),
                 "function_stats": feature(true, "Count, total, average, min, max and standard deviation for hooks and manual scopes."),
             },
             "session": {

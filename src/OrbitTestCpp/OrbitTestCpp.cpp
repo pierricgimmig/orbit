@@ -6,7 +6,12 @@
 // wrapper. Same scenario as OrbitTestRust, OrbitTestC and OrbitTestPython.
 // Build with build.sh.
 
+#ifdef _WIN32
+#include <process.h>
+#define getpid _getpid
+#else
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -28,9 +33,9 @@ std::atomic<bool> g_stop{false};
 
 void busy(long micros) {
   auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(micros);
-  volatile unsigned long x = 1;
+  volatile unsigned long long x = 1;
   while (std::chrono::steady_clock::now() < until)
-    x = x * 6364136223846793005UL + 1442695040888963407UL;
+    x = x * 6364136223846793005ULL + 1442695040888963407ULL;
 }
 
 struct Job {

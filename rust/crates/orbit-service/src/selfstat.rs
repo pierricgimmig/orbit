@@ -20,6 +20,7 @@ pub struct SelfStat {
 }
 
 impl Default for SelfStat {
+    #[cfg(unix)]
     fn default() -> Self {
         // SAFETY: sysconf reads a constant.
         let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
@@ -35,6 +36,12 @@ impl Default for SelfStat {
             result.page_bytes = 1.0;
         }
         result
+    }
+
+    #[cfg(windows)]
+    fn default() -> Self {
+        // GetProcessTimes counts 100 ns units; the working set is in bytes.
+        SelfStat { ticks_per_sec: 10_000_000.0, page_bytes: 1.0, last: None }
     }
 }
 
@@ -87,6 +94,11 @@ fn process_usage() -> Option<(u64, u64)> {
     let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
     let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
     Some((cpu_ticks_from_stat(&stat)?, resident_pages_from_statm(&statm)?))
+}
+
+#[cfg(target_os = "windows")]
+fn process_usage() -> Option<(u64, u64)> {
+    crate::windows::process_usage()
 }
 
 #[cfg(target_os = "macos")]

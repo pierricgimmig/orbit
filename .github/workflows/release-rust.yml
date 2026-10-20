@@ -136,6 +136,43 @@ jobs:
             orbit-macos-universal.tar.gz.sha256
           if-no-files-found: error
 
+  windows:
+    name: Windows x86-64
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: rustup toolchain install 1.88.0 --profile minimal
+
+      - name: Build service and SDK
+        run: .\build-service-windows.ps1
+
+      - name: Pack archive
+        run: |
+          $stage = 'dist\orbit'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item -Path 'dist\windows\*' -Destination $stage -Recurse -Force
+          foreach ($required in 'orbit-service.exe', 'orbit_frida_agent.dll', 'orbit-frida-helper.exe', 'orbit_api.dll', 'include\orbit.h') {
+            if (-not (Test-Path (Join-Path $stage $required))) { throw "missing $required" }
+          }
+          Compress-Archive -Path $stage -DestinationPath orbit-windows-x86_64.zip -Force
+          $hash = (Get-FileHash -Algorithm SHA256 orbit-windows-x86_64.zip).Hash.ToLowerInvariant()
+          "$hash  orbit-windows-x86_64.zip" | Out-File -Encoding ascii -NoNewline orbit-windows-x86_64.zip.sha256
+          Get-Content orbit-windows-x86_64.zip.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbit-windows-x86_64
+          path: |
+            orbit-windows-x86_64.zip
+            orbit-windows-x86_64.zip.sha256
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
     needs: [linux, macos]
@@ -152,7 +189,7 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          sha256sum ./*.tar.gz | tee SHA256SUMS
+          sha256sum ./*.tar.gz ./*.zip | tee SHA256SUMS
 
       - name: Publish, or stop after the artifacts
         env:
@@ -179,7 +216,7 @@ jobs:
           python3 - "$notes" <<'PY'
           import pathlib, sys
           pathlib.Path(sys.argv[1]).write_text(
-              "Rust `orbit-service` for Linux and macOS. The viewer is in the binary; open it in a browser.\n\n"
+              "Rust `orbit-service` for Linux, macOS and Windows. The viewer is in the binary; open it in a browser.\n\n"
               "**Linux x86-64** (`orbit-linux-x86_64.tar.gz`): static musl binary with the WASM viewer embedded. "
               "Beside it, the files the service loads from its own directory:\n\n"
               "- `liborbit_frida_agent.so` and `orbit-frida-helper` (function hooks)\n"
@@ -190,10 +227,20 @@ jobs:
               "`./build-service-macos.sh --universal`. Ad-hoc signed, not notarized. "
               "Manual scopes and Frida function hooks. Attaching needs a task port. "
               "No call-stack sampling, scheduler, live disassembly, or auto-profiling. No GPU helper.\n\n"
+              "**Windows x86-64** (`orbit-windows-x86_64.zip`): static-CRT binaries from "
+              "`.\\build-service-windows.ps1`. Beside `orbit-service.exe`: `orbit_frida_agent.dll` and "
+              "`orbit-frida-helper.exe` (function hooks), `orbit_api.dll`, `orbit_api.lib` and `include\\orbit.h` "
+              "(manual instrumentation), `OrbitTestRust.exe`, `licenses/`. Call-stack sampling, the scheduler and "
+              "thread states come from the kernel logger (ETW) and need an elevated prompt; manual scopes and Frida "
+              "hooks do not. No auto-profiling, no kernel hook engine, no GPU helper.\n\n"
               "Checksums: `SHA256SUMS` and the per-archive `.sha256` files.\n\n"
               "Install (fails with a clear message until a non-prerelease `orbit-v*` tag exists):\n\n"
               "```\n"
               "curl -fsSL https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.sh | sh\n"
+              "```\n\n"
+              "Windows (PowerShell):\n\n"
+              "```\n"
+              "irm https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.ps1 | iex\n"
               "```\n\n"
               "This is not a legacy C++ nightly (`nightly-*` / `v1.*`).\n"
           )
