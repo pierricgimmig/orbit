@@ -166,9 +166,13 @@ fn the_write_path_sustains_millions_of_events_per_second() {
     println!("push: {per_second:.0} events/s, {nanos_each:.1} ns each");
 
     // Deliberately far below what the machine does, so this fails on a
-    // regression rather than on a busy CI box.
+    // regression rather than on a busy CI box. The debug build is the one
+    // CI runs, and an Intel macOS runner has read 2.2 M/s on it (454 ns a
+    // push, 2026-10-20) with nothing changed in this crate, so the floor
+    // there is lower; the headline number is measured in release.
+    let floor = if cfg!(debug_assertions) { 1_000_000.0 } else { 5_000_000.0 };
     assert!(
-        per_second > 5_000_000.0,
+        per_second > floor,
         "the write path should clear millions per second, got {per_second:.0}/s"
     );
 }
