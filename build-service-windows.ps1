@@ -9,6 +9,10 @@
 #   .\build-service-windows.ps1            # dist\windows
 #   .\build-service-windows.ps1 -Output d  # elsewhere
 #
+# Cargo reads .cargo\config.toml from the working directory, not the
+# manifest's, so the static-CRT rustflags in rust\.cargo\config.toml are
+# passed explicitly with --config: this script runs from the repo root.
+#
 # Needs Rust 1.88.0 (rustup), Visual Studio 2022 with the C++ workload (for
 # the Frida adapters, through the cc crate) and network access the first time
 # (the Frida devkits). Every binary links the C runtime statically
@@ -22,16 +26,25 @@ try {
         throw 'src\OrbitLiveViewer\viewer-dist\index.html is missing: the service embeds the viewer at build time'
     }
     . .\tools\windows\msvc-env.ps1
+    # rustup-init puts the toolchain in %USERPROFILE%\.cargo\bin; the PATH
+    # entry is missing on some machines, so look there ourselves.
+    if (-not (Get-Command rustup.exe -ErrorAction SilentlyContinue)) {
+        $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+        if (-not (Test-Path (Join-Path $cargoBin 'rustup.exe'))) {
+            throw "rustup is not on PATH and not in $cargoBin; install Rust from https://rustup.rs"
+        }
+        $env:PATH = "$cargoBin;$env:PATH"
+    }
     $target = 'x86_64-pc-windows-msvc'
     rustup target add --toolchain 1.88.0 $target
     & .\tools\frida\devkits.ps1 $target
     if ($LASTEXITCODE -ne 0) { throw 'Frida devkits' }
 
-    cargo +1.88.0 build --locked --release --target $target --manifest-path rust\crates\orbit-service\Cargo.toml
+    cargo +1.88.0 build --config rust\.cargo\config.toml --locked --release --target $target --manifest-path rust\crates\orbit-service\Cargo.toml
     if ($LASTEXITCODE -ne 0) { throw 'orbit-service build failed' }
-    cargo +1.88.0 build --locked --release --target $target --manifest-path rust\Cargo.toml -p orbit-api -p orbit-test-rust -p orbit-frida-agent --features orbit-frida-agent/native
+    cargo +1.88.0 build --config rust\.cargo\config.toml --locked --release --target $target --manifest-path rust\Cargo.toml -p orbit-api -p orbit-test-rust -p orbit-frida-agent --features orbit-frida-agent/native
     if ($LASTEXITCODE -ne 0) { throw 'orbit-api / agent build failed' }
-    cargo +1.88.0 build --locked --release --target $target --manifest-path rust\crates\orbit-frida-helper\Cargo.toml
+    cargo +1.88.0 build --config rust\.cargo\config.toml --locked --release --target $target --manifest-path rust\crates\orbit-frida-helper\Cargo.toml
     if ($LASTEXITCODE -ne 0) { throw 'orbit-frida-helper build failed' }
 
     New-Item -ItemType Directory -Force "$Output\include", "$Output\licenses" | Out-Null

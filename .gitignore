@@ -71,3 +71,7 @@ src/OrbitTestCpp/*.ilk
 
 # Packaged Windows service and SDK (build-service-windows.ps1)
 /dist/windows/
+
+# Local CMake build tree and the elevated-test log on Windows
+/build/
+/tools/windows/elevated-tests.log

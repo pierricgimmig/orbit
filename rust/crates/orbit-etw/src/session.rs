@@ -80,6 +80,12 @@ pub struct KernelSession {
 impl KernelSession {
     /// Starts the kernel logger with `options`. Needs an elevated token.
     pub fn start(options: SessionOptions) -> Result<KernelSession, String> {
+        // The NT Kernel Logger requires SeSystemProfilePrivilege enabled on
+        // the caller's token -- an elevated token holds it but disabled, so
+        // StartTrace returns ERROR_PRIVILEGE_NOT_HELD (1314) without this.
+        // The sampling-interval call below needs it too; enabling it once
+        // here covers both.
+        crate::token::enable_system_profile_privilege()?;
         let name = wide(KERNEL_LOGGER_NAME);
         // A session left behind by a controller that died holds the name.
         let _ = Self::stop_by_name(&name);
@@ -134,7 +140,7 @@ impl KernelSession {
 
     /// The profiler interval, then stack walks on every profile tick.
     fn enable_sampling(&mut self, hz: u64) -> Result<(), String> {
-        crate::token::enable_system_profile_privilege()?;
+        // The privilege was enabled in `start`, before StartTrace.
         let interval = (10_000_000 / hz.max(1)).clamp(u64::from(MIN_PROFILE_INTERVAL), u64::from(DEFAULT_PROFILE_INTERVAL) * 100) as u32;
         Self::set_profile_interval(interval)?;
         let ids = [CLASSIC_EVENT_ID { EventGuid: PERF_INFO_GUID, Type: crate::events::opcode::SAMPLED_PROFILE, Reserved: [0; 7] }];
