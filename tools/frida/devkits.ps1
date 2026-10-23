@@ -21,13 +21,22 @@ foreach ($component in 'core', 'gum') {
     if (Test-Path (Join-Path $kit ".verified-$version")) { continue }
     New-Item -ItemType Directory -Force (Join-Path $kits $Target) | Out-Null
     $download = Join-Path $kits "$Target\$name"
-    Invoke-WebRequest -Uri "https://github.com/frida/frida/releases/download/$version/$name" -OutFile $download
+    $uri = "https://github.com/frida/frida/releases/download/$version/$name"
+    # curl, which Windows 10+ ships, with a hard stall limit: Invoke-WebRequest
+    # once sat 88 minutes on this download in CI, past its own -TimeoutSec,
+    # which does not cover a response body that stops arriving.
+    $curl = Join-Path (Join-Path $env:SystemRoot 'System32') 'curl.exe'
+    Write-Host "Downloading $name"
+    & $curl -fsSL --retry 3 --retry-delay 5 --max-time 900 --speed-time 60 --speed-limit 10000 -o $download $uri
+    if ($LASTEXITCODE -ne 0) { Remove-Item $download -ErrorAction SilentlyContinue; throw "could not download $uri (curl exit $LASTEXITCODE)" }
     $expected = ($sums | Where-Object { $_ -match "\s$([regex]::Escape($name))$" } | ForEach-Object { ($_ -split '\s+')[0] })
     $actual = (Get-FileHash -Algorithm SHA256 $download).Hash.ToLowerInvariant()
     if (-not $expected -or $actual -ne $expected) { Remove-Item $download; throw "Invalid checksum: $name" }
     New-Item -ItemType Directory -Force $kit | Out-Null
-    # Windows 10+ ships bsdtar, which reads .tar.xz.
-    tar.exe -xf $download -C $kit
+    # Windows 10+ ships bsdtar, which reads .tar.xz. By full path: with Git
+    # on PATH ahead of System32, a bare tar.exe is GNU tar, which reads the
+    # drive letter of $download as a remote host.
+    & (Join-Path (Join-Path $env:SystemRoot 'System32') 'tar.exe') -xf $download -C $kit
     if ($LASTEXITCODE -ne 0) { throw "could not extract $name" }
     New-Item -ItemType File -Force (Join-Path $kit ".verified-$version") | Out-Null
     Remove-Item $download

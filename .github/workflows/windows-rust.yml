@@ -43,11 +43,15 @@ jobs:
       - name: Test service
         run: cargo +1.88.0 test --locked --manifest-path rust/crates/orbit-service/Cargo.toml
       - name: Test Frida helper and agent
+        # The devkit download is bounded in the script; this bounds the step
+        # so a hang fails in minutes, not at the job's 90.
+        timeout-minutes: 20
         run: |
           .\tools\frida\devkits.ps1
           cargo +1.88.0 test --locked --manifest-path rust/crates/orbit-frida-helper/Cargo.toml
           cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent --features native
       - name: Build distributable service and SDK
+        timeout-minutes: 30
         run: .\build-service-windows.ps1
       - name: Build and run C and C++ consumers
         env:
