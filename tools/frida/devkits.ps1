@@ -7,9 +7,6 @@
 # same checksum file, same destination.
 param([string]$Target = 'x86_64-pc-windows-msvc')
 $ErrorActionPreference = 'Stop'
-# No progress bar: rendering one makes Invoke-WebRequest crawl on a large
-# file, and in a CI log it shows nothing at all while it does.
-$ProgressPreference = 'SilentlyContinue'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $version = '17.17.0'
 switch ($Target) {
@@ -25,21 +22,13 @@ foreach ($component in 'core', 'gum') {
     New-Item -ItemType Directory -Force (Join-Path $kits $Target) | Out-Null
     $download = Join-Path $kits "$Target\$name"
     $uri = "https://github.com/frida/frida/releases/download/$version/$name"
-    # Bounded and retried: a stalled download must fail the build, not hold
-    # it until the job's timeout.
-    $attempt = 0
-    while ($true) {
-        $attempt++
-        Write-Host "Downloading $name (attempt $attempt)"
-        try {
-            Invoke-WebRequest -Uri $uri -OutFile $download -TimeoutSec 300
-            break
-        } catch {
-            Remove-Item $download -ErrorAction SilentlyContinue
-            if ($attempt -ge 3) { throw "could not download $uri after $attempt attempts: $_" }
-            Start-Sleep -Seconds (10 * $attempt)
-        }
-    }
+    # curl, which Windows 10+ ships, with a hard stall limit: Invoke-WebRequest
+    # once sat 88 minutes on this download in CI, past its own -TimeoutSec,
+    # which does not cover a response body that stops arriving.
+    $curl = Join-Path (Join-Path $env:SystemRoot 'System32') 'curl.exe'
+    Write-Host "Downloading $name"
+    & $curl -fsSL --retry 3 --retry-delay 5 --max-time 900 --speed-time 60 --speed-limit 10000 -o $download $uri
+    if ($LASTEXITCODE -ne 0) { Remove-Item $download -ErrorAction SilentlyContinue; throw "could not download $uri (curl exit $LASTEXITCODE)" }
     $expected = ($sums | Where-Object { $_ -match "\s$([regex]::Escape($name))$" } | ForEach-Object { ($_ -split '\s+')[0] })
     $actual = (Get-FileHash -Algorithm SHA256 $download).Hash.ToLowerInvariant()
     if (-not $expected -or $actual -ne $expected) { Remove-Item $download; throw "Invalid checksum: $name" }
