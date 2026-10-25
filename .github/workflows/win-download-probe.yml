@@ -1,0 +1,96 @@
+# Temporary probe: why does a 55 MB GitHub release asset stall on hosted
+# Windows runners? Each step is bounded and independent.
+name: win-download-probe
+on:
+  push:
+    branches: [ci-win-download]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      URI: https://github.com/frida/frida/releases/download/17.17.0/frida-core-devkit-17.17.0-windows-x86_64.tar.xz
+      SMALL: https://github.com/frida/frida/releases/download/17.17.0/frida-gum-devkit-17.17.0-windows-x86_64.tar.xz
+    steps:
+      - name: Versions
+        run: |
+          & "$env:SystemRoot\System32\curl.exe" --version
+          & "C:\Program Files\Git\mingw64\bin\curl.exe" --version
+          gh --version
+          [System.Environment]::OSVersion.VersionString
+      - name: A. System32 curl, verbose, as the script does it
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          & "$env:SystemRoot\System32\curl.exe" -fSL -v --trace-time --connect-timeout 30 --max-time 200 --speed-time 60 --speed-limit 10000 -o a.bin $env:URI 2>&1 | Select-Object -Last 60
+          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item a.bin -ErrorAction SilentlyContinue).Length)"
+      - name: B. System32 curl, TLS 1.2 max
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          & "$env:SystemRoot\System32\curl.exe" -fSL --tls-max 1.2 --connect-timeout 30 --max-time 200 -o b.bin $env:URI 2>&1 | Select-Object -Last 20
+          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item b.bin -ErrorAction SilentlyContinue).Length)"
+      - name: C. Git for Windows curl (OpenSSL)
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          & "C:\Program Files\Git\mingw64\bin\curl.exe" -fSL --connect-timeout 30 --max-time 200 -o c.bin $env:URI 2>&1 | Select-Object -Last 20
+          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item c.bin -ErrorAction SilentlyContinue).Length)"
+      - name: D. gh release download
+        timeout-minutes: 4
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          gh release download 17.17.0 -R frida/frida -p 'frida-core-devkit-17.17.0-windows-x86_64.tar.xz' -O d.bin 2>&1 | Select-Object -Last 20
+          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item d.bin -ErrorAction SilentlyContinue).Length)"
+      - name: E. Invoke-WebRequest
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          try { Invoke-WebRequest -Uri $env:URI -OutFile e.bin -TimeoutSec 200 } catch { "error: $_" }
+          "after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item e.bin -ErrorAction SilentlyContinue).Length)"
+      - name: F. System32 curl, the small gum kit
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          & "$env:SystemRoot\System32\curl.exe" -fSL --connect-timeout 30 --max-time 200 -o f.bin $env:SMALL 2>&1 | Select-Object -Last 20
+          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item f.bin -ErrorAction SilentlyContinue).Length)"
+      - name: G. System32 curl, a large asset from another repo
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          & "$env:SystemRoot\System32\curl.exe" -fSL --connect-timeout 30 --max-time 200 -o g.bin https://github.com/cli/cli/releases/download/v2.76.2/gh_2.76.2_windows_amd64.zip 2>&1 | Select-Object -Last 20
+          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item g.bin -ErrorAction SilentlyContinue).Length)"
+      - name: H. System32 curl, a large file from a non-GitHub host
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          & "$env:SystemRoot\System32\curl.exe" -fSL --connect-timeout 30 --max-time 200 -o h.bin https://static.rust-lang.org/dist/rust-src-1.88.0.tar.xz 2>&1 | Select-Object -Last 20
+          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item h.bin -ErrorAction SilentlyContinue).Length)"
+      - name: I. System32 curl, HTTP/1.1 Range requests in 8 MB chunks
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          & "$env:SystemRoot\System32\curl.exe" -fSL --connect-timeout 30 --max-time 60 -r 0-8388607 -o i.bin $env:URI 2>&1 | Select-Object -Last 20
+          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item i.bin -ErrorAction SilentlyContinue).Length)"
