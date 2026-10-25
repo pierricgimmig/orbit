@@ -13,7 +13,7 @@ switch ($Target) {
     'x86_64-pc-windows-msvc' { $platform = 'windows-x86_64' }
     default { throw "Unsupported native Frida target for this script: $Target (use devkits.sh elsewhere)" }
 }
-$kits = if ($env:ORBIT_FRIDA_DEVKIT_ROOT) { $env:ORBIT_FRIDA_DEVKIT_ROOT } else { Join-Path $root 'rust\target\frida-devkits' }
+$kits = if ($env:ORBIT_FRIDA_DEVKIT_ROOT) { $env:ORBIT_FRIDA_DEVKIT_ROOT } else { Join-Path $root 'target\frida-devkits' }
 $sums = Get-Content (Join-Path $PSScriptRoot 'devkits.sha256')
 foreach ($component in 'core', 'gum') {
     $name = "frida-$component-devkit-$version-$platform.tar.xz"

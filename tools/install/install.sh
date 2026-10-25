@@ -99,8 +99,8 @@ Releases are tagged orbit-vX.Y.Z (see docs/releasing.md). A prerelease suffix
 The v1.* and nightly-* releases are the legacy C++ build and do not contain orbit-service.
 
 Build from source:
-  Linux x86-64:  ./rust/build-service-musl.sh
-  macOS:         ./build-service-macos.sh
+  Linux x86-64:  ./tools/build/build-service-musl.sh
+  macOS:         tools/build/build-service-macos.sh
 
 Or set ORBIT_INSTALL_BASE to a URL prefix that already serves the files.
 To use orbitprofiler.com later, change DEFAULT_BASE at the top of this script."

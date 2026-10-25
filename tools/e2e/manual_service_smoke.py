@@ -39,7 +39,7 @@ def read_line_within(child, seconds):
 
 
 def producer():
-    sys.path.insert(0, str(ROOT / "rust/crates/orbit-api/python"))
+    sys.path.insert(0, str(ROOT / "crates/orbit-api/python"))
     import orbit_api as orbit
     assert orbit.init() == 0, "manual API failed to initialize"
     for line in sys.stdin:

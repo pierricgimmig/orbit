@@ -19,7 +19,7 @@ import time
 # The shippable package lives beside the header it mirrors; pip installs it
 # as orbit-api. In the tree, import it from there.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "../../../rust/crates/orbit-api/python"))
+                                "../../../crates/orbit-api/python"))
 import orbit_api as orbit  # noqa: E402
 
 

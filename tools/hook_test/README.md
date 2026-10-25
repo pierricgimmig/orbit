@@ -20,7 +20,7 @@ python3 tools/hook_test/hook_harness.py --sudo --config my_targets.toml
 `--sudo` runs the service through the passwordless wrapper
 (`tools/sudo/install.sh`), because uprobes need `CAP_SYS_ADMIN`; without it the
 run reports the arming refusal and stops. The service binary is
-`rust/crates/orbit-service/target/release/orbit-service` (build it first).
+`target/release/orbit-service` (build it first).
 
 Output: a per-function scorecard on the console and in
 `docs/hook-test/report.md` (+ `.json`):

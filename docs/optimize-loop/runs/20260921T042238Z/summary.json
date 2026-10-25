@@ -1,0 +1,358 @@
+{
+  "timestamp": "2026-09-21T04:22:38Z",
+  "target_name": "stockfish",
+  "project": "/home/pierric/git/stockfish",
+  "config_path": "/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/stockfish.toml",
+  "host": "rixbox",
+  "secondary": null,
+  "bench": {
+    "ok": true,
+    "command": [
+      "/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-bench.sh"
+    ],
+    "iterations": 4,
+    "metric": "nps",
+    "unit": "nodes_per_sec",
+    "values": [
+      1438189.0,
+      1488494.0,
+      1391174.0,
+      1318245.0
+    ],
+    "mean": 1409025.5,
+    "stdev": 72400.56965015308,
+    "min": 1318245.0,
+    "max": 1488494.0,
+    "fingerprint": "1659671",
+    "fingerprints": [
+      "1659671",
+      "1659671",
+      "1659671",
+      "1659671"
+    ],
+    "runs": [
+      {
+        "iteration": 1,
+        "returncode": 0,
+        "value": 1438189.0,
+        "fingerprint": "1659671"
+      },
+      {
+        "iteration": 2,
+        "returncode": 0,
+        "value": 1488494.0,
+        "fingerprint": "1659671"
+      },
+      {
+        "iteration": 3,
+        "returncode": 0,
+        "value": 1391174.0,
+        "fingerprint": "1659671"
+      },
+      {
+        "iteration": 4,
+        "returncode": 0,
+        "value": 1318245.0,
+        "fingerprint": "1659671"
+      }
+    ]
+  },
+  "correctness": {
+    "ok": true,
+    "passed": true,
+    "command": [
+      "/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-bench.sh"
+    ],
+    "returncode": 0,
+    "expect_returncode": 0,
+    "fingerprint": "1659671",
+    "stdout_tail": "ORBIT_METRIC throughput=1198318\nORBIT_FINGERPRINT 1659671\n"
+  },
+  "profile": {
+    "backend": "orbit-http",
+    "ok": true,
+    "samples": 12796,
+    "hotspots": [
+      {
+        "symbol": "Stockfish::Eval::NNUE::(anonymous namespace)::apply_combined(Stockfish::Color, Stockfish::Eval::NNUE::FeatureTransformer const&, Stockfish::Eval::NNUE::AccumulatorState const&, Stockfish::Eval::NNUE::AccumulatorState&, Stockfish::ValueList<unsigned short, 32ul> const&, Stockfish::ValueList<unsigned short, 32ul> const&, Stockfish::ValueList<unsigned short, 256ul> const&, Stockfish::ValueList<unsigned short, 256ul> const&)",
+        "symbol_raw": "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L14apply_combinedENS_5ColorERKNS1_18FeatureTransformerERKNS1_16AccumulatorStateERS7_RKNS_9ValueListItLm32EEESE_RKNSB_ItLm256EEESH_",
+        "self": 4773,
+        "self_percent": 37.30071897467959
+      },
+      {
+        "symbol": "Stockfish::Eval::NNUE::NetworkArchitecture::propagate(unsigned char const*, Stockfish::Eval::NNUE::NNZInfo<1024ul> const&) const",
+        "symbol_raw": "_ZNK9Stockfish4Eval4NNUE19NetworkArchitecture9propagateEPKhRKNS1_7NNZInfoILm1024EEE",
+        "self": 1175,
+        "self_percent": 9.182557049077836
+      },
+      {
+        "symbol": "Stockfish::Eval::NNUE::(anonymous namespace)::update_accumulator_refresh_cache(Stockfish::Color, Stockfish::Eval::NNUE::FeatureTransformer const&, Stockfish::Position const&, Stockfish::Eval::NNUE::AccumulatorState&, Stockfish::Eval::NNUE::AccumulatorCaches&)",
+        "symbol_raw": "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L32update_accumulator_refresh_cacheENS_5ColorERKNS1_18FeatureTransformerERKNS_8PositionERNS1_16AccumulatorStateERNS1_17AccumulatorCachesE",
+        "self": 937,
+        "self_percent": 7.3226008127539854
+      },
+      {
+        "symbol": "int Stockfish::Search::Worker::search<(Stockfish::NodeType)0>(Stockfish::Position&, Stockfish::Search::Stack*, int, int, int, bool)",
+        "symbol_raw": "_ZN9Stockfish6Search6Worker6searchILNS_8NodeTypeE0EEEiRNS_8PositionEPNS0_5StackEiiib",
+        "self": 834,
+        "self_percent": 6.517661769302907
+      },
+      {
+        "symbol": "Stockfish::MovePicker::next_move()",
+        "symbol_raw": "_ZN9Stockfish10MovePicker9next_moveEv",
+        "self": 746,
+        "self_percent": 5.829946858393248
+      },
+      {
+        "symbol": "Stockfish::Eval::NNUE::(anonymous namespace)::update_accumulator_incremental_both(Stockfish::Eval::NNUE::FeatureTransformer const&, Stockfish::Square, Stockfish::Square, Stockfish::Eval::NNUE::AccumulatorState&, Stockfish::Eval::NNUE::AccumulatorState const&)",
+        "symbol_raw": "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L35update_accumulator_incremental_bothERKNS1_18FeatureTransformerENS_6SquareES6_RNS1_16AccumulatorStateERKS7_",
+        "self": 435,
+        "self_percent": 3.3994998437011565
+      },
+      {
+        "symbol": "Stockfish::Position::do_move(Stockfish::Move, Stockfish::StateInfo&, bool, Stockfish::Dirties&, Stockfish::TranspositionTable const*, Stockfish::SharedHistories const*)",
+        "symbol_raw": "_ZN9Stockfish8Position7do_moveENS_4MoveERNS_9StateInfoEbRNS_7DirtiesEPKNS_18TranspositionTableEPKNS_15SharedHistoriesE",
+        "self": 374,
+        "self_percent": 2.922788371366052
+      },
+      {
+        "symbol": "Stockfish::(anonymous namespace)::partial_insertion_sort(Stockfish::ExtMove*, Stockfish::ExtMove*, int)",
+        "symbol_raw": "_ZN9Stockfish12_GLOBAL__N_1L22partial_insertion_sortEPNS_7ExtMoveES2_i",
+        "self": 336,
+        "self_percent": 2.62582056892779
+      },
+      {
+        "symbol": "Stockfish::Eval::NNUE::(anonymous namespace)::update_accumulator_hybrid(Stockfish::Color, Stockfish::Position const&, Stockfish::Eval::NNUE::FeatureTransformer const&, Stockfish::Eval::NNUE::AccumulatorState&, Stockfish::Eval::NNUE::AccumulatorState const&, Stockfish::Eval::NNUE::AccumulatorCaches&)",
+        "symbol_raw": "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L25update_accumulator_hybridENS_5ColorERKNS_8PositionERKNS1_18FeatureTransformerERNS1_16AccumulatorStateERKSA_RNS1_17AccumulatorCachesE",
+        "self": 304,
+        "self_percent": 2.3757424195060954
+      },
+      {
+        "symbol": "Stockfish::TranspositionTable::probe(unsigned long) const",
+        "symbol_raw": "_ZNK9Stockfish18TranspositionTable5probeEm",
+        "self": 293,
+        "self_percent": 2.289778055642388
+      },
+      {
+        "symbol": "void Stockfish::Position::update_piece_threats<true>(Stockfish::Piece, bool, Stockfish::Square, Stockfish::DirtyThreats*, unsigned long) const",
+        "symbol_raw": "_ZNK9Stockfish8Position20update_piece_threatsILb1EEEvNS_5PieceEbNS_6SquareEPNS_12DirtyThreatsEm",
+        "self": 290,
+        "self_percent": 2.2663332291341045
+      },
+      {
+        "symbol": "Stockfish::(anonymous namespace)::correction_value(Stockfish::Search::Worker const&, Stockfish::Position const&, Stockfish::Search::Stack const*)",
+        "symbol_raw": "_ZN9Stockfish12_GLOBAL__N_1L16correction_valueERKNS_6Search6WorkerERKNS_8PositionEPKNS1_5StackE",
+        "self": 255,
+        "self_percent": 1.9928102532041263
+      },
+      {
+        "symbol": "Stockfish::Eval::NNUE::Network::evaluate(Stockfish::Position const&, Stockfish::Eval::NNUE::AccumulatorStack&, Stockfish::Eval::NNUE::AccumulatorCaches&) const",
+        "symbol_raw": "_ZNK9Stockfish4Eval4NNUE7Network8evaluateERKNS_8PositionERNS1_16AccumulatorStackERNS1_17AccumulatorCachesE",
+        "self": 190,
+        "self_percent": 1.4848390121913098
+      },
+      {
+        "symbol": "Stockfish::Search::Worker::do_move(Stockfish::Position&, Stockfish::Move, Stockfish::StateInfo&, bool, Stockfish::Search::Stack*)",
+        "symbol_raw": "_ZN9Stockfish6Search6Worker7do_moveERNS_8PositionENS_4MoveERNS_9StateInfoEbPNS0_5StackE",
+        "self": 151,
+        "self_percent": 1.18005626758362
+      },
+      {
+        "symbol": "Stockfish::Position::see_ge(Stockfish::Move, int) const",
+        "symbol_raw": "_ZNK9Stockfish8Position6see_geENS_4MoveEi",
+        "self": 149,
+        "self_percent": 1.1644263832447639
+      },
+      {
+        "symbol": "Stockfish::Position::attackers_to(Stockfish::Square, unsigned long) const",
+        "symbol_raw": "_ZNK9Stockfish8Position12attackers_toENS_6SquareEm",
+        "self": 124,
+        "self_percent": 0.9690528290090653
+      },
+      {
+        "symbol": "Stockfish::(anonymous namespace)::update_continuation_histories(Stockfish::Search::Stack*, Stockfish::Piece, Stockfish::Square, int)",
+        "symbol_raw": "_ZN9Stockfish12_GLOBAL__N_1L29update_continuation_historiesEPNS_6Search5StackENS_5PieceENS_6SquareEi",
+        "self": 114,
+        "self_percent": 0.8909034073147859
+      },
+      {
+        "symbol": "void Stockfish::Position::update_piece_threats<false>(Stockfish::Piece, bool, Stockfish::Square, Stockfish::DirtyThreats*, unsigned long) const [clone .constprop.0]",
+        "symbol_raw": "_ZNK9Stockfish8Position20update_piece_threatsILb0EEEvNS_5PieceEbNS_6SquareEPNS_12DirtyThreatsEm.constprop.0",
+        "self": 106,
+        "self_percent": 0.8283838699593623
+      },
+      {
+        "symbol": "Stockfish::Attacks::DualMagic::both_attacks_bb(unsigned long) const",
+        "symbol_raw": "_ZNK9Stockfish7Attacks9DualMagic15both_attacks_bbEm",
+        "self": 104,
+        "self_percent": 0.8127539856205064
+      },
+      {
+        "symbol": "int Stockfish::Search::Worker::qsearch<(Stockfish::NodeType)0>(Stockfish::Position&, Stockfish::Search::Stack*, int, int)",
+        "symbol_raw": "_ZN9Stockfish6Search6Worker7qsearchILNS_8NodeTypeE0EEEiRNS_8PositionEPNS0_5StackEii",
+        "self": 94,
+        "self_percent": 0.734604563926227
+      }
+    ],
+    "symbols": {
+      "elapsed_ms": 52,
+      "error": "",
+      "function_count": 9820,
+      "module_count": 6,
+      "pid": 3297534,
+      "status": "ready"
+    },
+    "symbol_error": null,
+    "pid": 3297534,
+    "command": "/home/pierric/git/orbit/rust/crates/orbit-service/target/release/orbit-service --serve ; capture pid of: ['/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-capture.sh']",
+    "service_log": "/home/pierric/git/orbit/docs/optimize-loop/runs/20260921T042238Z/capture/orbit-service.log",
+    "note": "Generic PID attach via orbit-service serve mode. Falls back to orbit file-mode (--pid --out) if serve mode records no samples.",
+    "attempts": [
+      {
+        "backend": "orbit-http",
+        "ok": true,
+        "samples": 12796,
+        "hotspots": [
+          {
+            "symbol": "Stockfish::Eval::NNUE::(anonymous namespace)::apply_combined(Stockfish::Color, Stockfish::Eval::NNUE::FeatureTransformer const&, Stockfish::Eval::NNUE::AccumulatorState const&, Stockfish::Eval::NNUE::AccumulatorState&, Stockfish::ValueList<unsigned short, 32ul> const&, Stockfish::ValueList<unsigned short, 32ul> const&, Stockfish::ValueList<unsigned short, 256ul> const&, Stockfish::ValueList<unsigned short, 256ul> const&)",
+            "symbol_raw": "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L14apply_combinedENS_5ColorERKNS1_18FeatureTransformerERKNS1_16AccumulatorStateERS7_RKNS_9ValueListItLm32EEESE_RKNSB_ItLm256EEESH_",
+            "self": 4773,
+            "self_percent": 37.30071897467959
+          },
+          {
+            "symbol": "Stockfish::Eval::NNUE::NetworkArchitecture::propagate(unsigned char const*, Stockfish::Eval::NNUE::NNZInfo<1024ul> const&) const",
+            "symbol_raw": "_ZNK9Stockfish4Eval4NNUE19NetworkArchitecture9propagateEPKhRKNS1_7NNZInfoILm1024EEE",
+            "self": 1175,
+            "self_percent": 9.182557049077836
+          },
+          {
+            "symbol": "Stockfish::Eval::NNUE::(anonymous namespace)::update_accumulator_refresh_cache(Stockfish::Color, Stockfish::Eval::NNUE::FeatureTransformer const&, Stockfish::Position const&, Stockfish::Eval::NNUE::AccumulatorState&, Stockfish::Eval::NNUE::AccumulatorCaches&)",
+            "symbol_raw": "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L32update_accumulator_refresh_cacheENS_5ColorERKNS1_18FeatureTransformerERKNS_8PositionERNS1_16AccumulatorStateERNS1_17AccumulatorCachesE",
+            "self": 937,
+            "self_percent": 7.3226008127539854
+          },
+          {
+            "symbol": "int Stockfish::Search::Worker::search<(Stockfish::NodeType)0>(Stockfish::Position&, Stockfish::Search::Stack*, int, int, int, bool)",
+            "symbol_raw": "_ZN9Stockfish6Search6Worker6searchILNS_8NodeTypeE0EEEiRNS_8PositionEPNS0_5StackEiiib",
+            "self": 834,
+            "self_percent": 6.517661769302907
+          },
+          {
+            "symbol": "Stockfish::MovePicker::next_move()",
+            "symbol_raw": "_ZN9Stockfish10MovePicker9next_moveEv",
+            "self": 746,
+            "self_percent": 5.829946858393248
+          },
+          {
+            "symbol": "Stockfish::Eval::NNUE::(anonymous namespace)::update_accumulator_incremental_both(Stockfish::Eval::NNUE::FeatureTransformer const&, Stockfish::Square, Stockfish::Square, Stockfish::Eval::NNUE::AccumulatorState&, Stockfish::Eval::NNUE::AccumulatorState const&)",
+            "symbol_raw": "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L35update_accumulator_incremental_bothERKNS1_18FeatureTransformerENS_6SquareES6_RNS1_16AccumulatorStateERKS7_",
+            "self": 435,
+            "self_percent": 3.3994998437011565
+          },
+          {
+            "symbol": "Stockfish::Position::do_move(Stockfish::Move, Stockfish::StateInfo&, bool, Stockfish::Dirties&, Stockfish::TranspositionTable const*, Stockfish::SharedHistories const*)",
+            "symbol_raw": "_ZN9Stockfish8Position7do_moveENS_4MoveERNS_9StateInfoEbRNS_7DirtiesEPKNS_18TranspositionTableEPKNS_15SharedHistoriesE",
+            "self": 374,
+            "self_percent": 2.922788371366052
+          },
+          {
+            "symbol": "Stockfish::(anonymous namespace)::partial_insertion_sort(Stockfish::ExtMove*, Stockfish::ExtMove*, int)",
+            "symbol_raw": "_ZN9Stockfish12_GLOBAL__N_1L22partial_insertion_sortEPNS_7ExtMoveES2_i",
+            "self": 336,
+            "self_percent": 2.62582056892779
+          },
+          {
+            "symbol": "Stockfish::Eval::NNUE::(anonymous namespace)::update_accumulator_hybrid(Stockfish::Color, Stockfish::Position const&, Stockfish::Eval::NNUE::FeatureTransformer const&, Stockfish::Eval::NNUE::AccumulatorState&, Stockfish::Eval::NNUE::AccumulatorState const&, Stockfish::Eval::NNUE::AccumulatorCaches&)",
+            "symbol_raw": "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L25update_accumulator_hybridENS_5ColorERKNS_8PositionERKNS1_18FeatureTransformerERNS1_16AccumulatorStateERKSA_RNS1_17AccumulatorCachesE",
+            "self": 304,
+            "self_percent": 2.3757424195060954
+          },
+          {
+            "symbol": "Stockfish::TranspositionTable::probe(unsigned long) const",
+            "symbol_raw": "_ZNK9Stockfish18TranspositionTable5probeEm",
+            "self": 293,
+            "self_percent": 2.289778055642388
+          },
+          {
+            "symbol": "void Stockfish::Position::update_piece_threats<true>(Stockfish::Piece, bool, Stockfish::Square, Stockfish::DirtyThreats*, unsigned long) const",
+            "symbol_raw": "_ZNK9Stockfish8Position20update_piece_threatsILb1EEEvNS_5PieceEbNS_6SquareEPNS_12DirtyThreatsEm",
+            "self": 290,
+            "self_percent": 2.2663332291341045
+          },
+          {
+            "symbol": "Stockfish::(anonymous namespace)::correction_value(Stockfish::Search::Worker const&, Stockfish::Position const&, Stockfish::Search::Stack const*)",
+            "symbol_raw": "_ZN9Stockfish12_GLOBAL__N_1L16correction_valueERKNS_6Search6WorkerERKNS_8PositionEPKNS1_5StackE",
+            "self": 255,
+            "self_percent": 1.9928102532041263
+          },
+          {
+            "symbol": "Stockfish::Eval::NNUE::Network::evaluate(Stockfish::Position const&, Stockfish::Eval::NNUE::AccumulatorStack&, Stockfish::Eval::NNUE::AccumulatorCaches&) const",
+            "symbol_raw": "_ZNK9Stockfish4Eval4NNUE7Network8evaluateERKNS_8PositionERNS1_16AccumulatorStackERNS1_17AccumulatorCachesE",
+            "self": 190,
+            "self_percent": 1.4848390121913098
+          },
+          {
+            "symbol": "Stockfish::Search::Worker::do_move(Stockfish::Position&, Stockfish::Move, Stockfish::StateInfo&, bool, Stockfish::Search::Stack*)",
+            "symbol_raw": "_ZN9Stockfish6Search6Worker7do_moveERNS_8PositionENS_4MoveERNS_9StateInfoEbPNS0_5StackE",
+            "self": 151,
+            "self_percent": 1.18005626758362
+          },
+          {
+            "symbol": "Stockfish::Position::see_ge(Stockfish::Move, int) const",
+            "symbol_raw": "_ZNK9Stockfish8Position6see_geENS_4MoveEi",
+            "self": 149,
+            "self_percent": 1.1644263832447639
+          },
+          {
+            "symbol": "Stockfish::Position::attackers_to(Stockfish::Square, unsigned long) const",
+            "symbol_raw": "_ZNK9Stockfish8Position12attackers_toENS_6SquareEm",
+            "self": 124,
+            "self_percent": 0.9690528290090653
+          },
+          {
+            "symbol": "Stockfish::(anonymous namespace)::update_continuation_histories(Stockfish::Search::Stack*, Stockfish::Piece, Stockfish::Square, int)",
+            "symbol_raw": "_ZN9Stockfish12_GLOBAL__N_1L29update_continuation_historiesEPNS_6Search5StackENS_5PieceENS_6SquareEi",
+            "self": 114,
+            "self_percent": 0.8909034073147859
+          },
+          {
+            "symbol": "void Stockfish::Position::update_piece_threats<false>(Stockfish::Piece, bool, Stockfish::Square, Stockfish::DirtyThreats*, unsigned long) const [clone .constprop.0]",
+            "symbol_raw": "_ZNK9Stockfish8Position20update_piece_threatsILb0EEEvNS_5PieceEbNS_6SquareEPNS_12DirtyThreatsEm.constprop.0",
+            "self": 106,
+            "self_percent": 0.8283838699593623
+          },
+          {
+            "symbol": "Stockfish::Attacks::DualMagic::both_attacks_bb(unsigned long) const",
+            "symbol_raw": "_ZNK9Stockfish7Attacks9DualMagic15both_attacks_bbEm",
+            "self": 104,
+            "self_percent": 0.8127539856205064
+          },
+          {
+            "symbol": "int Stockfish::Search::Worker::qsearch<(Stockfish::NodeType)0>(Stockfish::Position&, Stockfish::Search::Stack*, int, int)",
+            "symbol_raw": "_ZN9Stockfish6Search6Worker7qsearchILNS_8NodeTypeE0EEEiRNS_8PositionEPNS0_5StackEii",
+            "self": 94,
+            "self_percent": 0.734604563926227
+          }
+        ],
+        "symbols": {
+          "elapsed_ms": 52,
+          "error": "",
+          "function_count": 9820,
+          "module_count": 6,
+          "pid": 3297534,
+          "status": "ready"
+        },
+        "symbol_error": null,
+        "pid": 3297534,
+        "command": "/home/pierric/git/orbit/rust/crates/orbit-service/target/release/orbit-service --serve ; capture pid of: ['/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-capture.sh']",
+        "service_log": "/home/pierric/git/orbit/docs/optimize-loop/runs/20260921T042238Z/capture/orbit-service.log",
+        "note": "Generic PID attach via orbit-service serve mode. Falls back to orbit file-mode (--pid --out) if serve mode records no samples."
+      }
+    ],
+    "perf_event_paranoid": {
+      "before": "-1",
+      "after": "-1",
+      "changed": false
+    }
+  }
+}

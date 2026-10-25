@@ -174,6 +174,11 @@ ORBIT_SHARED_ const struct orbit_api_table_v1* orbit_api_table_v1_ = 0;
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#if defined(_MSC_VER)
+/* getenv is what this header needs; the _dupenv_s MSVC suggests allocates. */
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
 #define ORBIT_LIB_FILE_ "orbit_api.dll"
 #define ORBIT_SERVICE_FILE_ "orbit-service.exe"
 #define ORBIT_PATH_SEP_ ';'
@@ -564,5 +569,9 @@ static inline void orbit_scope_cleanup_(const orbit_scope* scope) { orbit_stop(*
                                                                   unused)) = orbit_start(ORBIT_LIT(lit))
 
 #endif /* __cplusplus / GNU C */
+
+#if defined(_WIN32) && defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 #endif /* ORBIT_API_H */

@@ -7,12 +7,12 @@ on:
   push:
     branches: ['main']
     paths:
-      - 'rust/live-viewer/**'
+      - 'crates/orbit-live-*/**'
       - '.github/workflows/live-viewer.yml'
   pull_request:
     branches: ['main']
     paths:
-      - 'rust/live-viewer/**'
+      - 'crates/orbit-live-*/**'
       - '.github/workflows/live-viewer.yml'
 
 permissions: read-all
@@ -32,33 +32,18 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-        with:
-          # Separate workspaces: the server crates orbit-service links, the
-          # wasm32 eframe viewer, and the trace importers. See
-          # rust/live-viewer/Cargo.toml.
-          workspaces: |
-            rust/live-viewer
-            rust/live-viewer/crates/orbit-live-viewer
-            rust/live-viewer/crates/orbit-live-chrome
-      - name: Test native crates
-        working-directory: rust/live-viewer
-        run: cargo test --workspace
-      # Its own workspace too (flate2 / serde_json stay out of the server
-      # crates), so --workspace above does not reach it.
-      - name: Test Chrome JSON + Perfetto proto ingest
-        working-directory: rust/live-viewer/crates/orbit-live-chrome
-        run: cargo test
-      - name: Test viewer crate (eframe + callback, no window)
-        working-directory: rust/live-viewer/crates/orbit-live-viewer
-        run: cargo test
+      # The seven viewer crates: the server side orbit-service links, the
+      # trace importers, and the eframe viewer itself (its tests run natively,
+      # no window). The service crates have their own jobs.
+      - name: Test the live-viewer crates
+        run: >
+          cargo test -p orbit-live-event -p orbit-live-ring -p orbit-live-protocol
+          -p orbit-live-render -p orbit-live-server -p orbit-live-chrome -p orbit-live-viewer
       - name: Compile eframe WebRunner for wasm32
-        working-directory: rust/live-viewer/crates/orbit-live-viewer
-        run: cargo build --target wasm32-unknown-unknown
+        run: cargo build -p orbit-live-viewer --target wasm32-unknown-unknown
       - name: Compile benches
-        working-directory: rust/live-viewer
-        run: cargo bench --workspace --no-run
+        run: cargo bench -p orbit-live-render -p orbit-live-ring --no-run
       # The complexity test is compiled out of debug (`cfg(not(debug_assertions))`).
       # Run it once with optimizations so CI still guards O(width log n).
       - name: Test pixel rasterizer complexity (release)
-        working-directory: rust/live-viewer
         run: cargo test -p orbit-live-render --release --lib tests::pixel_prepare_is_not_linear_in_scopes -- --exact

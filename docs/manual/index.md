@@ -80,7 +80,7 @@ orbit_stop(s);
 ORBIT_VALUE("fps", 59.9);
 ```
 
-`orbit_init()` looks for `liborbit_api` in `$ORBIT_API_LIB`, beside `orbit-service` on `PATH` (then `~/.local/bin`), beside the executable, then the system loader. The header is `rust/crates/orbit-api/include/orbit.h`.
+`orbit_init()` looks for `liborbit_api` in `$ORBIT_API_LIB`, beside `orbit-service` on `PATH` (then `~/.local/bin`), beside the executable, then the system loader. The header is `crates/orbit-api/include/orbit.h`.
 
 Rust, from the `orbit-api` crate:
 

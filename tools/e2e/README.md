@@ -28,7 +28,7 @@ loads the page and never paints.
 - `google-chrome` on PATH (headless, SwiftShader for WebGL).
 - Box3D checked out and built at `~/git/box3d` (`--box3d` to point elsewhere).
 - The service built: `cargo build --release --manifest-path
-  rust/crates/orbit-service/Cargo.toml`.
+  crates/orbit-service/Cargo.toml`.
 
 No pip packages. `cdp.py` is a ~100-line Chrome DevTools Protocol client on
 the standard library, because this machine's Python refuses installs (PEP 668)
@@ -103,7 +103,7 @@ event arrived with no service behind the page.
 
 ## The Python reader
 
-`python-reader` runs `rust/crates/orbit-capture/python/open_capture.py` on
+`python-reader` runs `crates/orbit-capture/python/open_capture.py` on
 the bundle `save-slice-open` exported. It needs pyarrow, which this
 machine's system Python refuses to install; point
 `ORBIT_E2E_PYARROW_PYTHON` at an interpreter that has it (a venv) or the

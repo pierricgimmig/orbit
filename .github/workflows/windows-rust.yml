@@ -10,9 +10,9 @@ name: windows-rust
 
 on:
   push:
-    branches: [main, rust]
+    branches: [main]
   pull_request:
-    branches: [main, rust]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -34,25 +34,25 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal
       - name: Test producer crates and the ETW decoders
-        run: cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-api -p orbit-scope-ring -p orbit-frida-transport -p orbit-etw
+        run: cargo +1.88.0 test --locked -p orbit-api -p orbit-scope-ring -p orbit-frida-transport -p orbit-etw
       - name: Test the kernel logger live (the runner is elevated)
         env:
           # Turns the "not elevated" skip into a failure: this job must run it.
           ORBIT_ETW_LIVE: '1'
-        run: cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-etw --test live -- --nocapture
+        run: cargo +1.88.0 test --locked -p orbit-etw --test live -- --nocapture
       - name: Test service
-        run: cargo +1.88.0 test --locked --manifest-path rust/crates/orbit-service/Cargo.toml
+        run: cargo +1.88.0 test --locked -p orbit-service
       - name: Test Frida helper and agent
         # The devkit download is bounded in the script; this bounds the step
         # so a hang fails in minutes, not at the job's 90.
         timeout-minutes: 20
         run: |
           .\tools\frida\devkits.ps1
-          cargo +1.88.0 test --locked --manifest-path rust/crates/orbit-frida-helper/Cargo.toml
-          cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent --features native
+          cargo +1.88.0 test --locked -p orbit-frida-helper
+          cargo +1.88.0 test --locked -p orbit-frida-agent --features native
       - name: Build distributable service and SDK
         timeout-minutes: 30
-        run: .\build-service-windows.ps1
+        run: .\tools\build\build-service-windows.ps1
       - name: Build and run C and C++ consumers
         env:
           ORBIT_API_LIB: ${{ github.workspace }}\dist\windows\orbit_api.dll
@@ -71,12 +71,12 @@ jobs:
       - name: Smoke test Frida hooks
         run: |
           . .\tools\windows\msvc-env.ps1
-          New-Item -ItemType Directory -Force rust\target\e2e | Out-Null
-          Push-Location rust\target\e2e
+          New-Item -ItemType Directory -Force target\e2e | Out-Null
+          Push-Location target\e2e
           cl.exe /nologo /O1 /Zi /std:c11 /utf-8 /DORBIT_STATIC /I..\..\crates\orbit-api\include ..\..\..\tools\e2e\frida_target.c /Fe:orbit-frida-target.exe /link /DEBUG ..\x86_64-pc-windows-msvc\release\orbit_api.lib ws2_32.lib ntdll.lib userenv.lib bcrypt.lib advapi32.lib kernel32.lib
           Pop-Location
-          python tools/e2e/frida_smoke.py --service dist/windows/orbit-service.exe --agent dist/windows/orbit_frida_agent.dll --helper dist/windows/orbit-frida-helper.exe --target rust/target/e2e/orbit-frida-target.exe
-          python tools/e2e/frida_smoke.py --service dist/windows/orbit-service.exe --agent dist/windows/orbit_frida_agent.dll --helper dist/windows/orbit-frida-helper.exe --target rust/target/e2e/orbit-frida-target.exe --inflight
+          python tools/e2e/frida_smoke.py --service dist/windows/orbit-service.exe --agent dist/windows/orbit_frida_agent.dll --helper dist/windows/orbit-frida-helper.exe --target target/e2e/orbit-frida-target.exe
+          python tools/e2e/frida_smoke.py --service dist/windows/orbit-service.exe --agent dist/windows/orbit_frida_agent.dll --helper dist/windows/orbit-frida-helper.exe --target target/e2e/orbit-frida-target.exe --inflight
       - name: Capture the scheduler and samples with the kernel logger
         run: |
           python tools/e2e/windows_etw_smoke.py --service dist/windows/orbit-service.exe --target dist/windows/OrbitTestRust.exe

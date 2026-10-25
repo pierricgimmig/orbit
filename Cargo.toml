@@ -1,0 +1,95 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# One workspace: the capture service and everything it is built from, the
+# browser viewer and its server, the instrumentation API, the test program.
+# `cargo build -p orbit-service` compiles only that graph, so the viewer's
+# eframe/wgpu tree never enters a service build; `cargo test --workspace`
+# covers all of it. crates/README.md describes the crates.
+#
+# See docs/rust-port-plan.html for how the C++ service was ported, and
+# docs/blog/ for the running write-up of what each step cost. The C++ tree
+# itself lives on the `cpp` branch.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/orbit-api",
+    "crates/orbit-capture",
+    "crates/orbit-collector",
+    "crates/orbit-etw",
+    "crates/orbit-frida-agent",
+    "crates/orbit-frida-helper",
+    "crates/orbit-frida-transport",
+    "crates/orbit-gpu-helper",
+    "crates/orbit-live-chrome",
+    "crates/orbit-live-event",
+    "crates/orbit-live-protocol",
+    "crates/orbit-live-render",
+    "crates/orbit-live-ring",
+    "crates/orbit-live-server",
+    "crates/orbit-live-viewer",
+    "crates/orbit-maps",
+    "crates/orbit-object",
+    "crates/orbit-perf-merge",
+    "crates/orbit-perf-records",
+    "crates/orbit-perf-ring",
+    "crates/orbit-pod-dump",
+    "crates/orbit-ptrace",
+    "crates/orbit-scope-ring",
+    "crates/orbit-service",
+    "crates/orbit-test-rust",
+    "crates/orbit-thread-states",
+    "crates/orbit-tracing-state",
+    "crates/orbit-trampoline",
+    "crates/orbit-unwind",
+    "crates/orbit-wire",
+]
+
+[workspace.package]
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/pierricgimmig/orbit"
+rust-version = "1.88"
+
+# Shared by the live-viewer crates (`clap.workspace = true` and friends).
+[workspace.dependencies]
+clap = "=4.5.23"
+criterion = { version = "0.5.1", features = ["html_reports"] }
+parking_lot = "0.12"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.135"
+tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+# The symbol table stays -- a profiler's own binaries, the service and the
+# test apps, must symbolize -- and so does the line table: the code views
+# interleave a function's disassembly with its source, which needs
+# .debug_line, and the example disassembly is of the service itself.
+# Nothing else of DWARF (no .debug_info beyond what the line table needs).
+debug = "line-tables-only"
+strip = "none"
+
+# The dependencies carry no debug info at all: their line tables were 35 MB
+# on the service, for code nobody disassembles from here.
+[profile.release.package."*"]
+debug = false
+
+[profile.bench]
+lto = false
+debug = true
+
+# The wasm32 viewer pack (crates/orbit-live-viewer/build_wasm.sh). A plain
+# release build with no DWARF: the pack is shipped to browsers, where line
+# tables and thin LTO buy nothing and cost download size and build time.
+[profile.wasm]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = false
+panic = "abort"

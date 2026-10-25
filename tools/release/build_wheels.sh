@@ -33,9 +33,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$(pwd)
 
-API_PKG="$ROOT/rust/crates/orbit-api/python"
-SVC_PKG="$ROOT/rust/crates/orbit-service/python"
-HEADER="$ROOT/rust/crates/orbit-api/include/orbit.h"
+API_PKG="$ROOT/crates/orbit-api/python"
+SVC_PKG="$ROOT/crates/orbit-service/python"
+HEADER="$ROOT/crates/orbit-api/include/orbit.h"
 OUT="$ROOT/dist/wheels"
 GLIBC="2.17" # manylinux2014 floor
 
@@ -50,7 +50,7 @@ python3 -c "import build, wheel" 2>/dev/null || { echo "need python 'build' and 
 # One release version, stamped in five places. Refuse to build if they drift:
 # orbit-profiler pins orbit-api to the exact version because the two must
 # speak the same ring protocol, and a stale pin would install a mismatch.
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/rust/crates/orbit-api/Cargo.toml" | head -1)
+VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/crates/orbit-api/Cargo.toml" | head -1)
 drift() { echo "version drift: $1 (orbit-api Cargo.toml says $VERSION)" >&2; exit 1; }
 grep -q "^version = \"$VERSION\"" "$API_PKG/pyproject.toml" || drift "$API_PKG/pyproject.toml"
 grep -q "^version = \"$VERSION\"" "$SVC_PKG/pyproject.toml" || drift "$SVC_PKG/pyproject.toml"
@@ -106,8 +106,8 @@ build_frida_companions() {
   else
     cargo=(cargo build --release --target "$triple")
   fi
-  "${cargo[@]}" --manifest-path "$ROOT/rust/crates/orbit-frida-helper/Cargo.toml" >/dev/null
-  "${cargo[@]}" --manifest-path "$ROOT/rust/Cargo.toml" -p orbit-frida-agent --features native >/dev/null
+  "${cargo[@]}" --manifest-path "$ROOT/Cargo.toml" -p orbit-frida-helper >/dev/null
+  "${cargo[@]}" --manifest-path "$ROOT/Cargo.toml" -p orbit-frida-agent --features native >/dev/null
   local helper=orbit-frida-helper
   case "$key" in
     macos-*) lib=liborbit_frida_agent.dylib ;;
@@ -115,8 +115,8 @@ build_frida_companions() {
     *) lib=liborbit_frida_agent.so ;;
   esac
   mkdir -p "$dest/licenses"
-  cp "$ROOT/rust/target/$triple/release/$lib" "$dest/"
-  cp "$ROOT/rust/crates/orbit-frida-helper/target/$triple/release/$helper" "$dest/"
+  cp "$ROOT/target/$triple/release/$lib" "$dest/"
+  cp "$ROOT/target/$triple/release/$helper" "$dest/"
   chmod 755 "$dest/$helper"
   cp "$ROOT/tools/frida/licenses/"* "$dest/licenses/"
 }
@@ -157,16 +157,16 @@ for key in "$@"; do
   # 1. liborbit_api, against the glibc floor on Linux (zig picks the version).
   echo "-- liborbit_api ($lib_target)"
   if [[ "$key" == linux-* ]]; then
-    cargo_for "$key" "$ROOT/rust/Cargo.toml" "$lib_target.$GLIBC" -p orbit-api
+    cargo_for "$key" "$ROOT/Cargo.toml" "$lib_target.$GLIBC" -p orbit-api
   else
-    cargo_for "$key" "$ROOT/rust/Cargo.toml" "$lib_target" -p orbit-api
+    cargo_for "$key" "$ROOT/Cargo.toml" "$lib_target" -p orbit-api
   fi
-  lib="$ROOT/rust/target/$lib_target/release/$lib_file"
+  lib="$ROOT/target/$lib_target/release/$lib_file"
 
   # 2. orbit-service. The musl target is static and self-contained.
   echo "-- orbit-service ($svc_target)"
-  cargo_for "$key" "$ROOT/rust/crates/orbit-service/Cargo.toml" "$svc_target"
-  svc="$ROOT/rust/crates/orbit-service/target/$svc_target/release/$(service_file "$key")"
+  cargo_for "$key" "$ROOT/Cargo.toml" "$svc_target" -p orbit-service
+  svc="$ROOT/target/$svc_target/release/$(service_file "$key")"
 
   # 3. Stage the artifacts into each package and build the wheels.
   cp "$lib" "$API_PKG/orbit_api/$lib_file"

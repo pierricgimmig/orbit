@@ -134,14 +134,14 @@ limits.
 Linux x86-64, static binary, with the Frida files beside it:
 
 ```sh
-./rust/build-service-musl.sh
+./tools/build/build-service-musl.sh
 ```
 
 macOS (manual scopes and hooks):
 
 ```sh
-./build-service-macos.sh
-./build-service-macos.sh --universal
+tools/build/build-service-macos.sh
+tools/build/build-service-macos.sh --universal
 ```
 
 See [docs/building_macos.md](docs/building_macos.md).
@@ -149,7 +149,7 @@ See [docs/building_macos.md](docs/building_macos.md).
 Windows (PowerShell, Visual Studio 2022 with the C++ workload):
 
 ```powershell
-.\build-service-windows.ps1
+.\tools\build\build-service-windows.ps1
 ```
 
 See [docs/building_windows.md](docs/building_windows.md).
@@ -162,4 +162,6 @@ that tag runs the Rust release workflow. Details:
 
 - [Manual](docs/manual/index.md)
 - [Blog](docs/blog/index.md)
+- [The crates](crates/README.md) and [the tree, drawn](docs/blog/26-where-everything-lives.html)
+- [Design notes](docs/design/)
 - [Site sources](tools/site/README.md)

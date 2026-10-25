@@ -15,7 +15,7 @@ on:
       - 'tools/site/**'
       - 'tools/install/install.sh'
       - 'docs/**'
-      - 'rust/live-viewer/**'
+      - 'crates/orbit-live-*/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -49,7 +49,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust/live-viewer/crates/orbit-live-viewer
           prefix-key: pages-wasm-nightly-2025-11-15
           cache-on-failure: true
 
@@ -62,7 +61,7 @@ jobs:
       # Nightly + build-std + wasm-bindgen, into viewer-dist/. The stable
       # wasm32 compile in live-viewer.yml does not produce this pack.
       - name: Build viewer pack
-        run: rust/live-viewer/build_wasm.sh
+        run: crates/orbit-live-viewer/build_wasm.sh
 
       # No live Box3D capture in CI. The saved stream is the front-page
       # capture and one of the blog clips.

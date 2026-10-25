@@ -26,7 +26,7 @@ use Apple's toolchain. Wheels are stripped and tagged `py3-none-<platform>` —
 one wheel serves every Python 3.
 
 The script refuses to run if the release version drifts between
-`rust/crates/orbit-api/Cargo.toml`, the two `pyproject.toml`s, the
+`crates/orbit-api/Cargo.toml`, the two `pyproject.toml`s, the
 `orbit-api==` pin in orbit-profiler, and the two `__version__`s: bump all of
 them together.
 

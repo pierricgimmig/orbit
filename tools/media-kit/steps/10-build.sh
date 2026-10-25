@@ -25,12 +25,12 @@ git -C "$SRC" checkout -q --force --detach "$SHA"
 git -C "$SRC" clean -q -fd -e target   # keep cargo target dirs for incremental builds
 command -v rustup >/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
 L="$CACHE/logs/build-$SHORT"
-log "wasm viewer (rust/live-viewer/build_wasm.sh; log $L-wasm.log)"
-( cd "$SRC/rust/live-viewer" && ./build_wasm.sh ) > "$L-wasm.log" 2>&1 || { tail -30 "$L-wasm.log" >&2; die "wasm build failed"; }
+log "wasm viewer (crates/orbit-live-viewer/build_wasm.sh; log $L-wasm.log)"
+( cd "$SRC/crates/orbit-live-viewer" && ./build_wasm.sh ) > "$L-wasm.log" 2>&1 || { tail -30 "$L-wasm.log" >&2; die "wasm build failed"; }
 log "orbit-service musl (log $L-service.log)"
-( cd "$SRC/rust" && cargo build --release --target x86_64-unknown-linux-musl --manifest-path crates/orbit-service/Cargo.toml ) \
+( cd "$SRC" && cargo build --release --target x86_64-unknown-linux-musl -p orbit-service ) \
   > "$L-service.log" 2>&1 || { tail -30 "$L-service.log" >&2; die "service build failed"; }
-cp "$SRC/rust/crates/orbit-service/target/x86_64-unknown-linux-musl/release/orbit-service" "$OUT"
+cp "$SRC/target/x86_64-unknown-linux-musl/release/orbit-service" "$OUT"
 # The wasm build regenerates tracked viewer-dist files; restore them so the clone stays clean.
 git -C "$SRC" checkout -q -- . ; git -C "$SRC" status --short | head -5 >&2 || true
 log "built $OUT ($(du -h "$OUT" | cut -f1))"

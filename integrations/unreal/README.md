@@ -54,7 +54,7 @@ GlobalDefinitions.Add("ALLOW_NAMED_EVENTS_IN_TEST=1"); // Test builds only need 
 
 `orbit.h` is copied into the plugin so it can be dropped into a project as is;
 [`sync-orbit-header.sh`](sync-orbit-header.sh) refreshes the copy from
-`rust/crates/orbit-api/include/orbit.h`.
+`crates/orbit-api/include/orbit.h`.
 
 ## 2. Your code: the Orbit API directly
 
@@ -94,7 +94,7 @@ in Orbit at the same cost as the Insights channel check when no library is
 loaded. Apply from the engine root after copying the header:
 
 ```
-cp <orbit>/rust/crates/orbit-api/include/orbit.h Engine/Source/Runtime/Core/Public/ProfilingDebugging/orbit.h
+cp <orbit>/crates/orbit-api/include/orbit.h Engine/Source/Runtime/Core/Public/ProfilingDebugging/orbit.h
 patch -p1 < <orbit>/integrations/unreal/engine-cpu-trace-scopes.patch
 ```
 

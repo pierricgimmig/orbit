@@ -10,14 +10,14 @@ mkdir -p "$output"
 output=$(cd "$output" && pwd)
 ./tools/frida/devkits.sh
 if [[ "$mode" == all ]]; then
-  cargo +1.88.0 build --locked --release --manifest-path rust/crates/orbit-service/Cargo.toml
-  cp rust/crates/orbit-service/target/release/orbit-service "$output/"
+  cargo +1.88.0 build --locked --release -p orbit-service
+  cp target/release/orbit-service "$output/"
 fi
-cargo +1.88.0 build --locked --release --manifest-path rust/crates/orbit-frida-helper/Cargo.toml
-cargo +1.88.0 build --locked --release --manifest-path rust/Cargo.toml -p orbit-frida-agent --features native
+cargo +1.88.0 build --locked --release -p orbit-frida-helper
+cargo +1.88.0 build --locked --release -p orbit-frida-agent --features native
 if [[ $(uname -s) == Darwin ]]; then library=liborbit_frida_agent.dylib; else library=liborbit_frida_agent.so; fi
-cp "rust/target/release/$library" "$output/"
-cp rust/crates/orbit-frida-helper/target/release/orbit-frida-helper "$output/"
+cp "target/release/$library" "$output/"
+cp target/release/orbit-frida-helper "$output/"
 rm -rf "$output/frida-python" # obsolete generated runtime from the scripted integration
 mkdir -p "$output/licenses"
 cp tools/frida/licenses/* "$output/licenses/"
