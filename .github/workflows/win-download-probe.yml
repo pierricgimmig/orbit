@@ -25,7 +25,8 @@ jobs:
       - name: Versions
         run: |
           & "$env:SystemRoot\System32\curl.exe" --version
-          & "C:\Program Files\Git\mingw64\bin\curl.exe" --version
+          Get-ChildItem 'C:\Program Files\Git' -Recurse -Filter curl.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; & $_.FullName --version | Select-Object -First 1 }
+          Get-Command curl.exe -All | Select-Object -ExpandProperty Source
           gh --version
           [System.Environment]::OSVersion.VersionString
       - name: A. System32 curl, verbose, as the script does it
@@ -46,8 +47,10 @@ jobs:
         timeout-minutes: 4
         continue-on-error: true
         run: |
+          $gitcurl = (Get-ChildItem 'C:\Program Files\Git' -Recurse -Filter curl.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          "using $gitcurl"
           $sw = [Diagnostics.Stopwatch]::StartNew()
-          & "C:\Program Files\Git\mingw64\bin\curl.exe" -fSL --connect-timeout 30 --max-time 200 -o c.bin $env:URI 2>&1 | Select-Object -Last 20
+          & $gitcurl -fSL --connect-timeout 30 --max-time 200 -o c.bin $env:URI 2>&1 | Select-Object -Last 20
           "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item c.bin -ErrorAction SilentlyContinue).Length)"
       - name: D. gh release download
         timeout-minutes: 4
