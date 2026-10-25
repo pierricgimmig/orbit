@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # Install / check the box prerequisites. Idempotent.
 set -euo pipefail; . "$(dirname "$0")/../lib/config.sh"
 PKGS="qemu-system-x86 qemu-utils openssh-client xvfb x11-utils ffmpeg xz-utils curl python3 gcc iproute2"   # + genisoimage for steps/vm-create.sh

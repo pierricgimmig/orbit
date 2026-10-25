@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # usage: steps/30-target.sh start <orbit-service-binary> | stop [<logs-out-dir>] | status
 # start: compile dummy/game_loop.c (box and guest are both Debian 13 / glibc 2.41), copy it and the
 #        service into the guest, start orbit-service as root (--serve 44766) and game_loop as the user.

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # Builds OrbitTestC with orbit.h alone: nothing is linked. At run time the
 # header loads liborbit_api.so by the search order in orbit.h; in the source
 # tree point ORBIT_API_LIB at target/release/liborbit_api.so (the e2e

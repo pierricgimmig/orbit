@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # One-command media generation for the Orbit live viewer.
 #   ./generate.sh --ref <git-ref> --out <dir> [options]
 # Options:

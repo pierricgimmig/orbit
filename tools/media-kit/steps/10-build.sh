@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # Build orbit-service (static musl) with the WASM viewer embedded, from a git ref.
 # usage: steps/10-build.sh <git-ref> [--rebuild]      prints the binary path on stdout
 # Works in a private clone under $CACHE/src (never touches $ORBIT_REPO's working tree, never pushes).

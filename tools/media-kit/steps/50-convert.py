@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 """Convert raw lossless recordings into web media.
 usage: steps/50-convert.py --out <dir> [--only id,id] [--no-hero]
 Per clip (from <out>/raw/clips.json, written by 40-record.mjs):

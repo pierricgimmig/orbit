@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # Recreate the Debian 13 test VM from the official cloud image (only needed if $VM_DISK is missing).
 # Produces $VM_DIR/{debian13.qcow2 (base), disk.qcow2 (overlay, 8G), seed.iso, vmkey, vmkey.pub}.
 set -euo pipefail; . "$(dirname "$0")/../lib/config.sh"
