@@ -32,7 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "tools", "e2e"))
 
-VIEWER_DIST = os.path.join(REPO, "src/OrbitLiveViewer/viewer-dist")
+VIEWER_DIST = os.path.join(REPO, "rust/live-viewer/viewer-dist")
 
 # Blog posts link up out of docs/blog/ (../rust-port-plan.html and the
 # others). Copied to the site root, those relative links still resolve.
@@ -511,7 +511,7 @@ def main():
     parser.add_argument("--service", action="store_true", help="build for embedding in orbit-service: no bundled viewer, embeds point at the service viewer at / (site served at /site)")
     args = parser.parse_args()
     if not os.path.exists(os.path.join(VIEWER_DIST, "orbit_live_viewer_bg.wasm")):
-        raise SystemExit(f"no viewer pack in {VIEWER_DIST}: run src/OrbitLiveViewer/build_wasm.sh first")
+        raise SystemExit(f"no viewer pack in {VIEWER_DIST}: run rust/live-viewer/build_wasm.sh first")
     capture_file, facts = build(args.out, args.stream, args.bundle, args.name, args.port, args.service)
     print(f"site in {args.out}: front page opens captures/{capture_file} ({facts})")
     print("isolation: coi-serviceworker.js adds COOP/COEP; sequential if it cannot")

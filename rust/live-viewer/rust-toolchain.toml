@@ -1,0 +1,6 @@
+# Live-viewer workspace only: eframe 0.32 needs this rustc.
+# eframe 0.32 requires rustc ≥ 1.85 (edition 2024).
+[toolchain]
+channel = "1.88.0"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]

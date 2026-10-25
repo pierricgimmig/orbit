@@ -556,7 +556,7 @@ mod tests {
     fn testdata(name: &str) -> Vec<u8> {
         let dir = std::env::var("ORBIT_TESTDATA").unwrap_or_else(|_| {
             format!(
-                "{}/../../../src/ObjectUtils/testdata",
+                "{}/testdata",
                 env!("CARGO_MANIFEST_DIR")
             )
         });

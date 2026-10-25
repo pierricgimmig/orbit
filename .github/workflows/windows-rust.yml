@@ -57,10 +57,10 @@ jobs:
         env:
           ORBIT_API_LIB: ${{ github.workspace }}\dist\windows\orbit_api.dll
         run: |
-          .\src\OrbitTestC\build.ps1
-          .\src\OrbitTestCpp\build.ps1
-          .\src\OrbitTestC\OrbitTestC.exe --seconds 1
-          .\src\OrbitTestCpp\OrbitTestCpp.exe --seconds 1
+          .\tools\test-programs\OrbitTestC\build.ps1
+          .\tools\test-programs\OrbitTestCpp\build.ps1
+          .\tools\test-programs\OrbitTestC\OrbitTestC.exe --seconds 1
+          .\tools\test-programs\OrbitTestCpp\OrbitTestCpp.exe --seconds 1
           .\dist\windows\OrbitTestRust.exe --seconds 1
       - name: Smoke test manual capture and restart
         run: |

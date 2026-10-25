@@ -12,8 +12,8 @@ open it.
 
 Orbit is a Rust re-implementation of [Orbit](https://github.com/google/orbit)
 by its original author. The capture service (`orbit-service`) and the browser
-viewer are the Rust work. The original C++ application is still in this tree;
-its README is [docs/legacy-cpp-readme.md](docs/legacy-cpp-readme.md).
+viewer are the Rust work. The original C++ application is not in this tree
+any more; it lives on the `cpp` branch, which was `main` before the port.
 
 Both systems attach to a process that is already running. Both can hook
 functions with Frida, and both take manual scopes from Rust, C, C++, and

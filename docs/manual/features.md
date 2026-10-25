@@ -477,10 +477,11 @@ in the URL opens a tab on load.
   copy, and the service now logs a one-line warning naming the version when it
   finds a segment written by a mismatched library.
 - **Examples** for each language: `rust/crates/orbit-test-rust`
-  (`OrbitTestRust`), `src/OrbitTestC`, `src/OrbitTestCpp` (RAII, built
-  header-only by their `build.sh`; `ORBIT_STATIC=1` links), and
-  `src/OrbitTestPython` (the package). Each runs every call; the `api-*`
-  scenarios capture them with `ORBIT_API_LIB` naming the tree's library.
+  (`OrbitTestRust`) and, under `tools/test-programs/`, `OrbitTestC`,
+  `OrbitTestCpp` (RAII, built header-only by their `build.sh`;
+  `ORBIT_STATIC=1` links) and `OrbitTestPython` (the package). Each runs
+  every call; the `api-*` scenarios capture them with `ORBIT_API_LIB` naming
+  the tree's library.
   Screenshots: `07-api-rust.png`, `08-api-c.png`, `09-api-cpp.png`,
   `10-api-python.png`.
 - **Unreal Engine.** `integrations/unreal/` has the `OrbitProfiler` plugin

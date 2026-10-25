@@ -25,8 +25,8 @@ git -C "$SRC" checkout -q --force --detach "$SHA"
 git -C "$SRC" clean -q -fd -e target   # keep cargo target dirs for incremental builds
 command -v rustup >/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
 L="$CACHE/logs/build-$SHORT"
-log "wasm viewer (src/OrbitLiveViewer/build_wasm.sh; log $L-wasm.log)"
-( cd "$SRC/src/OrbitLiveViewer" && ./build_wasm.sh ) > "$L-wasm.log" 2>&1 || { tail -30 "$L-wasm.log" >&2; die "wasm build failed"; }
+log "wasm viewer (rust/live-viewer/build_wasm.sh; log $L-wasm.log)"
+( cd "$SRC/rust/live-viewer" && ./build_wasm.sh ) > "$L-wasm.log" 2>&1 || { tail -30 "$L-wasm.log" >&2; die "wasm build failed"; }
 log "orbit-service musl (log $L-service.log)"
 ( cd "$SRC/rust" && cargo build --release --target x86_64-unknown-linux-musl --manifest-path crates/orbit-service/Cargo.toml ) \
   > "$L-service.log" 2>&1 || { tail -30 "$L-service.log" >&2; die "service build failed"; }

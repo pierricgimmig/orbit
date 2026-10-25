@@ -138,21 +138,15 @@ switch is how nearly every bug in the port was found; see the log.
 ## Testing
 
 ```
-bazel test //rust:all //src/ObjectUtils:all //src/ModuleUtils:all
+cargo test --manifest-path rust/Cargo.toml
+cargo test --manifest-path rust/crates/orbit-service/Cargo.toml
 ```
 
-The C++ test files are never edited. They are the specification: every Rust
-unit test that mirrors one names it in a comment.
-
-`rust/tools/differential:elf_corpus` reads every ELF, PE and PDB under the
-directories you give it, through every `ObjectUtils` method. During the port
-it compared two implementations; now it is a smoke test whose counts must not
-move without explanation:
-
-```
-bazel run -c opt //rust/tools/differential:elf_corpus -- \
-    src/ObjectUtils/testdata /usr/lib/x86_64-linux-gnu
-```
+The C++ test files were the specification during the port: every Rust unit
+test that mirrors one names it in a comment. Those files, the three-backend
+switch and the differential tools that compared the two implementations are
+on the `cpp` branch (`rust/tools/differential` there); `main` carries only
+the Rust.
 
 ## Layout
 
@@ -170,7 +164,7 @@ and `flate2` (for `SHF_COMPRESSED` debug sections).
 `crates/orbit-perf-records` is the wire layer of the Phase 4 collector: the
 packed perf ring-buffer record layouts, zero dependencies, verified against
 the C++ structs field by field by
-`src/LinuxTracing/PerfEventRecordsLayoutParityTest.cpp`.
+`src/LinuxTracing/PerfEventRecordsLayoutParityTest.cpp` on the `cpp` branch.
 
 `crates/orbit-perf-ring` owns the kernel interface: `perf_event_open`, the
 attr construction, and the mmap ring-buffer protocol, with unsafe confined
@@ -230,19 +224,14 @@ ones, the input unchanged otherwise.
 
 ## Building
 
-Bazel downloads its own Rust toolchain, so nothing needs installing:
-
-```
-bazel test //rust:all
-```
-
-For local iteration, `cargo` lives in `~/.cargo/bin` and may not be on `PATH`:
+`rust-toolchain.toml` pins the toolchain; rustup installs it on first use.
+`cargo` lives in `~/.cargo/bin` and may not be on `PATH`:
 
 ```
 PATH="$HOME/.cargo/bin:$PATH" cargo test --manifest-path rust/Cargo.toml
 ```
 
-## Relationship to `src/OrbitLiveViewer`
+## Relationship to `rust/live-viewer`
 
 Separate workspace on purpose: these crates parse binaries and kernel data and
 should not share a lockfile with the viewer's eframe/wgpu/tokio tree.

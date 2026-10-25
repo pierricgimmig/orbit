@@ -33,7 +33,7 @@ Linux arm64 is not in the release.
 Linux x86-64, on `ubuntu-22.04`:
 
 - `orbit-service`, static musl (`x86_64-unknown-linux-musl`). The WASM viewer
-  in `src/OrbitLiveViewer/viewer-dist` is embedded by `orbit-live-server` at
+  in `rust/live-viewer/viewer-dist` is embedded by `orbit-live-server` at
   compile time. The job checks that the binary is statically linked.
 - The files the service looks up next to its own executable
   (`std::env::current_exe()`, overridable with `ORBIT_FRIDA_AGENT` and

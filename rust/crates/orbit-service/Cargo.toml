@@ -3,8 +3,8 @@
 # found in the LICENSE file.
 
 # Its own workspace, excluded from ../../Cargo.toml: this crate depends on the
-# live-viewer server crates to serve the UI, whose paths leave rust/. Bazel's
-# crate_universe splices rust/ into a temp directory, where those paths break.
+# live-viewer server crates to serve the UI, whose axum/tokio tree stays out
+# of the rust/ lockfile.
 [workspace]
 
 # Its own workspace means it inherits nothing from ../../Cargo.toml, release
@@ -51,8 +51,8 @@ miniz_oxide = "0.8"
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info", "intel"] }
 orbit-api = { path = "../orbit-api" }
 orbit-capture = { path = "../orbit-capture" }
-orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-event" }
-orbit-live-server = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-server" }
+orbit-live-event = { path = "../../live-viewer/crates/orbit-live-event" }
+orbit-live-server = { path = "../../live-viewer/crates/orbit-live-server" }
 # Rust's own demangler: std-only, one crate, no deps. C++ names stay mangled here (blog post 02).
 rustc-demangle = "0.1"
 memmap2 = "0.9"

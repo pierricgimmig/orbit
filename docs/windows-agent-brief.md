@@ -9,7 +9,9 @@
 > story in blog post 24. Two deviations from the plan are recorded there:
 > raw advapi32 bindings instead of `ferrisetw`, and a file-backed section
 > in a per-user directory instead of a `Local\` named section. The text
-> below is the brief as it was handed over.
+> below is the brief as it was handed over, with paths updated where the
+> tree has moved since. The C++ Windows tracer it names as the oracle is
+> no longer on `main`; it is on the `cpp` branch, Bazel build and all.
 
 You are starting cold on a Windows x86-64 machine, in a clone of this
 repository on branch `rust-port-object-utils`. Nothing from the Linux
@@ -69,7 +71,7 @@ Toolchain: `rust/rust-toolchain.toml` pins **1.88.0**; use `cargo +1.88.0`
 everywhere and do not bump it. Workspaces: `rust/` is one workspace (Bazel's
 crate_universe reads it -- do not add heavy deps to its members),
 `rust/crates/orbit-service` and `rust/crates/orbit-capture` are their own
-workspaces built from their crate directories, `src/OrbitLiveViewer/` is the
+workspaces built from their crate directories, `rust/live-viewer/` is the
 viewer's. The C++ tree builds with Bazel: `.bazelrc` has a `--config=windows`
 (C++20).
 
@@ -79,7 +81,7 @@ viewer's. The C++ tree builds with Bazel: `.bazelrc` has a `--config=windows`
 
 - Build and test every crate marked clean above, natively:
   `cargo +1.88.0 test -p <crate>` from `rust/`, from
-  `rust/crates/orbit-capture`, and `-p orbit-live-*` from `src/OrbitLiveViewer`.
+  `rust/crates/orbit-capture`, and `-p orbit-live-*` from `rust/live-viewer`.
   Record pass counts in a new `docs/blog/metrics/phase-10-windows-ground.txt`
   with the machine (Windows version, CPU, thread count) at the top, the way
   every metrics file starts.
@@ -126,10 +128,10 @@ only non-portable one is `shm.rs` (~200 lines, POSIX `shm_open`/`mmap`).
 - Acceptance: the crate's existing tests pass on Windows unchanged (they are
   API-level: write, drain, text continuation, dead-producer sweep) plus
   `orbit-api`'s. Then the four test apps: `OrbitTestRust` (in
-  `rust/crates/orbit-test-rust`), and `src/OrbitTestC`, `src/OrbitTestCpp`,
-  `src/OrbitTestPython` -- their `build.sh` scripts link
+  `rust/crates/orbit-test-rust`), and `tools/test-programs/OrbitTestC`, `tools/test-programs/OrbitTestCpp`,
+  `tools/test-programs/OrbitTestPython` -- their `build.sh` scripts link
   `rust/target/release/liborbit_api.a`; write `build.ps1` / `build.bat`
-  equivalents against `orbit_api.lib`, and point `src/OrbitTestPython/orbit.py`
+  equivalents against `orbit_api.lib`, and point `tools/test-programs/OrbitTestPython/orbit.py`
   at `orbit_api.dll` (it looks for `liborbit_api.so` today). Every app runs the
   same scenario; the acceptance is a capture of each one that shows its
   frames, its three physics workers, the async job with a link, and the long

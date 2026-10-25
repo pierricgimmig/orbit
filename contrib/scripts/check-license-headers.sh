@@ -26,8 +26,7 @@ while read file; do
   fi
 
 done <<< $(git diff -U0 --no-color --relative --name-only --diff-filter=r $MERGE_BASE \
-| grep -v third_party/ \
-| egrep '\.cpp$|\.h$|\.bzl$|\.bazel$|\.js$|\.proto$|\.py$')
+| egrep '\.cpp$|\.c$|\.h$|\.js$|\.py$')
 
 if [ -s "${GITHUB_WORKSPACE}/missing_license_headers.txt" ]; then
   exit 1

@@ -316,13 +316,6 @@ name = "orbit-maps"
 version = "0.1.0"
 
 [[package]]
-name = "orbit-maps-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-maps",
-]
-
-[[package]]
 name = "orbit-object"
 version = "0.1.0"
 dependencies = [
@@ -333,33 +326,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "orbit-object-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-object",
-]
-
-[[package]]
 name = "orbit-perf-merge"
 version = "0.1.0"
 
 [[package]]
-name = "orbit-perf-merge-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-perf-merge",
-]
-
-[[package]]
 name = "orbit-perf-records"
 version = "0.1.0"
-
-[[package]]
-name = "orbit-perf-records-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-perf-records",
-]
 
 [[package]]
 name = "orbit-perf-ring"
@@ -367,14 +339,6 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "orbit-perf-records",
-]
-
-[[package]]
-name = "orbit-perf-ring-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-perf-records-ffi",
- "orbit-perf-ring",
 ]
 
 [[package]]
@@ -390,13 +354,6 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "orbit-maps",
-]
-
-[[package]]
-name = "orbit-ptrace-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-ptrace",
 ]
 
 [[package]]
@@ -419,22 +376,8 @@ name = "orbit-thread-states"
 version = "0.1.0"
 
 [[package]]
-name = "orbit-thread-states-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-thread-states",
-]
-
-[[package]]
 name = "orbit-tracing-state"
 version = "0.1.0"
-
-[[package]]
-name = "orbit-tracing-state-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-tracing-state",
-]
 
 [[package]]
 name = "orbit-trampoline"
@@ -443,13 +386,6 @@ dependencies = [
  "iced-x86",
  "orbit-maps",
  "orbit-ptrace",
-]
-
-[[package]]
-name = "orbit-trampoline-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-trampoline",
 ]
 
 [[package]]
@@ -465,22 +401,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "orbit-unwind-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-unwind",
-]
-
-[[package]]
 name = "orbit-wire"
 version = "0.1.0"
-
-[[package]]
-name = "orbit-wire-ffi"
-version = "0.1.0"
-dependencies = [
- "orbit-wire",
-]
 
 [[package]]
 name = "pdb"

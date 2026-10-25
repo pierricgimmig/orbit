@@ -390,12 +390,12 @@ where
 mod tests {
     use super::*;
 
-    /// Testdata is shared with the C++ suite rather than duplicated, so both
-    /// implementations are judged against the same bytes. Bazel points
-    /// ORBIT_TESTDATA at the runfiles copy; cargo falls back to the source tree.
+    /// The fixtures in `testdata/` are the ones the C++ `ObjectUtils` suite
+    /// was judged against (see the `cpp` branch), so both implementations
+    /// read the same bytes. `ORBIT_TESTDATA` points elsewhere if set.
     fn testdata(name: &str) -> Vec<u8> {
         let dir = std::env::var("ORBIT_TESTDATA").unwrap_or_else(|_| {
-            format!("{}/../../../src/ObjectUtils/testdata", env!("CARGO_MANIFEST_DIR"))
+            format!("{}/testdata", env!("CARGO_MANIFEST_DIR"))
         });
         let path = format!("{dir}/{name}");
         std::fs::read(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"))

@@ -1,3 +1,0 @@
-# Cargo's output directory, if anyone has run cargo in the py-spy checkout.
-third_party/py-spy/target
-third_party/py-spy-ffi/target

@@ -42,10 +42,10 @@ jobs:
         env:
           ORBIT_API_LIB: ${{ github.workspace }}/dist/macos/liborbit_api.dylib
         run: |
-          ./src/OrbitTestC/build.sh
-          ./src/OrbitTestCpp/build.sh
-          ./src/OrbitTestC/OrbitTestC --seconds 1
-          ./src/OrbitTestCpp/OrbitTestCpp --seconds 1
+          ./tools/test-programs/OrbitTestC/build.sh
+          ./tools/test-programs/OrbitTestCpp/build.sh
+          ./tools/test-programs/OrbitTestC/OrbitTestC --seconds 1
+          ./tools/test-programs/OrbitTestCpp/OrbitTestCpp --seconds 1
       - name: Smoke test capture and restart
         run: |
           python3 -m venv /tmp/orbit-smoke

@@ -1,2 +1,0 @@
-loginuser ALL=(ALL:ALL) ALL
-loginuser ALL=(ALL:ALL) NOPASSWD: /usr/local/cloudcast/sbin/install_signed_package.sh *

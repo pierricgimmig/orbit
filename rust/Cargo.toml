@@ -2,12 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# Service-side Rust for Orbit. Separate from src/OrbitLiveViewer on purpose:
+# Service-side Rust for Orbit. Separate from rust/live-viewer on purpose:
 # these crates parse binaries and kernel data and must not share a lockfile
 # with the viewer's eframe/wgpu/tokio tree.
 #
-# See docs/rust-port-plan.html for the staging, and docs/blog/ for the
-# running write-up of what each step cost.
+# See docs/rust-port-plan.html for how the C++ service was ported, and
+# docs/blog/ for the running write-up of what each step cost. The C++ tree
+# itself lives on the `cpp` branch.
 
 [workspace]
 resolver = "2"
@@ -32,24 +33,12 @@ members = [
     "crates/orbit-trampoline",
     "crates/orbit-unwind",
     "crates/orbit-wire",
-    "ffi/orbit-maps-ffi",
-    "ffi/orbit-object-ffi",
-    "ffi/orbit-perf-merge-ffi",
-    "ffi/orbit-perf-records-ffi",
-    "ffi/orbit-perf-ring-ffi",
-    "ffi/orbit-ptrace-ffi",
-    "ffi/orbit-thread-states-ffi",
-    "ffi/orbit-tracing-state-ffi",
-    "ffi/orbit-trampoline-ffi",
-    "ffi/orbit-unwind-ffi",
-    "ffi/orbit-wire-ffi",
 ]
-# orbit-service is its own workspace: it depends on the live-viewer server
-# crates (axum/tokio) to serve the UI, and those paths point outside this
-# directory. crate_universe splices this workspace into a temp dir to generate
-# @orbit_crates, where such a path cannot resolve -- so keeping it here breaks
-# every Bazel build. Same reasoning as orbit-live-viewer next door.
-exclude = ["crates/orbit-service", "crates/orbit-capture", "crates/orbit-frida-helper"]
+# orbit-service, orbit-capture and orbit-frida-helper are workspaces of their
+# own: they depend on the live-viewer server crates (axum/tokio) to serve the
+# UI, whose dependency tree this workspace keeps out of its lockfile.
+# live-viewer/ holds the viewer's own workspaces (see live-viewer/Cargo.toml).
+exclude = ["crates/orbit-service", "crates/orbit-capture", "crates/orbit-frida-helper", "live-viewer"]
 
 [workspace.package]
 edition = "2021"

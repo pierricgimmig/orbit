@@ -52,7 +52,7 @@ def main():
         work = Path(tmp)
         objects = work / 'objects'
         objects.mkdir()
-        (objects / 'viewer').symlink_to(ROOT / 'src/OrbitLiveViewer/viewer-dist', target_is_directory=True)
+        (objects / 'viewer').symlink_to(ROOT / 'rust/live-viewer/viewer-dist', target_is_directory=True)
         s3_port, service_port, chrome_port = port(), port(), port()
         viewer = f'https://127.0.0.1:{s3_port}/viewer/index.html'
         object_base = f'https://localhost:{s3_port}'  # Different origin: browser must pass CORS.

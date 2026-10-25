@@ -4,7 +4,7 @@
 # found in the LICENSE file.
 #
 # Build the all-Rust capture service and run it so it serves the live WASM
-# viewer. Unlike wasm.sh this does not need root: without privileges the
+# viewer. It does not need root: without privileges the
 # service drops what it cannot read and tells you how to enable it, rather
 # than refusing to start. Record attaches to the process you pick in the
 # Capture strip.
@@ -16,7 +16,7 @@
 #   ./rust.sh -- --pid 1234 --duration-ms 5000 --out /tmp/c.pod   # file mode
 #
 # This builds the service and native Frida components, not the viewer pack. Run
-# src/OrbitLiveViewer/build_wasm.sh if you changed the front end; the script
+# rust/live-viewer/build_wasm.sh if you changed the front end; the script
 # warns when it looks stale.
 
 set -euo pipefail
@@ -74,7 +74,7 @@ for arg in "${PASSTHROUGH[@]:-}"; do
 done
 
 if [[ "$SERVE" -eq 1 && "$HTTP_PORT" != "0" ]] && port_in_use "$HTTP_PORT"; then
-  die "port $HTTP_PORT is already in use (another orbit-service, or ./wasm.sh?)"
+  die "port $HTTP_PORT is already in use (another orbit-service?)"
 fi
 
 command -v cargo >/dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
@@ -119,13 +119,13 @@ if [[ "$WITH_GPU" -eq 1 ]]; then
 fi
 
 # The service embeds nothing: it serves whatever pack is in viewer-dist, so a
-# stale pack shows a stale page. Same check wasm.sh makes.
-PACK="$ROOT/src/OrbitLiveViewer/viewer-dist/orbit_live_viewer_bg.wasm"
-VIEWER_SRC="$ROOT/src/OrbitLiveViewer/crates/orbit-live-viewer/src"
+# stale pack shows a stale page.
+PACK="$ROOT/rust/live-viewer/viewer-dist/orbit_live_viewer_bg.wasm"
+VIEWER_SRC="$ROOT/rust/live-viewer/crates/orbit-live-viewer/src"
 if [[ "$SERVE" -eq 1 && -f "$PACK" && -d "$VIEWER_SRC" ]] &&
    [[ -n "$(find "$VIEWER_SRC" -name '*.rs' -newer "$PACK" -print -quit)" ]]; then
   warn "viewer-dist/ is older than crates/orbit-live-viewer/src — the page will"
-  warn "serve the previous pack. Run src/OrbitLiveViewer/build_wasm.sh to refresh it."
+  warn "serve the previous pack. Run rust/live-viewer/build_wasm.sh to refresh it."
 fi
 
 # Scheduling is the one capture feature that needs privilege. Say so up front

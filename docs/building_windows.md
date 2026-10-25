@@ -88,9 +88,9 @@ cargo +1.88.0 build --release -p orbit-api -p orbit-test-rust
 The C and C++ test apps:
 
 ```powershell
-.\src\OrbitTestC\build.ps1      # header-only; loads orbit_api.dll at run time
-.\src\OrbitTestCpp\build.ps1
-.\src\OrbitTestC\build.ps1 -Static   # links orbit_api.lib instead
+.\tools\test-programs\OrbitTestC\build.ps1      # header-only; loads orbit_api.dll at run time
+.\tools\test-programs\OrbitTestCpp\build.ps1
+.\tools\test-programs\OrbitTestC\build.ps1 -Static   # links orbit_api.lib instead
 ```
 
 ## Run

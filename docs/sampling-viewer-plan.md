@@ -73,11 +73,11 @@ drag-end), plus `nudge_selection`. So the work is wiring, not new interaction:
 
 ### 4. Rebuild the pack
 
-`src/OrbitLiveViewer/build_wasm.sh` needs `nightly-2025-11-15` with
+`rust/live-viewer/build_wasm.sh` needs `nightly-2025-11-15` with
 `-Z build-std` (wasm-bindgen-rayon wants a std rebuilt with atomics) and
 `wasm-bindgen-cli 0.2.100`. That toolchain **is** installed on this machine,
-so the rebuild is a matter of running the script; `wasm.sh` and `rust.sh`
-both warn when `viewer-dist/` is older than the viewer sources.
+so the rebuild is a matter of running the script; `rust.sh` warns when
+`viewer-dist/` is older than the viewer sources.
 
 ## Known gaps worth fixing alongside
 

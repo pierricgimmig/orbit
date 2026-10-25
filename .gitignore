@@ -1,5 +1,4 @@
 /.idea/
-compile_commands.json
 /.vscode/
 
 # Ignore generated and compiled Python code
@@ -8,25 +7,11 @@ compile_commands.json
 __pycache__
 *.pyc
 
-# clangd
-.clangd/
-/.cache/
-
 # Visual Studio
 /.vs/
 
-# Rust/Cargo build artifacts
-third_party/py-spy-ffi/target/
-.bazelrc.user
-/bazel-*
-src/OrbitLiveViewer/target/
-src/OrbitLiveViewer/crates/*/target/
-
-# Rust build output (rust/ and src/OrbitLiveViewer/ Cargo workspaces).
+# Rust build output (rust/ and rust/live-viewer/ Cargo workspaces).
 target/
-
-# py-spy is a submodule in upstream; do not track it as a gitlink here.
-third_party/py-spy/
 
 # The built web site (tools/site/build_site.py)
 /site/
@@ -59,15 +44,15 @@ tools/media-kit/node/node_modules/
 integrations/unreal/OrbitProfiler/Intermediate/
 integrations/unreal/OrbitProfiler/Binaries/
 
-# MSVC outputs of the test apps (src/OrbitTestC/build.ps1, src/OrbitTestCpp/build.ps1)
-src/OrbitTestC/*.exe
-src/OrbitTestC/*.obj
-src/OrbitTestC/*.pdb
-src/OrbitTestC/*.ilk
-src/OrbitTestCpp/*.exe
-src/OrbitTestCpp/*.obj
-src/OrbitTestCpp/*.pdb
-src/OrbitTestCpp/*.ilk
+# MSVC outputs of the test apps (tools/test-programs/OrbitTestC/build.ps1, tools/test-programs/OrbitTestCpp/build.ps1)
+tools/test-programs/OrbitTestC/*.exe
+tools/test-programs/OrbitTestC/*.obj
+tools/test-programs/OrbitTestC/*.pdb
+tools/test-programs/OrbitTestC/*.ilk
+tools/test-programs/OrbitTestCpp/*.exe
+tools/test-programs/OrbitTestCpp/*.obj
+tools/test-programs/OrbitTestCpp/*.pdb
+tools/test-programs/OrbitTestCpp/*.ilk
 
 # Packaged Windows service and SDK (build-service-windows.ps1)
 /dist/windows/

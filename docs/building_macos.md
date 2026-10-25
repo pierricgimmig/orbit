@@ -17,7 +17,7 @@ rustup toolchain install 1.88.0 --profile minimal
 ```
 
 Open <http://127.0.0.1:3000> and start a capture. No root privileges, task ports,
-SIP changes, Bazel, or viewer rebuild are required. The committed `viewer-dist`
+SIP changes, or viewer rebuild are required. The committed `viewer-dist`
 assets are embedded in the executable. `./build-service-macos.sh --universal`
 builds a service and SDK containing both architectures in `dist/macos-universal`.
 These are locally ad-hoc signed builds, not notarized distribution packages.
@@ -35,8 +35,8 @@ C and C++ use `dist/macos/include/orbit.h` and `dist/macos/liborbit_api.a`:
 
 ```sh
 cc -DORBIT_STATIC -I dist/macos/include your_app.c dist/macos/liborbit_api.a -lSystem -liconv -o your_app
-./src/OrbitTestC/build.sh
-./src/OrbitTestCpp/build.sh
+./tools/test-programs/OrbitTestC/build.sh
+./tools/test-programs/OrbitTestCpp/build.sh
 ```
 
 Python uses the same C ABI through the dylib:

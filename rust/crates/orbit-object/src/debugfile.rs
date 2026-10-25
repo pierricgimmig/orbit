@@ -79,7 +79,7 @@ mod tests {
 
     fn testdata_dir() -> PathBuf {
         PathBuf::from(std::env::var("ORBIT_TESTDATA").unwrap_or_else(|_| {
-            format!("{}/../../../src/ObjectUtils/testdata", env!("CARGO_MANIFEST_DIR"))
+            format!("{}/testdata", env!("CARGO_MANIFEST_DIR"))
         }))
     }
 

@@ -526,13 +526,13 @@ def _build_app(lang):
         return [binary, "--seconds", "0"]
     if lang in ("c", "cpp"):
         name = {"c": "OrbitTestC", "cpp": "OrbitTestCpp"}[lang]
-        folder = os.path.join(REPO, "src", name)
+        folder = os.path.join(REPO, "tools/test-programs", name)
         binary = os.path.join(folder, name)
         if not os.path.exists(binary):
             subprocess.run([os.path.join(folder, "build.sh")], check=True)
         return [binary, "--seconds", "0"]
     if lang == "python":
-        return [sys.executable, os.path.join(REPO, "src/OrbitTestPython/OrbitTestPython.py"),
+        return [sys.executable, os.path.join(REPO, "tools/test-programs/OrbitTestPython/OrbitTestPython.py"),
                 "--seconds", "0"]
     raise Failure(f"unknown app language {lang}")
 
