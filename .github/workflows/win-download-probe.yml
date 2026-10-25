@@ -1,5 +1,5 @@
-# Temporary probe: why does a 55 MB GitHub release asset stall on hosted
-# Windows runners? Each step is bounded and independent.
+# Temporary probe: the windows-rust Frida step's devkit download hangs after
+# the cargo test steps but is instant on a fresh runner. Which step poisons it?
 name: win-download-probe
 on:
   push:
@@ -14,86 +14,38 @@ jobs:
       matrix:
         runner: [windows-2022, windows-2025]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 45
     defaults:
       run:
         shell: pwsh
-    env:
-      URI: https://github.com/frida/frida/releases/download/17.17.0/frida-core-devkit-17.17.0-windows-x86_64.tar.xz
-      SMALL: https://github.com/frida/frida/releases/download/17.17.0/frida-gum-devkit-17.17.0-windows-x86_64.tar.xz
     steps:
-      - name: Versions
-        run: |
-          & "$env:SystemRoot\System32\curl.exe" --version
-          Get-ChildItem 'C:\Program Files\Git' -Recurse -Filter curl.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; & $_.FullName --version | Select-Object -First 1 }
-          Get-Command curl.exe -All | Select-Object -ExpandProperty Source
-          gh --version
-          [System.Environment]::OSVersion.VersionString
-      - name: A. System32 curl, verbose, as the script does it
-        timeout-minutes: 4
-        continue-on-error: true
-        run: |
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          & "$env:SystemRoot\System32\curl.exe" -fSL -v --trace-time --connect-timeout 30 --max-time 200 --speed-time 60 --speed-limit 10000 -o a.bin $env:URI 2>&1 | Select-Object -Last 60
-          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item a.bin -ErrorAction SilentlyContinue).Length)"
-      - name: B. System32 curl, TLS 1.2 max
-        timeout-minutes: 4
-        continue-on-error: true
-        run: |
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          & "$env:SystemRoot\System32\curl.exe" -fSL --tls-max 1.2 --connect-timeout 30 --max-time 200 -o b.bin $env:URI 2>&1 | Select-Object -Last 20
-          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item b.bin -ErrorAction SilentlyContinue).Length)"
-      - name: C. Git for Windows curl (OpenSSL)
-        timeout-minutes: 4
-        continue-on-error: true
-        run: |
-          $gitcurl = (Get-ChildItem 'C:\Program Files\Git' -Recurse -Filter curl.exe -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          "using $gitcurl"
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          & $gitcurl -fSL --connect-timeout 30 --max-time 200 -o c.bin $env:URI 2>&1 | Select-Object -Last 20
-          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item c.bin -ErrorAction SilentlyContinue).Length)"
-      - name: D. gh release download
-        timeout-minutes: 4
-        continue-on-error: true
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Download after checkout
+        timeout-minutes: 3
+        run: .\.github\probe\dl.ps1 fresh
+      - name: Test producer crates and the ETW decoders
+        run: cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-api -p orbit-scope-ring -p orbit-frida-transport -p orbit-etw
+      - name: Download after producer tests
+        timeout-minutes: 3
+        run: .\.github\probe\dl.ps1 producers
+      - name: Test the kernel logger live (the runner is elevated)
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          gh release download 17.17.0 -R frida/frida -p 'frida-core-devkit-17.17.0-windows-x86_64.tar.xz' -O d.bin 2>&1 | Select-Object -Last 20
-          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item d.bin -ErrorAction SilentlyContinue).Length)"
-      - name: E. Invoke-WebRequest
-        timeout-minutes: 4
+          ORBIT_ETW_LIVE: '1'
+        run: cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-etw --test live -- --nocapture
+      - name: Download after live kernel logger test
+        timeout-minutes: 3
+        run: .\.github\probe\dl.ps1 etw-live
+      - name: Test service
+        run: cargo +1.88.0 test --locked --manifest-path rust/crates/orbit-service/Cargo.toml
+      - name: Download after service tests
+        timeout-minutes: 3
+        run: .\.github\probe\dl.ps1 service
+      - name: The real devkit script
+        timeout-minutes: 5
         continue-on-error: true
-        run: |
-          $ProgressPreference = 'SilentlyContinue'
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          try { Invoke-WebRequest -Uri $env:URI -OutFile e.bin -TimeoutSec 200 } catch { "error: $_" }
-          "after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item e.bin -ErrorAction SilentlyContinue).Length)"
-      - name: F. System32 curl, the small gum kit
-        timeout-minutes: 4
-        continue-on-error: true
-        run: |
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          & "$env:SystemRoot\System32\curl.exe" -fSL --connect-timeout 30 --max-time 200 -o f.bin $env:SMALL 2>&1 | Select-Object -Last 20
-          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item f.bin -ErrorAction SilentlyContinue).Length)"
-      - name: G. System32 curl, a large asset from another repo
-        timeout-minutes: 4
-        continue-on-error: true
-        run: |
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          & "$env:SystemRoot\System32\curl.exe" -fSL --connect-timeout 30 --max-time 200 -o g.bin https://github.com/cli/cli/releases/download/v2.76.2/gh_2.76.2_windows_amd64.zip 2>&1 | Select-Object -Last 20
-          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item g.bin -ErrorAction SilentlyContinue).Length)"
-      - name: H. System32 curl, a large file from a non-GitHub host
-        timeout-minutes: 4
-        continue-on-error: true
-        run: |
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          & "$env:SystemRoot\System32\curl.exe" -fSL --connect-timeout 30 --max-time 200 -o h.bin https://static.rust-lang.org/dist/rust-src-1.88.0.tar.xz 2>&1 | Select-Object -Last 20
-          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item h.bin -ErrorAction SilentlyContinue).Length)"
-      - name: I. System32 curl, HTTP/1.1 Range requests in 8 MB chunks
-        timeout-minutes: 4
-        continue-on-error: true
-        run: |
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          & "$env:SystemRoot\System32\curl.exe" -fSL --connect-timeout 30 --max-time 60 -r 0-8388607 -o i.bin $env:URI 2>&1 | Select-Object -Last 20
-          "exit=$LASTEXITCODE after $($sw.Elapsed.TotalSeconds)s size=$((Get-Item i.bin -ErrorAction SilentlyContinue).Length)"
+        run: .\tools\frida\devkits.ps1
+      - name: Download after the devkit script
+        timeout-minutes: 3
+        run: .\.github\probe\dl.ps1 after-devkits
