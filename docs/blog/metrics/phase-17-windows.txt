@@ -12,7 +12,7 @@ marked as such; GitHub's windows-2022 runners are elevated and run them
 
 What was built and run
 ----------------------
-The whole Windows backend the brief (docs/windows-agent-brief.md) asked
+The whole Windows backend the brief (docs/design/windows-agent-brief.md) asked
 for, built and tested on the OS. Two deviations from the brief, both
 recorded in cross-platform-plan.md:
 

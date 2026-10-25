@@ -6,12 +6,12 @@
 
 Target platforms: Linux x86-64 (done), Linux aarch64, macOS (x86-64 + Apple
 silicon), Windows x86-64 (done, 2026-10-17: see "Windows, done and verified"
-below and [building_windows.md](building_windows.md)).
+below and [../building_windows.md](../building_windows.md)).
 
 Development runs on Linux x86-64. Native validation must be distinguished from
 cross-compilation: the macOS manual capture backend now compile-checks for both
 Apple targets, and a native Intel/Apple Silicon CI workflow has been added.
-Native runtime results are pending. See [building_macos.md](building_macos.md)
+Native runtime results are pending. See [../building_macos.md](../building_macos.md)
 for the implemented service, SDK, smoke test and current limitations. ETW and
 macOS sampling/scheduling remain roadmap work.
 
@@ -27,7 +27,7 @@ Everything the brief listed, built and run on the OS:
   `LockFileEx` byte-range lock; unlink-while-mapped done by renaming out of
   the namespace plus `FILE_FLAG_DELETE_ON_CLOSE`, because NTFS will not
   delete a mapped file. The crate's tests pass unchanged plus Windows ones.
-- The scheduler and sampling: `rust/crates/orbit-etw`, the NT Kernel Logger
+- The scheduler and sampling: `crates/orbit-etw`, the NT Kernel Logger
   through hand-declared advapi32 bindings (not ferrisetw: the classic kernel
   events are decoded from their fixed MOF layouts, after the C++ tracer lost
   every `CSwitch` through TDH on a newer Windows, `52787b085`). Context
@@ -42,8 +42,8 @@ Everything the brief listed, built and run on the OS:
   export tables and exception tables, MSVC demangling.
 - Frida: the same agent and helper, with a named pipe as the control
   channel and the client authenticated by `GetNamedPipeClientProcessId`.
-- Static CRT for every binary (`rust/.cargo/config.toml`), checked with
-  `dumpbin /dependents` by `build-service-windows.ps1`.
+- Static CRT for every binary (`.cargo/config.toml`), checked with
+  `dumpbin /dependents` by `tools/build/build-service-windows.ps1`.
 
 Not done: auto-profiling (rides on uprobes), the GPU helper, PDB line
 tables in the disassembler, Windows on ARM64. The metrics are in

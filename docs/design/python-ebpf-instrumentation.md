@@ -85,7 +85,7 @@ Either way:
 
 **Built now (this PR):**
 
-- USDT probe **discovery** (`rust/crates/orbit-service/src/python_usdt.rs`):
+- USDT probe **discovery** (`crates/orbit-service/src/python_usdt.rs`):
   parse `.note.stapsdt`, list a Python image's probes, and decide
   USDT-vs-sampling from whether the function probes are present. Unit-tested,
   and validated against the live `python3.14`.

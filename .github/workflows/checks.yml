@@ -23,7 +23,7 @@ jobs:
       with:
         fetch-depth: '0'
     - name: Check license headers
-      run: ./contrib/scripts/check-license-headers.sh
+      run: ./.github/scripts/check-license-headers.sh
       shell: bash
     - name: 'Upload missing license headers'
       uses: actions/upload-artifact@v4

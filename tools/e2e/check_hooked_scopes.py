@@ -9,7 +9,7 @@ point where a hooked function's depth changes on a thread -- the signature of
 a lost or doubled probe hit -- and lines each up with the thread's scheduler
 slices, so a change that follows a migration says so.
 
-    python3 tools/check_hooked_scopes.py capture.zip [--pid N] [--show 12]
+    python3 tools/e2e/check_hooked_scopes.py capture.zip [--pid N] [--show 12]
 
 Needs pyarrow and pandas.
 """

@@ -108,7 +108,7 @@ not needing the workaround. Worth measuring before choosing.
 
 ## Follow-up: the Rust service took the per-task route (2026-09-01)
 
-`rust/crates/orbit-service/src/uprobes.rs` arms probes with `pid = <thread>,
+`crates/orbit-service/src/uprobes.rs` arms probes with `pid = <thread>,
 cpu = -1` plus `PERF_ATTR.inherit`, not per CPU. Every thread therefore has
 exactly one buffer for a given probe wherever it is scheduled, so the
 `(sp, ip, cpu)` duplicate this document describes cannot be constructed, and
@@ -134,7 +134,7 @@ instrumented capture, an entry that never closes or one that closes with the
 next return and swallows a real call.
 
 `UprobesUnwindingVisitor::OnUprobes`'s filter is now in
-`rust/crates/orbit-service/src/uprobes.rs`, rule for rule:
+`crates/orbit-service/src/uprobes.rs`, rule for rule:
 
 - every uprobe sample carries the user `sp` and `ip`
   (`PERF_SAMPLE_REGS_USER` with the `SAMPLE_REGS_USER_SP_IP` mask, two
@@ -165,7 +165,7 @@ dropped, the same frame from the same CPU kept, an entry above the last
 dropped, equal sp with another ip kept, the post-drop state empty so the next
 entry is unchecked, a return clearing the state, the filter off counting
 only, threads independent). The kernel's actual behaviour is exercised by
-`a_uprobe_fires_on_a_function_of_this_process` under `tools/uprobe-test.sh`,
+`a_uprobe_fires_on_a_function_of_this_process` under `tools/e2e/uprobe-test.sh`,
 which needs `CAP_PERFMON`.
 
 ## Follow-up: a real capture, and what the ghosts actually were (2026-09-05)
@@ -175,7 +175,7 @@ A 15 s capture of Box3D with four functions hooked (`b3World_Step`,
 on 8 threads), taken with the filter above switched on, still showed
 ghosts: on the main thread every scope after 6.9 s sat one level too deep,
 and on four worker threads runs of joints sat at depth 0, outside any
-`b3SolverTask`. `tools/check_hooked_scopes.py` on the exported bundle finds
+`b3SolverTask`. `tools/e2e/check_hooked_scopes.py` on the exported bundle finds
 every point where a function's depth changes and lines them up with the
 scheduler slices of that thread:
 

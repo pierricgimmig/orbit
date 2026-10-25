@@ -5,7 +5,7 @@
 > service's `windows.rs` loop, Frida over a named pipe, the static CRT
 > build and the packaging. The outcome and its numbers are in
 > `docs/blog/metrics/phase-17-windows.txt`, the status in
-> `cross-platform-plan.md`, the how-to in `building_windows.md`, and the
+> `cross-platform-plan.md`, the how-to in `../building_windows.md`, and the
 > story in blog post 24. Two deviations from the plan are recorded there:
 > raw advapi32 bindings instead of `ferrisetw`, and a file-backed section
 > in a per-user directory instead of a `Local\` named section. The text
@@ -16,7 +16,7 @@
 You are starting cold on a Windows x86-64 machine, in a clone of this
 repository on branch `rust-port-object-utils`. Nothing from the Linux
 sessions travels except what is in git, so this file is the handoff. Read it,
-then `docs/cross-platform-plan.md` (the status and the ETW/kdebug roadmap it
+then `docs/design/cross-platform-plan.md` (the status and the ETW/kdebug roadmap it
 came from), then `docs/blog/metrics/phase-9-perf.txt` (the last pass, and the
 shape of a metrics file). The blog posts in `docs/blog/` are the running log
 of how this port has been done; post 15 covers the scope ring you will be
@@ -67,10 +67,10 @@ wrong, and the write-ups say so.
 linked or run. Your first act on the machine is to turn that table into
 `cargo test` results.
 
-Toolchain: `rust/rust-toolchain.toml` pins **1.88.0**; use `cargo +1.88.0`
+Toolchain: `rust-toolchain.toml` pins **1.88.0**; use `cargo +1.88.0`
 everywhere and do not bump it. Workspaces: `rust/` is one workspace (Bazel's
 crate_universe reads it -- do not add heavy deps to its members),
-`rust/crates/orbit-service` and `rust/crates/orbit-capture` are their own
+`crates/orbit-service` and `crates/orbit-capture` are their own
 workspaces built from their crate directories, `rust/live-viewer/` is the
 viewer's. The C++ tree builds with Bazel: `.bazelrc` has a `--config=windows`
 (C++20).
@@ -81,7 +81,7 @@ viewer's. The C++ tree builds with Bazel: `.bazelrc` has a `--config=windows`
 
 - Build and test every crate marked clean above, natively:
   `cargo +1.88.0 test -p <crate>` from `rust/`, from
-  `rust/crates/orbit-capture`, and `-p orbit-live-*` from `rust/live-viewer`.
+  `crates/orbit-capture`, and `-p orbit-live-*` from `rust/live-viewer`.
   Record pass counts in a new `docs/blog/metrics/phase-10-windows-ground.txt`
   with the machine (Windows version, CPU, thread count) at the top, the way
   every metrics file starts.
@@ -128,9 +128,9 @@ only non-portable one is `shm.rs` (~200 lines, POSIX `shm_open`/`mmap`).
 - Acceptance: the crate's existing tests pass on Windows unchanged (they are
   API-level: write, drain, text continuation, dead-producer sweep) plus
   `orbit-api`'s. Then the four test apps: `OrbitTestRust` (in
-  `rust/crates/orbit-test-rust`), and `tools/test-programs/OrbitTestC`, `tools/test-programs/OrbitTestCpp`,
+  `crates/orbit-test-rust`), and `tools/test-programs/OrbitTestC`, `tools/test-programs/OrbitTestCpp`,
   `tools/test-programs/OrbitTestPython` -- their `build.sh` scripts link
-  `rust/target/release/liborbit_api.a`; write `build.ps1` / `build.bat`
+  `target/release/liborbit_api.a`; write `build.ps1` / `build.bat`
   equivalents against `orbit_api.lib`, and point `tools/test-programs/OrbitTestPython/orbit.py`
   at `orbit_api.dll` (it looks for `liborbit_api.so` today). Every app runs the
   same scenario; the acceptance is a capture of each one that shows its
@@ -198,7 +198,7 @@ document explains why "static" means this on Windows and not musl.
   Chrome DevTools client (`Chrome`: `goto`, `eval`, `screenshot`, and
   `call("Input.dispatchMouseEvent", ...)` for clicks and drags). It launches
   `google-chrome`; on Windows pass `binary=` to `chrome.exe`.
-- **Save** downloads the capture as Arrow; `rust/crates/orbit-capture/python/`
+- **Save** downloads the capture as Arrow; `crates/orbit-capture/python/`
   opens it in pandas (`pip install pyarrow`). That is how the Linux sessions
   read the service's own scope timings back out of a capture.
 - `orbit-service --serve <port>` plus `POST /api/demo/start` fills the ring
@@ -212,7 +212,7 @@ document explains why "static" means this on Windows and not musl.
   stating what was run.
 - `docs/blog/metrics/phase-10-windows-*.txt` for the ground, the ring, and
   the ETW differential.
-- An update to `docs/cross-platform-plan.md` moving items from "written but
+- An update to `docs/design/cross-platform-plan.md` moving items from "written but
   unverified" / "roadmap" to "done and verified", or to a new "tried and
   failed" section with what happened. Both are useful. Silence is not.
 - A blog post in the series' voice (post 18; copy the `<head>` of post 17 for
