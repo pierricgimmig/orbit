@@ -151,11 +151,13 @@ the Rust.
 ## Layout
 
 ```
-crates/    pure Rust, no FFI, unit-tested on its own
-ffi/       #[no_mangle] extern "C" layers + hand-written headers
-shims/     C++ implementing Orbit's existing interfaces over those headers
-tools/     the corpus smoke test and A/B benchmarks
+crates/        the service and everything it is built from, one crate per concern
+live-viewer/   the browser viewer: its crates, build_wasm.sh and the committed pack
 ```
+
+The `ffi/` adapters, the C++ `shims/` and the differential `tools/` of the
+port are on the `cpp` branch. `docs/blog/26-where-everything-lives.html`
+draws the tree and the crate graph.
 
 `crates/orbit-maps` has no dependencies. `crates/orbit-object` replaces six
 LLVM libraries with five crates: `object`, `gimli`, `pdb`, `msvc-demangler`
@@ -218,9 +220,9 @@ parse than protobuf (at ~1.7x the bytes -- a deliberate CPU-for-bandwidth
 trade on the hot path). Round-trip tested and size/speed-differentialed
 against protobuf.
 
-`shims/Demangle` is Orbit's replacement for `llvm::demangle`:
-`abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed
-ones, the input unchanged otherwise.
+Demangling is in the service (`demangle.rs`): `cpp_demangle` for Itanium
+names, `msvc-demangler` for `?`-prefixed ones, `rustc-demangle` for Rust,
+the input unchanged otherwise.
 
 ## Building
 
