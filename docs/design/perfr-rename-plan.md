@@ -28,9 +28,8 @@ lines in 372 files. Beyond prose it is:
 | Unreal plugin identifiers (`OrbitProfiler`, `FOrbit*`) | 4 kinds |
 
 Name availability on 2026-10-25: `perfr` is free on crates.io and PyPI
-(`perfr-api` too). The GitHub organization `perfr` and the repository
-`perfr/perfr` already exist, so the repository becomes
-`pierricgimmig/perfr` unless that organization is obtained.
+(`perfr-api` too). The GitHub organization `perfr` belongs to the owner,
+so the repository becomes `github.com/perfr/perfr`.
 
 ## Names
 
@@ -51,7 +50,7 @@ appears only where an identifier needs PascalCase.
 | MCP | server name `perfr`; tools `perfr_*` |
 | Test programs | `PerfrTestRust`, `PerfrTestC`, `PerfrTestCpp`, `PerfrTestPython` |
 | Unreal plugin | `PerfrProfiler`, `FPerfrProfilerModule`, `FPerfrExternalProfiler`, `FPerfrCpuTraceScope` |
-| GitHub | repository `pierricgimmig/perfr` (old URLs redirect); release tags `perfr-vX.Y.Z`; workflow names and concurrency groups; `repository` in `Cargo.toml` |
+| GitHub | repository `perfr/perfr` (transferred from `pierricgimmig/orbit`; GitHub redirects the old URLs); Pages at `perfr.github.io/perfr` unless a custom domain is set; release tags `perfr-vX.Y.Z`; workflow names and concurrency groups; `repository` in `Cargo.toml`; the installers' download URLs |
 | Copyright | "The perfr Authors" in headers and in LICENSE, which keeps a notice that parts derive from Orbit, Copyright 2020 The Orbit Authors, BSD-2-Clause |
 
 The copyright row needs a decision from the owner: the service's logic was
@@ -86,7 +85,9 @@ copyright notice to survive in derived work.
    is renamed too, so targeted runs are not enough); `build_wheels.sh` for
    Linux; the installers against a test release tagged `perfr-v0.0.0-test`;
    a fresh clone; the macOS and Windows CI jobs.
-7. **Rename the GitHub repository last**, then check the release download
-   URLs and the Pages URL.
+7. **Transfer the repository to `perfr/perfr` last**, then check the
+   release download URLs, the Pages URL and that the Actions secrets and
+   the PyPI trusted-publishing binding (which names the repository) moved
+   with it.
 
 About one working day of mechanical change plus review.
