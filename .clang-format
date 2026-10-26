@@ -1,9 +1,0 @@
----
-Language:        Cpp
-BasedOnStyle:  Google
-DerivePointerAlignment: false
-ColumnLimit: 100
----
-Language:        Proto
-BasedOnStyle:  Google
-...

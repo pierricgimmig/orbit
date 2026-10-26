@@ -688,7 +688,7 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
   <p>The rules this log holds itself to:</p>
 
   <ul>
-    <li><strong>No claim without a committed number.</strong> Every figure comes from a script in <code>scripts/</code> whose output is checked in, so any of it can be re-run and disputed.</li>
+    <li><strong>No claim without a committed number.</strong> Every figure comes from a script whose output is checked in under <code>docs/blog/metrics/</code> (the scripts themselves, which needed the C++ tree, are on the <code>cpp</code> branch), so any of it can be re-run and disputed.</li>
     <li><strong>The C++ test files are never edited.</strong> They are the specification. A port that changes its own exam has not passed anything.</li>
     <li><strong>Numbers that get worse get reported.</strong> A strangler port makes the tree bigger before it makes it smaller, and pretending otherwise would make the good numbers worth less.</li>
     <li><strong>Every hurdle gets written down</strong> — including the ones that were my own mistakes, which so far is most of them.</li>
@@ -697,6 +697,11 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
   <h2 id="posts">Posts</h2>
 
   <div class="posts wide">
+    <a href="26-where-everything-lives.html">
+      <span class="n">26 &middot; the tree</span>
+      <h3>Where Everything Lives</h3>
+      <p>The C++ is gone and the Rust is at the root; this is the map. One Cargo workspace, thirty-one crates in dependency layers, how the WASM pack gets inside the service, and where to go to change what.</p>
+    </a>
     <a href="25-one-timeline-many-machines.html">
       <span class="n">25 &middot; multi-machine</span>
       <h3>One Timeline, Many Machines</h3>

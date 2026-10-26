@@ -13,7 +13,7 @@
 #
 # Afterwards, from anywhere:
 #
-#   sudo -n orbit-service-sudo "$PWD/rust/crates/orbit-service/target/release/orbit-service" --serve 44766
+#   sudo -n orbit-service-sudo "$PWD/target/release/orbit-service" --serve 44766
 #
 # and tools/e2e/orbit_e2e.py --sudo uses it by itself. Remove with
 #   sudo rm /etc/sudoers.d/orbit-service /usr/local/bin/orbit-service-sudo

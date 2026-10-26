@@ -1,0 +1,6 @@
+# The toolchain CI builds with; rustup picks it up for any cargo run in rust/.
+[toolchain]
+channel = "1.88.0"
+components = ["rustfmt", "clippy"]
+# The service ships as a fully static musl binary; see build-service-musl.sh.
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-gnu"]

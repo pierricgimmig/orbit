@@ -15,41 +15,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check-clang-format:
-    # C++ formatting check disabled: the port no longer changes C++.
-    if: ${{ false }}
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: '0'
-      - name: Install dependencies
-        run: |
-           sudo apt update &&                             \
-           sudo apt install --yes --no-install-recommends \
-           clang-format-14                                \
-           git
-      - name: Check formatting
-        run: ./contrib/scripts/check-clang-format.sh
-        shell: bash
-      - name: 'Upload clang-format diff'
-        uses: actions/upload-artifact@v4
-        if: success() || failure()
-        with:
-          name: clang_format_diff
-          path: clang_format.diff
-          retention-days: 1
-      - run: echo "${{ github.event.number }}" > pr_number.txt
-        if: success() || failure()
-      - name: 'Upload PR number'
-        uses: actions/upload-artifact@v4
-        if: success() || failure()
-        with:
-          name: pr_number
-          path: pr_number.txt
-          retention-days: 1
-
   check-license-headers:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -58,7 +23,7 @@ jobs:
       with:
         fetch-depth: '0'
     - name: Check license headers
-      run: ./contrib/scripts/check-license-headers.sh
+      run: ./.github/scripts/check-license-headers.sh
       shell: bash
     - name: 'Upload missing license headers'
       uses: actions/upload-artifact@v4

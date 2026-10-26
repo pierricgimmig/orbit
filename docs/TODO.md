@@ -109,7 +109,7 @@ Windows done (2026-10-17).** The Mac service serves the viewer, discovers
 processes/threads and records manual instrumentation on Intel and Apple
 Silicon. See [building_macos.md](building_macos.md). Native CI covers both
 architectures. PDB parsing is done. The Windows service records the scheduler,
-thread states and samples from the NT Kernel Logger (`rust/crates/orbit-etw`,
+thread states and samples from the NT Kernel Logger (`crates/orbit-etw`,
 raw advapi32 bindings rather than ferrisetw; the MOF layouts are decoded from
 bytes), Frida hooks over a named pipe, and manual scopes; see
 [building_windows.md](building_windows.md) and
@@ -466,11 +466,11 @@ from the timeline's sampled frames.
 there is something that is introducing ghost scopes with dynamic instrumentation, it makes me think a lot of the workaround we had to do in c++ because of what appears like a bug in the kernel, duplicated end or start events that we work around by inspecting the instruction pointer. Can you find that fix in the c++ version, and reimplement in rust. Do this as a single commit, maybe add an option to toggle on/off the fix so we can see its effect.
 
   DONE 2026-09-05: the `(sp, ip, cpu)` filter of `UprobesUnwindingVisitor::OnUprobes`
-  is in `rust/crates/orbit-service/src/uprobes.rs` (every uprobe sample now
+  is in `crates/orbit-service/src/uprobes.rs` (every uprobe sample now
   carries sp and ip), switchable per capture with the Dedupe pill in the HOOKS
   row (`uprobe_duplicate_filter` in the request), counted on the status line.
   Unit-tested rule by rule; the effect on a real target needs a privileged run
-  (`tools/uprobe-test.sh`, then a capture with Dedupe off and on).
+  (`tools/e2e/uprobe-test.sh`, then a capture with Dedupe off and on).
 
 greying out of scopes when selecting a thread should only apply to the scheduling slices
 
@@ -576,9 +576,9 @@ number and its `retprobe` config bit
 tracepoint ids (`/sys/kernel/tracing/events/*/*/id`, with the older
 `/sys/kernel/debug/tracing` as fallback), and
 `/proc/sys/kernel/perf_event_max_stack` — all in
-`rust/crates/orbit-perf-ring/src/attr.rs`. What is still hard-coded is
+`crates/orbit-perf-ring/src/attr.rs`. What is still hard-coded is
 the shape of the tracepoint `RAW` payloads:
-`rust/crates/orbit-perf-records/src/tracepoints.rs` carries the field
+`crates/orbit-perf-records/src/tracepoints.rs` carries the field
 offsets of `sched_switch`, `sched_wakeup`, `sched_process_fork`/`exit`
 and the `amdgpu`/`dma_fence` events by hand, ported offset for offset
 from the C++ `KernelTracepoints.h`. Those offsets are what actually move
@@ -639,7 +639,7 @@ with a scope's lifetime.
 Frida Core now handles attachment and Gum native callbacks feed a Rust agent.
 Frida is the default, with Linux uprobes retained explicitly. See
 [the integration guide](frida-instrumentation.md) and the
-[implementation review](dynamic-instrumentation-review.md).
+[implementation review](design/dynamic-instrumentation-review.md).
 
 - Evaluate replacing the Python/Frida Core control helper with a direct native
   Core integration if packaging or startup measurements justify it. Recording
@@ -767,7 +767,7 @@ USDT-vs-sampling (`orbit-service --python-probes <pid|path>`), unit-tested and
 run against the live `python3.14`. Design, the two attach paths (generated
 eBPF with in-kernel filtering, or the perf-uprobe bridge), tagging
 (`language=python`/`origin=python_function`), the CUDA merge, fallbacks, and
-the e2e are in [python-ebpf-instrumentation.md](python-ebpf-instrumentation.md).
+the e2e are in [python-ebpf-instrumentation.md](design/python-ebpf-instrumentation.md).
 Reality check found on 2026-09-10: Ubuntu's `python3.14` ships `gc`/`import`/
 `audit` probes but **not** the per-function ones, so detect-and-degrade to
 sampling is the common path, not an edge case. Building the attach/capture

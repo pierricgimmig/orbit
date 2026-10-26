@@ -1,0 +1,1055 @@
+<!--
+Copyright (c) 2026 The Orbit Authors. All rights reserved.
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>Where Everything Lives</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+
+<style>
+  figure { margin: 0.5rem 0; background: var(--surface); border: 1px solid var(--line); padding: 1.35rem 1.35rem 1rem; }
+  figcaption { font-family: var(--display); font-size: 0.8rem; line-height: 1.45; color: var(--muted); margin-top: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+  .embed { background: #0b0c0e; border: 1px solid var(--line); }
+  .embed iframe { display: block; width: 100%; height: 640px; border: 0; }
+  .embed-head { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 0.7rem; }
+  .embed-head.off { color: var(--accent-deep); } .embed-head.on { color: var(--hold); }
+  @media (max-width: 720px) { .embed iframe { height: 460px; } }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+
+<style>
+  .diagram { overflow-x:auto; padding:16px 8px; background:var(--surface); border:1px solid var(--line); border-radius:10px; }
+  .diagram svg { display:block; width:100%; min-width:700px; height:auto; }
+  .diagram rect { fill:var(--ground); stroke:var(--line); stroke-width:1.5; }
+  .diagram rect.accent { fill:var(--accent-wash); stroke:var(--accent); }
+  .diagram rect.soft { fill:var(--surface-2); stroke:var(--line-strong); }
+  .diagram rect.warn { fill:var(--warn-wash); stroke:var(--warn); }
+  .diagram rect.hold { fill:var(--hold-wash); stroke:var(--hold); }
+  .diagram rect.bar { fill:var(--accent); stroke:none; }
+  .diagram rect.bar.dim { fill:var(--line-strong); }
+  .diagram rect.bar.hold { fill:var(--hold); stroke:none; }
+  .diagram circle.dot { fill:var(--accent); stroke:none; }
+  .diagram circle.dim { fill:var(--line-strong); stroke:none; }
+  .diagram text { fill:var(--ink); font:16px Roboto,sans-serif; text-anchor:middle; }
+  .diagram text.small { font-size:13px; fill:var(--ink-soft); }
+  .diagram text.label { font-size:12px; letter-spacing:1px; fill:var(--muted); }
+  .diagram text.mono { font-family:'Roboto Mono',monospace; font-size:14px; }
+  .diagram text.left { text-anchor:start; }
+  .diagram text.right { text-anchor:end; }
+  .diagram path.arrow { fill:none; stroke:var(--accent); stroke-width:2; marker-end:url(#ah); }
+  .diagram path.arrow.both { marker-start:url(#ah); }
+  .diagram path.arrow.hold { stroke:var(--hold); marker-end:url(#ah-hold); }
+  .diagram path.line { fill:none; stroke:var(--line-strong); stroke-width:2; }
+  .diagram path.dash { fill:none; stroke:var(--muted); stroke-width:1.5; stroke-dasharray:5 5; }
+  .diagram path.fit { fill:none; stroke:var(--accent); stroke-width:2.5; }
+  .diagram marker path { fill:var(--accent); stroke:none; }
+  .diagram marker.hold path { fill:var(--hold); }
+  .callout { background:var(--accent-wash); border:1px solid var(--accent); border-radius:10px; padding:1rem 1.25rem; font-size:.98rem; }
+  .callout.hold { background:var(--hold-wash); border-color:var(--hold); }
+  .table-wrap { overflow-x:auto; border:1px solid var(--line); background:var(--surface); }
+  .table-wrap table { border-collapse:collapse; width:100%; font-size:.93rem; }
+  .table-wrap th, .table-wrap td { text-align:left; padding:.55rem .8rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  .table-wrap th { font-family:var(--display); font-size:.74rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+  .doc > .wide { grid-column: wide; }
+  .wide { max-width:100%; margin-left:0; margin-right:0; }
+  @media(max-width:760px) { .diagram::after { content:"Scroll horizontally to see the full diagram \2192"; display:block; padding-top:12px; color:var(--muted); font-size:12px; } }
+</style>
+</head><body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 26</p>
+    <h1>Where Everything Lives</h1>
+    <p class="dek">For two months the repository was two profilers sharing one tree: eighty-two C++ directories under <code>src/</code>, twenty-four vendored libraries, a Bazel graph that stitched the Rust in as static archives, and the Rust itself tucked into <code>rust/</code> as if it were the guest. The C++ is gone and the Rust is at the root. This post is the map: one workspace, thirty-one crates, four directories, and the paths between them.</p>
+    <p class="byline">On the <code>rust-canonical</code> branch, PR #118. Every count below is <code>git ls-files</code> on that branch; the crate graph is read out of the <code>Cargo.toml</code> path dependencies.</p>
+    <div class="stats">
+      <div class="stat"><b>&minus;549k</b><span>lines removed: 2,533 files, one commit</span></div>
+      <div class="stat"><b>31</b><span>crates, all in one <code>crates/</code></span></div>
+      <div class="stat"><b>1</b><span>Cargo workspace and lockfile, down from six and seven</span></div>
+      <div class="stat"><b>16</b><span>C and C++ files kept, every one on purpose</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p>A repository's layout is a claim about what the project is. Until this week the claim was "a C++ profiler with a Rust port growing inside it": <code>src/</code> held the Qt application and the C++ service, <code>third_party/</code> held LLVM, Qt and libunwindstack, <code>MODULE.bazel</code> was 1.9&nbsp;MB of lockfile, and the Rust lived in a side directory whose crates were linked into <code>OrbitService</code> through a row of <code>-ffi</code> adapters. Post 13 measured the moment the Rust service overtook the C++ one; posts 14 through 25 never touched a C++ file again. The tree just had not caught up.</p>
+
+  <p>The cleanup is simple to describe and tedious to do: delete everything the C++ build owned, move the Rust from its side directory to the root, merge its six Cargo workspaces into one, and follow every path. What follows is the result, drawn.</p>
+
+  <h2 id="top">The top level</h2>
+
+  <p>A Cargo workspace root, and four directories beside it. The files are what any Rust repository has, <code>Cargo.toml</code>, <code>Cargo.lock</code> and the toolchain pin, plus <code>run.sh</code>, which builds the service and opens the viewer, and the usual README, LICENSE and <code>.gitignore</code>. The directories are where the counting starts.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 470" role="img" aria-labelledby="top-title"><title id="top-title">The repository's top level: the workspace files, crates, tools, docs, .github and integrations, with file counts.</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<text x="450" y="24" class="label">ORBIT / &middot; A WORKSPACE ROOT, FOUR DIRECTORIES, 643 TRACKED FILES</text>
+<rect x="20" y="40" width="860" height="40" rx="8" class="soft"/>
+<text x="450" y="65" class="small">Cargo.toml &middot; Cargo.lock &middot; rust-toolchain.toml &middot; .cargo/config.toml &middot; run.sh &middot; README.md &middot; LICENSE &middot; .gitignore</text>
+
+<rect x="20" y="100" width="300" height="350" rx="10" class="accent"/>
+<text x="170" y="128">crates/ &middot; 31 crates, 284 files</text>
+<text x="170" y="150" class="small">the product, one directory per crate</text>
+<rect x="38" y="166" width="264" height="118" rx="6"/>
+<text x="170" y="190">24 service-side crates</text>
+<text x="170" y="212" class="small">orbit-service and what it is built from:</text>
+<text x="170" y="230" class="small">capture sources, symbols and stacks, the</text>
+<text x="170" y="248" class="small">instrumentation API and its pip packages,</text>
+<text x="170" y="266" class="small">the Frida agent and helper</text>
+<rect x="38" y="296" width="264" height="118" rx="6"/>
+<text x="170" y="320">7 orbit-live-* crates</text>
+<text x="170" y="342" class="small">the eframe WASM viewer, its server,</text>
+<text x="170" y="360" class="small">the trace importers, and the built pack</text>
+<text x="170" y="378" class="small">in orbit-live-viewer/viewer-dist/,</text>
+<text x="170" y="396" class="small">made by build_wasm.sh beside it</text>
+<text x="170" y="436" class="small mono">crates/README.md describes each one</text>
+
+<rect x="340" y="100" width="260" height="200" rx="10" class="soft"/>
+<text x="470" y="128">tools/ &middot; 138 files</text>
+<text x="470" y="150" class="small">everything that drives, builds or ships it</text>
+<text x="360" y="178" class="small left">e2e/ &middot; 27 browser scenarios</text>
+<text x="360" y="198" class="small left">test-programs/ &middot; C, C++, Python targets</text>
+<text x="360" y="218" class="small left">build/ &middot; musl, macOS, Windows packaging</text>
+<text x="360" y="238" class="small left">hook_test/ &middot; one function at a time</text>
+<text x="360" y="258" class="small left">site/ + media-kit/ &middot; the web site</text>
+<text x="360" y="278" class="small left">frida/ install/ sudo/ windows/ release/</text>
+
+<rect x="340" y="316" width="260" height="134" rx="10" class="soft"/>
+<text x="470" y="344">docs/ &middot; 192 files</text>
+<text x="360" y="372" class="small left">manual/ &middot; 12 pages, the user's reference</text>
+<text x="360" y="392" class="small left">blog/ &middot; 26 posts, 68 metrics snapshots</text>
+<text x="360" y="412" class="small left">design/ &middot; the plans behind the code</text>
+<text x="360" y="432" class="small left">building_*.md, releasing.md, the essays</text>
+
+<rect x="620" y="100" width="260" height="96" rx="10"/>
+<text x="750" y="128">.github/ &middot; 11 workflows</text>
+<text x="640" y="156" class="small left">Linux, macOS, Windows builds and tests,</text>
+<text x="640" y="176" class="small left">the viewer, wheels, releases, the site</text>
+
+<rect x="620" y="212" width="260" height="96" rx="10"/>
+<text x="750" y="240">integrations/ &middot; 8 files</text>
+<text x="640" y="268" class="small left">unreal/ &middot; an Unreal Engine plugin</text>
+<text x="640" y="288" class="small left">wrapping orbit.h, plus an engine patch</text>
+
+<rect x="620" y="324" width="260" height="126" rx="10" class="soft"/>
+<text x="750" y="352">not in the tree</text>
+<text x="640" y="380" class="small left">target/ &middot; every Cargo build</text>
+<text x="640" y="400" class="small left">/site &middot; the built web site</text>
+<text x="640" y="420" class="small left">dist/ &middot; packaged services and wheels</text>
+<text x="640" y="440" class="small left">frida devkits &middot; fetched into target/</text>
+</svg></div>
+<figcaption><b>Four directories and a workspace root.</b> <code>crates/</code> is the product, <code>tools/</code> is how it is tested, built and shipped, <code>docs/</code> is how it is explained. <code>contrib/</code>, which once held Docker images, IWYU configs and a Jupyter notebook for the C++ build, is gone: its two license-header scripts live in <code>.github/scripts</code>, its two logos with the site's media. Build output never enters the tree.</figcaption>
+</figure>
+
+  <h2 id="service">crates/: the service, in layers</h2>
+
+  <p>Twenty-four crates on the service side, and the number is the port's history rather than a design: each phase of the port produced the crate that replaced one C++ library, and the crates kept their boundaries after the C++ left. That turns out to be a reasonable layering. Read from the bottom, each row depends only on rows below it.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 560" role="img" aria-labelledby="svc-title"><title id="svc-title">The service crates arranged in dependency layers, from the zero-dependency leaves up to orbit-service.</title>
+<text x="450" y="24" class="label">CRATES/ &middot; THE SERVICE SIDE &middot; ARROWS POINT AT WHAT A ROW USES</text>
+
+<rect x="20" y="40" width="860" height="86" rx="10" class="accent"/>
+<text x="450" y="66">orbit-service &middot; 18,400 lines &middot; the binary</text>
+<text x="450" y="88" class="small">Linux, macOS and Windows entry point. Depends on fifteen crates below and on the viewer's server.</text>
+<text x="450" y="108" class="small">Also here: python/orbit_profiler, the pip package that carries this binary.</text>
+<path d="M450 126 V150" class="arrow"/>
+
+<text x="20" y="168" class="label left">SOURCES &middot; WHERE EVENTS COME FROM</text>
+<rect x="20" y="178" width="200" height="70" rx="8"/>
+<text x="120" y="202" class="mono">orbit-perf-ring</text><text x="120" y="222" class="small">perf_event_open, mmap rings</text>
+<text x="120" y="240" class="small">unsafe in one module</text>
+<rect x="232" y="178" width="200" height="70" rx="8"/>
+<text x="332" y="202" class="mono">orbit-collector</text><text x="332" y="222" class="small">the event loop: round-robin</text>
+<text x="332" y="240" class="small">rings, ordered output</text>
+<rect x="444" y="178" width="200" height="70" rx="8"/>
+<text x="544" y="202" class="mono">orbit-etw</text><text x="544" y="222" class="small">Windows: the kernel logger</text>
+<text x="544" y="240" class="small">as scheduler and sampler</text>
+<rect x="656" y="178" width="224" height="70" rx="8"/>
+<text x="768" y="202" class="mono">orbit-gpu-helper</text><text x="768" y="222" class="small">a separate binary polling</text>
+<text x="768" y="240" class="small">NVML, writes pod events</text>
+
+<text x="20" y="276" class="label left">STACKS AND SYMBOLS</text>
+<rect x="20" y="286" width="200" height="70" rx="8"/>
+<text x="120" y="310" class="mono">orbit-object</text><text x="120" y="330" class="small">ELF, PE, PDB, DWARF lines:</text>
+<text x="120" y="348" class="small">what six LLVM libraries did</text>
+<rect x="232" y="286" width="200" height="70" rx="8"/>
+<text x="332" y="310" class="mono">orbit-unwind</text><text x="332" y="330" class="small">framehop over a stack copy,</text>
+<text x="332" y="348" class="small">modules from /proc/pid/maps</text>
+<rect x="444" y="286" width="200" height="70" rx="8"/>
+<text x="544" y="310" class="mono">orbit-thread-states</text><text x="544" y="330" class="small">the per-thread state machine</text>
+<text x="544" y="348" class="small">over sched tracepoints</text>
+<rect x="656" y="286" width="224" height="70" rx="8"/>
+<text x="768" y="310" class="mono">orbit-tracing-state</text><text x="768" y="330" class="small">the bookkeeping LinuxTracing</text>
+<text x="768" y="348" class="small">kept: uprobes returns, leaves</text>
+
+<text x="20" y="384" class="label left">INSTRUMENTATION &middot; DYNAMIC AND MANUAL</text>
+<rect x="20" y="394" width="200" height="70" rx="8"/>
+<text x="120" y="418" class="mono">orbit-ptrace</text><text x="120" y="438" class="small">attach, read, write, inject</text>
+<text x="120" y="456" class="small">syscalls into a tracee</text>
+<rect x="232" y="394" width="200" height="70" rx="8"/>
+<text x="332" y="418" class="mono">orbit-trampoline</text><text x="332" y="438" class="small">placement, relocation, codegen,</text>
+<text x="332" y="456" class="small">byte-identical with the C++</text>
+<rect x="444" y="394" width="200" height="70" rx="8" class="accent"/>
+<text x="544" y="418" class="mono">orbit-api</text><text x="544" y="438" class="small">include/orbit.h, the C ABI,</text>
+<text x="544" y="456" class="small">python/orbit_api; a cdylib</text>
+<rect x="656" y="394" width="224" height="70" rx="8"/>
+<text x="768" y="418" class="mono">orbit-frida-*</text><text x="768" y="438" class="small">agent: Gum inside the target;</text>
+<text x="768" y="456" class="small">helper: Core, in its own process</text>
+
+<text x="20" y="492" class="label left">LEAVES &middot; NO DEPENDENCIES ON EACH OTHER</text>
+<rect x="20" y="502" width="116" height="44" rx="8" class="soft"/><text x="78" y="529" class="small mono">orbit-maps</text>
+<rect x="142" y="502" width="161" height="44" rx="8" class="soft"/><text x="222" y="529" class="small mono">orbit-perf-records</text>
+<rect x="309" y="502" width="111" height="44" rx="8" class="soft"/><text x="364" y="529" class="small mono">orbit-wire</text>
+<rect x="426" y="502" width="151" height="44" rx="8" class="soft"/><text x="501" y="529" class="small mono">orbit-scope-ring</text>
+<rect x="583" y="502" width="156" height="44" rx="8" class="soft"/><text x="661" y="529" class="small mono">orbit-perf-merge</text>
+<rect x="745" y="502" width="131" height="44" rx="8" class="soft"/><text x="810" y="529" class="small mono">orbit-capture</text>
+</svg></div>
+<figcaption><b>Four rows and a cap.</b> Not drawn, to keep the picture readable: <code>orbit-test-rust</code> (the Rust example program, on <code>orbit-api</code>), <code>orbit-pod-dump</code> (prints a capture, on <code>orbit-wire</code>), <code>orbit-frida-transport</code> (the capture lease, on <code>orbit-scope-ring</code>) and <code>orbit-frida-build</code> (the build-script helper that links the Frida devkits). <code>orbit-capture</code> is the Arrow-and-Parquet capture on disk and sits with the leaves because its only in-repo dependencies are the viewer's event crates. Every arrow in the real graph points downward; there are no cycles and no crate reaches up.</figcaption>
+</figure>
+
+  <p>Two crates are worth singling out because they produce more than a library. <code>orbit-api</code> builds as an rlib, a static library and a shared library at once: <code>liborbit_api.so</code> is what <code>orbit.h</code> loads at run time, and the Python package beside it talks to the same shared object through <code>ctypes</code>. <code>orbit-service</code> is the binary, and its <code>python/</code> directory is the <code>orbit-profiler</code> wheel that wraps it. Two files that used to sit loose at the root of <code>rust/</code>, included by <code>#[path]</code> from the two Frida crates, now have crates to live in: the devkit link logic is <code>orbit-frida-build</code>, a build-dependency of the agent and the helper, and the setup-only timing is a module of <code>orbit-frida-transport</code>.</p>
+
+  <h2 id="viewer">crates/orbit-live-*: the web stuff</h2>
+
+  <p>The viewer used to be <code>src/OrbitLiveViewer</code>, a PascalCase name under the C++ tree because it was born as the C++ service's web front end and linked into it through <code>orbit-live-ffi</code>. That crate is gone, and the seven that remain sit in <code>crates/</code> with everything else, the pack beside the viewer crate in <code>crates/orbit-live-viewer/viewer-dist</code>. It is the one part of the tree with a build step that is not <code>cargo build</code>, and the diagram is mostly about that step.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 400" role="img" aria-labelledby="pack-title"><title id="pack-title">The viewer crates, the build of the WASM pack, and how the pack ends up inside the service binary.</title>
+<text x="450" y="24" class="label">CRATES/ORBIT-LIVE-* &middot; FROM SOURCE TO A TAB</text>
+
+<rect x="20" y="40" width="340" height="180" rx="10" class="soft"/>
+<text x="190" y="66">what both sides share</text>
+<rect x="34" y="82" width="160" height="40" rx="6"/><text x="114" y="107" class="small mono">orbit-live-event</text>
+<rect x="34" y="130" width="160" height="40" rx="6"/><text x="114" y="155" class="small mono">orbit-live-protocol</text>
+<rect x="200" y="82" width="148" height="40" rx="6"/><text x="274" y="107" class="small mono">orbit-live-render</text>
+<rect x="200" y="130" width="148" height="40" rx="6"/><text x="274" y="155" class="small mono">orbit-live-ring</text>
+<text x="190" y="200" class="small">32-byte events, their framing, the rasterizer, the ring</text>
+
+<rect x="20" y="240" width="340" height="140" rx="10" class="accent"/>
+<text x="190" y="266">orbit-live-viewer &middot; 26,100 lines</text>
+<text x="190" y="288" class="small">eframe + wgpu, compiled to wasm32. The largest</text>
+<text x="190" y="306" class="small">crate in the repository. Imports Chrome and Perfetto</text>
+<text x="190" y="324" class="small">traces through orbit-live-chrome.</text>
+<text x="190" y="356" class="small mono">cargo test runs it natively, no window</text>
+
+<path d="M360 310 H420" class="arrow"/>
+<rect x="424" y="262" width="200" height="96" rx="10" class="warn"/>
+<text x="524" y="288" class="mono">build_wasm.sh</text>
+<text x="524" y="310" class="small">nightly-2025-11-15, build-std,</text>
+<text x="524" y="328" class="small">atomics for the worker pool,</text>
+<text x="524" y="346" class="small">--profile wasm, wasm-bindgen 0.2.100</text>
+
+<path d="M624 310 H684" class="arrow"/>
+<rect x="688" y="262" width="192" height="96" rx="10"/>
+<text x="784" y="288" class="mono">viewer-dist/</text>
+<text x="784" y="310" class="small">index.html, the .js and</text>
+<text x="784" y="328" class="small">8.9 MB of .wasm, checked in</text>
+<text x="784" y="346" class="small">so no clone needs nightly</text>
+
+<path d="M784 262 V150" class="arrow"/>
+<rect x="520" y="60" width="360" height="90" rx="10"/>
+<text x="700" y="86" class="mono">orbit-live-server</text>
+<text x="700" y="108" class="small">axum + WebSocket. Its build.rs reads the sibling viewer-dist/</text>
+<text x="700" y="126" class="small">and include_bytes! every file into the library.</text>
+
+<path d="M520 105 H470 V60" class="arrow"/>
+<rect x="380" y="36" width="130" height="24" rx="6" class="accent"/>
+<text x="445" y="53" class="small">orbit-service links it</text>
+</svg></div>
+<figcaption><b>The pack travels as bytes.</b> The viewer is compiled by a script, with the workspace's nightly-only settings: <code>build-std</code>, because the renderer's worker threads need a standard library built with atomics, and <code>--profile wasm</code>, a plain release build with no DWARF, since line tables and thin LTO buy a browser nothing. Its output is committed. The server crate embeds whatever is in <code>viewer-dist/</code> at build time, and the service links the server, which is why a stale pack shows a stale page until the service is rebuilt. <code>rust.sh</code> warns when the pack is older than the viewer's sources.</figcaption>
+</figure>
+
+  <p>The server has a <code>main.rs</code> of its own, which serves the viewer with a demo producer and no capture stack; that is the fastest way to work on the front end. The real thing is the service: it installs <code>orbit_api::scope</code> into the server's <code>Instrument</code> hook at start-up, which is how the viewer's own WebSocket sends show up as scopes in a capture of the service.</p>
+
+  <h2 id="workspaces">One workspace, where there were six</h2>
+
+  <p>A canonical Rust repository has one <code>Cargo.toml</code> at its root, one <code>crates/</code>, one lockfile and one <code>target/</code>. Until this week this one had six workspaces and seven lockfiles, and every manifest explained why in the same words: Bazel's crate_universe spliced <code>rust/</code> into a temporary directory to generate its dependency graph, and a path dependency that left <code>rust/</code> broke every Bazel build. So <code>orbit-service</code>, which depends on the viewer's server, had to be its own workspace. So did <code>orbit-capture</code>. So did the viewer, three times over. The other reason given, keeping eframe out of the service's lockfile, was never one Cargo needed: feature resolution is per build graph, so <code>cargo build -p orbit-service</code> never compiles eframe whether or not the viewer shares its workspace.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 360" role="img" aria-labelledby="ws-title"><title id="ws-title">The one Cargo workspace, with the service build graph and the viewer build graph sharing five crates.</title>
+<text x="450" y="24" class="label">ONE CARGO.TOML, 31 MEMBERS, ONE CARGO.LOCK, ONE TARGET/</text>
+
+<rect x="20" y="40" width="860" height="300" rx="10" class="soft"/>
+<text x="40" y="66" class="left">Cargo.toml &middot; the workspace root</text>
+
+<rect x="40" y="82" width="330" height="240" rx="10" class="accent"/>
+<text x="205" y="108">cargo build -p orbit-service</text>
+<text x="205" y="130" class="small">the service graph, 20 crates of this tree</text>
+<rect x="60" y="150" width="290" height="40" rx="6"/><text x="205" y="175" class="small">capture sources &middot; symbols and stacks</text>
+<rect x="60" y="200" width="290" height="40" rx="6"/><text x="205" y="225" class="small">instrumentation: ptrace, trampoline, api, frida</text>
+<rect x="60" y="250" width="290" height="40" rx="6"/><text x="205" y="275" class="small">wire, capture, the viewer's server</text>
+<text x="205" y="310" class="small mono">tokio, axum, arrow, object, framehop</text>
+
+<rect x="385" y="140" width="130" height="110" rx="8"/>
+<text x="450" y="166" class="small">shared</text>
+<text x="450" y="188" class="small mono">live-event</text>
+<text x="450" y="206" class="small mono">live-protocol</text>
+<text x="450" y="224" class="small mono">live-render</text>
+<text x="450" y="242" class="small mono">live-ring</text>
+<path d="M385 195 H370" class="arrow"/><path d="M515 195 H530" class="arrow"/>
+
+<rect x="530" y="82" width="330" height="240" rx="10" class="accent"/>
+<text x="695" y="108">build_wasm.sh &middot; --profile wasm</text>
+<text x="695" y="130" class="small">the viewer graph: orbit-live-viewer, orbit-live-chrome</text>
+<rect x="550" y="150" width="290" height="40" rx="6"/><text x="695" y="175" class="small">eframe + egui + wgpu, compiled to wasm32</text>
+<rect x="550" y="200" width="290" height="40" rx="6" class="hold"/><text x="695" y="225" class="small">~200 crates nothing else in the tree depends on</text>
+<rect x="550" y="250" width="290" height="40" rx="6"/><text x="695" y="275" class="small">a service build never compiles them</text>
+<text x="695" y="310" class="small">cargo test -p orbit-live-viewer runs natively</text>
+</svg></div>
+<figcaption><b>Two build graphs, one workspace.</b> The merge kept every dependency at a version one of the old workspaces already used; the one that mattered, <code>wasm-bindgen</code>, stays at the 0.2.100 the viewer's CLI expects. Shared crates are compiled once per profile instead of once per workspace, CI caches one <code>target/</code> per job, and <code>cargo test --workspace</code> finally means the whole tree.</figcaption>
+</figure>
+
+  <p>What the merge took: one <code>[workspace]</code> listing the 31 crates, one lockfile built from the seven, one toolchain pin, a <code>[profile.wasm]</code> so the pack keeps the plain release settings it had in its own workspace, and every <code>--manifest-path</code> in a script or a workflow turned into a <code>-p</code>. The per-crate <code>target/</code> directories went with it; everything builds into the one at the root, including the Frida devkits that <code>tools/frida/devkits.sh</code> fetches into it.</p>
+
+  <h2 id="tools">tools/: driving it and shipping it</h2>
+
+<div class="table-wrap wide"><table>
+<thead><tr><th>Directory</th><th>What it is</th><th>Who runs it</th></tr></thead>
+<tbody>
+<tr><td><code>e2e/</code></td><td>One Python script, 27 scenarios: builds the service, starts it, drives the viewer in headless Chrome over CDP, clicks by label, reads the state the viewer exposes on <code>window.__orbit_ui</code>, and writes <code>docs/e2e/report.md</code> and the 47 screenshots. Three C targets live here for the hooking, crash and Frida scenarios, with the privileged uprobe test runner and the hooked-scope checker.</td><td>Developers, after a change; the documentation, for its pictures</td></tr>
+<tr><td><code>build/</code></td><td>The packaging scripts: the static musl service for Linux, the universal macOS build, the Windows build with the static CRT.</td><td><code>run.sh --static</code>, the release workflow, anyone shipping a binary</td></tr>
+<tr><td><code>test-programs/</code></td><td><code>OrbitTestC</code>, <code>OrbitTestCpp</code>, <code>OrbitTestPython</code>: the same scenario in three languages, every manual-instrumentation call once. Their Rust sibling is the crate <code>orbit-test-rust</code>. Moved here from <code>src/</code>.</td><td>The <code>api-*</code> e2e scenarios; the macOS and Windows CI smoke tests</td></tr>
+<tr><td><code>hook_test/</code></td><td>The one-function-at-a-time hooking testbench: a C workload with named targets, hooked one by one, with a crash report that names the culprit.</td><td>Anyone changing the trampolines or the Frida path</td></tr>
+<tr><td><code>site/</code>, <code>media-kit/</code></td><td><code>build_site.py</code> renders the manual, the blog and a captured demo into <code>/site</code> (ignored). <code>media-kit/</code> regenerates the landing page's clips from the running viewer.</td><td><code>pages.yml</code>, on every push to main</td></tr>
+<tr><td><code>frida/</code></td><td>Downloads the Frida Core and Gum devkits for a platform, checks them against <code>devkits.sha256</code>, builds the agent and helper beside the service.</td><td><code>rust.sh</code>; <code>frida-rust.yml</code></td></tr>
+<tr><td><code>install/</code>, <code>sudo/</code>, <code>windows/</code>, <code>release/</code></td><td>The curl-able installers, the CAP_PERFMON wrapper, the MSVC environment and elevated-test runner, and <code>build_wheels.sh</code> for the two pip packages.</td><td>Users; <code>release-rust.yml</code> and <code>python-wheels.yml</code></td></tr>
+<tr><td><code>sharing/</code></td><td>The S3 stack that serves a capture bundle to a viewer on another origin.</td><td>Whoever deploys sharing</td></tr>
+</tbody></table></div>
+
+  <h2 id="docs">docs/: the manual, the log, and the site they become</h2>
+
+  <p><code>docs/manual/</code> is the user-facing reference, twelve Markdown pages from <code>capture.md</code> to <code>troubleshooting.md</code>. <code>docs/blog/</code> is this log: twenty-six self-contained HTML posts, the <code>metrics/</code> directory of sixty-eight committed snapshots that every number in them comes from, and two captured streams the front page replays. Four longer essays sit at the top of <code>docs/</code> next to the build and release notes. The plans, briefs and reviews written while the work was open, the Windows handoff brief, the cross-platform plan, the sampling-viewer plan, the uprobe and instrumentation analyses, live in <code>docs/design/</code>, where the code comments that cite them still find them and where a reader of the manual does not have to step over them.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 250" role="img" aria-labelledby="site-title"><title id="site-title">How docs and the viewer pack become the published site.</title>
+<text x="450" y="24" class="label">THE SITE &middot; .GITHUB/WORKFLOWS/PAGES.YML ON EVERY PUSH TO MAIN</text>
+<rect x="20" y="50" width="200" height="70" rx="8"/><text x="120" y="76" class="mono">docs/manual, docs/blog</text><text x="120" y="98" class="small">Markdown and HTML as written</text>
+<rect x="20" y="140" width="200" height="70" rx="8"/><text x="120" y="166" class="mono">viewer-dist/</text><text x="120" y="188" class="small">rebuilt by build_wasm.sh in CI</text>
+<path d="M220 85 H300" class="arrow"/><path d="M220 175 H300" class="arrow"/>
+<rect x="304" y="60" width="260" height="140" rx="10" class="accent"/>
+<text x="434" y="90" class="mono">tools/site/build_site.py</text>
+<text x="434" y="114" class="small">renders the Markdown, copies the</text>
+<text x="434" y="132" class="small">essays and the blog, embeds the</text>
+<text x="434" y="150" class="small">viewer with a saved capture</text>
+<text x="434" y="180" class="small mono">--stream &lt;saved capture&gt;</text>
+<path d="M564 130 H644" class="arrow"/>
+<rect x="648" y="95" width="232" height="70" rx="8" class="soft"/><text x="764" y="121" class="mono">/site &rarr; GitHub Pages</text><text x="764" y="143" class="small">ignored locally, deployed from CI</text>
+</svg></div>
+<figcaption><b>The site is a build product, not a source.</b> <code>/site</code> is in <code>.gitignore</code>; what is committed is the Markdown, the posts, and the viewer pack that the front page's live demo runs on. The same script with <code>--service</code> builds the copy the service serves at <code>/site</code>, which is how <code>orbit-service</code> carries its own manual.</figcaption>
+</figure>
+
+  <h2 id="ci">.github/: what each workflow owns</h2>
+
+<div class="table-wrap wide"><table>
+<thead><tr><th>Workflow</th><th>Runs</th><th>Covers</th></tr></thead>
+<tbody>
+<tr><td><code>frida-rust</code></td><td>PRs, pushes</td><td>The Frida agent, transport and helper crates against the pinned devkits</td></tr>
+<tr><td><code>live-viewer</code></td><td>PRs touching <code>crates/orbit-live-*/</code></td><td>Native tests of all seven viewer crates, the stable wasm32 compile, the renderer's complexity test in release</td></tr>
+<tr><td><code>macos-rust</code>, <code>windows-rust</code></td><td>PRs, pushes</td><td>The service and the API on those platforms, the C/C++ test programs, a smoke capture</td></tr>
+<tr><td><code>release-rust</code></td><td><code>orbit-v*</code> tags</td><td>The static musl service, the macOS universal build, the Windows package, with the viewer pack checked for presence</td></tr>
+<tr><td><code>python-wheels</code></td><td>Tags, manual</td><td>The <code>orbit-api</code> and <code>orbit-profiler</code> wheels</td></tr>
+<tr><td><code>pages</code></td><td>Pushes to main</td><td>The viewer pack and the site</td></tr>
+<tr><td><code>checks</code>, <code>report-checks</code></td><td>PRs</td><td>License headers on the Rust, C, shell, PowerShell, JS and Python files a PR touches</td></tr>
+<tr><td><code>codeql</code>, <code>scorecards</code></td><td>Schedules</td><td>Python scanning and the OSSF scorecard. CodeQL used to run a Bazel build for C++.</td></tr>
+</tbody></table></div>
+
+  <p>Notice what none of them run: <code>cargo test --workspace</code> in <code>rust/</code>. The crates CI tests are the ones a platform job needs, and the rest are run by hand. That gap showed itself during this cleanup, when the full workspace test suite turned out to include a self-sampling unwinder test with no bound on the records it kept; on this machine it reached 70&nbsp;GB before the OOM killer stepped in. It is bounded now, 4,000 records or five seconds, and runs in under a second. A workspace-wide test job is the obvious next addition.</p>
+
+  <h2 id="where">Where to go for what</h2>
+
+<div class="table-wrap wide"><table>
+<thead><tr><th>To change</th><th>Go to</th></tr></thead>
+<tbody>
+<tr><td>What the viewer draws or how it responds</td><td><code>crates/orbit-live-viewer/src/app.rs</code> and its neighbours; then <code>build_wasm.sh</code>, then rebuild the service</td></tr>
+<tr><td>What the service captures on Linux</td><td><code>crates/orbit-service/src/</code> for the loop; <code>orbit-perf-ring</code> and <code>orbit-collector</code> for the kernel side</td></tr>
+<tr><td>Windows capture</td><td><code>orbit-etw</code>, and <code>windows.rs</code> in the service</td></tr>
+<tr><td>Function hooking</td><td><code>orbit-frida-agent</code> for what runs in the target, <code>orbit-frida-helper</code> for the controller, <code>orbit-trampoline</code> and <code>orbit-ptrace</code> for the native path</td></tr>
+<tr><td>The manual-instrumentation API</td><td><code>orbit.h</code> in <code>orbit-api/include</code>, the Rust behind it, <code>python/orbit_api</code>, then all four test programs</td></tr>
+<tr><td>Symbol loading, unwinding</td><td><code>orbit-object</code>, <code>orbit-unwind</code>; fixtures in <code>orbit-object/testdata</code></td></tr>
+<tr><td>The capture file</td><td><code>orbit-wire</code> for the pod stream, <code>orbit-capture</code> for the Parquet bundle</td></tr>
+<tr><td>How a scenario is verified</td><td><code>tools/e2e/orbit_e2e.py</code>; run one scenario, not the suite</td></tr>
+<tr><td>What users read</td><td><code>docs/manual/</code>; the site rebuilds itself</td></tr>
+</tbody></table></div>
+
+  <h2 id="gone">What is not in the tree, and where it went</h2>
+
+  <p>The C++ application, its Bazel build, <code>third_party/</code>, the Qt icons, the distro-matrix CI and the differential tools that held the two implementations against each other are on the <code>cpp</code> branch, at the last commit before the first Rust one. Every pointer in the docs that used to name a C++ file as "the specification this test mirrors" now says so with the branch beside it. The sixteen C and C++ files that stayed are the public header and its Unreal copy, three thin shims over the Frida devkits, the C targets the tests profile, the two example programs, six fixture sources and one blog experiment. None of them is Orbit's old code; all of them are the Rust profiler's.</p>
+
+  <p>Not in the tree either, by design: <code>target/</code> directories, the built <code>/site</code>, the wheels' staged binaries, and the Frida devkits, which <code>tools/frida</code> fetches and verifies rather than vendors.</p>
+
+<div class="callout"><p><b>The short version.</b> One Cargo workspace at the root. <code>crates/</code> holds the service in layers and the seven viewer crates with the committed pack the service embeds; <code>tools/</code> tests, builds and ships it; <code>docs/</code> explains it and becomes the site, with the working notes in <code>docs/design/</code>. Nothing of the previous life is left in the tree but the blog that tells it.</p></div>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 26 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="25-one-timeline-many-machines.html">&larr; Post 25</a><br>
+    The change: <a href="https://github.com/pierricgimmig/orbit/pull/118">PR #118</a> &middot; The tree before it: branch <code>cpp</code>
+  </div>
+</footer>
+
+<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("orbit-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
+</body>
+</html>

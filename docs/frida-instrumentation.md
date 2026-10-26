@@ -19,10 +19,10 @@ The package contains a native `orbit-frida-helper` linked to Frida Core and
 `liborbit_frida_agent.so` linked to Gum. No Python environment or JavaScript
 agent is needed. `tools/frida/devkits.sh` downloads Frida 17.17.0 native devkits,
 verifies their pinned SHA-256 checksums, and caches them under
-`rust/target/frida-devkits`. Set `ORBIT_FRIDA_DEVKIT_ROOT` to use another cache.
+`target/frida-devkits`. Set `ORBIT_FRIDA_DEVKIT_ROOT` to use another cache.
 Builds thereafter can use the cached devkits without downloading them again.
 
-On macOS, `./build-service-macos.sh` packages the helper and agent alongside the
+On macOS, `tools/build/build-service-macos.sh` packages the helper and agent alongside the
 service and manual SDK. `--universal` builds both architectures for all native
 components. The agent must contain the target process's architecture.
 
@@ -30,12 +30,12 @@ For a development build:
 
 ```sh
 ./tools/frida/devkits.sh
-cargo +1.88.0 build --locked --manifest-path rust/crates/orbit-frida-helper/Cargo.toml
-cargo +1.88.0 build --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent --features native
-cargo +1.88.0 build --locked --manifest-path rust/crates/orbit-service/Cargo.toml
-ORBIT_FRIDA_HELPER="$PWD/rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper" \
-ORBIT_FRIDA_AGENT="$PWD/rust/target/debug/liborbit_frida_agent.so" \
-  rust/crates/orbit-service/target/debug/orbit-service
+cargo +1.88.0 build --locked -p orbit-frida-helper
+cargo +1.88.0 build --locked -p orbit-frida-agent --features native
+cargo +1.88.0 build --locked -p orbit-service
+ORBIT_FRIDA_HELPER="$PWD/target/debug/orbit-frida-helper" \
+ORBIT_FRIDA_AGENT="$PWD/target/debug/liborbit_frida_agent.so" \
+  target/debug/orbit-service
 ```
 
 Use `.dylib` on macOS. The service otherwise finds both components beside its

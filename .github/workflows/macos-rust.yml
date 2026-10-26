@@ -6,9 +6,9 @@ name: macos-rust
 
 on:
   push:
-    branches: [main, rust]
+    branches: [main]
   pull_request:
-    branches: [main, rust]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -33,19 +33,19 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal
       - name: Test manual API and shared mappings
-        run: cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-api -p orbit-scope-ring
+        run: cargo +1.88.0 test --locked -p orbit-api -p orbit-scope-ring
       - name: Test service
-        run: cargo +1.88.0 test --locked --manifest-path rust/crates/orbit-service/Cargo.toml
+        run: cargo +1.88.0 test --locked -p orbit-service
       - name: Build distributable service and SDK
-        run: ./build-service-macos.sh
+        run: tools/build/build-service-macos.sh
       - name: Build and run C and C++ consumers
         env:
           ORBIT_API_LIB: ${{ github.workspace }}/dist/macos/liborbit_api.dylib
         run: |
-          ./src/OrbitTestC/build.sh
-          ./src/OrbitTestCpp/build.sh
-          ./src/OrbitTestC/OrbitTestC --seconds 1
-          ./src/OrbitTestCpp/OrbitTestCpp --seconds 1
+          ./tools/test-programs/OrbitTestC/build.sh
+          ./tools/test-programs/OrbitTestCpp/build.sh
+          ./tools/test-programs/OrbitTestC/OrbitTestC --seconds 1
+          ./tools/test-programs/OrbitTestCpp/OrbitTestCpp --seconds 1
       - name: Smoke test capture and restart
         run: |
           python3 -m venv /tmp/orbit-smoke
@@ -53,8 +53,8 @@ jobs:
           /tmp/orbit-smoke/bin/python tools/e2e/manual_service_smoke.py --service dist/macos/orbit-service --api-lib dist/macos/liborbit_api.dylib
       - name: Smoke test two services in one timeline
         run: |
-          cargo +1.88.0 build --locked --manifest-path rust/Cargo.toml -p orbit-test-rust
-          /tmp/orbit-smoke/bin/python tools/e2e/multi_machine_smoke.py --service dist/macos/orbit-service --target rust/target/debug/OrbitTestRust
+          cargo +1.88.0 build --locked -p orbit-test-rust
+          /tmp/orbit-smoke/bin/python tools/e2e/multi_machine_smoke.py --service dist/macos/orbit-service --target target/debug/OrbitTestRust
       - uses: actions/upload-artifact@v4
         with:
           name: orbit-${{ matrix.runner }}

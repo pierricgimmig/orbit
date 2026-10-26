@@ -141,8 +141,8 @@ roles avoid profile-file handling.
 For a foreground build, after setting the environment above:
 
 ```sh
-cargo build --release --manifest-path rust/crates/orbit-service/Cargo.toml
-rust/crates/orbit-service/target/release/orbit-service --host 127.0.0.1 --serve 44766
+cargo build --release -p orbit-service
+target/release/orbit-service --host 127.0.0.1 --serve 44766
 ```
 
 Build the updated service and WASM viewer using the repository's build commands,

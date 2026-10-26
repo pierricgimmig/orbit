@@ -44,7 +44,7 @@ try {
     } catch {
         Die ("could not download $url`n" +
              "The Rust release is tagged orbit-vX.Y.Z (not v1.* or nightly-*, which are the legacy C++ build).`n" +
-             "Until such a tag exists there is nothing to install; build from source with .\build-service-windows.ps1.")
+             "Until such a tag exists there is nothing to install; build from source with .\tools\build\build-service-windows.ps1.")
     }
     try {
         Invoke-WebRequest -Uri "$url.sha256" -OutFile "$archive.sha256" -UseBasicParsing

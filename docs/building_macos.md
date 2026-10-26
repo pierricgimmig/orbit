@@ -12,31 +12,31 @@ rustup, then from the repository root:
 
 ```sh
 rustup toolchain install 1.88.0 --profile minimal
-./build-service-macos.sh
+tools/build/build-service-macos.sh
 ./dist/macos/orbit-service --host 127.0.0.1 --serve 3000
 ```
 
 Open <http://127.0.0.1:3000> and start a capture. No root privileges, task ports,
-SIP changes, Bazel, or viewer rebuild are required. The committed `viewer-dist`
-assets are embedded in the executable. `./build-service-macos.sh --universal`
+SIP changes, or viewer rebuild are required. The committed `viewer-dist`
+assets are embedded in the executable. `tools/build/build-service-macos.sh --universal`
 builds a service and SDK containing both architectures in `dist/macos-universal`.
 These are locally ad-hoc signed builds, not notarized distribution packages.
 
 ## Instrument a program
 
-Rust applications can depend on `rust/crates/orbit-api`, call `orbit_api::init()`,
+Rust applications can depend on `crates/orbit-api`, call `orbit_api::init()`,
 and use `orbit_api::scope("work")`. Build and run the existing example:
 
 ```sh
-cargo +1.88.0 run --release --manifest-path rust/Cargo.toml -p orbit-test-rust -- --seconds 0
+cargo +1.88.0 run --release -p orbit-test-rust -- --seconds 0
 ```
 
 C and C++ use `dist/macos/include/orbit.h` and `dist/macos/liborbit_api.a`:
 
 ```sh
 cc -DORBIT_STATIC -I dist/macos/include your_app.c dist/macos/liborbit_api.a -lSystem -liconv -o your_app
-./src/OrbitTestC/build.sh
-./src/OrbitTestCpp/build.sh
+./tools/test-programs/OrbitTestC/build.sh
+./tools/test-programs/OrbitTestCpp/build.sh
 ```
 
 Python uses the same C ABI through the dylib:

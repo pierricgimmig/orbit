@@ -1,0 +1,20 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "orbit-frida-helper"
+version = "0.1.0"
+description = "The Frida Core controller process: attaches to the target and drives the agent"
+edition = "2021"
+license = "BSD-2-Clause"
+
+[dependencies]
+libc = "0.2"
+orbit-frida-transport = { path = "../orbit-frida-transport" }
+serde_json = "1"
+tempfile = "3"
+
+[build-dependencies]
+cc = "1"
+orbit-frida-build = { path = "../orbit-frida-build" }

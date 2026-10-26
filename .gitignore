@@ -1,5 +1,4 @@
 /.idea/
-compile_commands.json
 /.vscode/
 
 # Ignore generated and compiled Python code
@@ -8,25 +7,11 @@ compile_commands.json
 __pycache__
 *.pyc
 
-# clangd
-.clangd/
-/.cache/
-
 # Visual Studio
 /.vs/
 
-# Rust/Cargo build artifacts
-third_party/py-spy-ffi/target/
-.bazelrc.user
-/bazel-*
-src/OrbitLiveViewer/target/
-src/OrbitLiveViewer/crates/*/target/
-
-# Rust build output (rust/ and src/OrbitLiveViewer/ Cargo workspaces).
+# Cargo build output
 target/
-
-# py-spy is a submodule in upstream; do not track it as a gitlink here.
-third_party/py-spy/
 
 # The built web site (tools/site/build_site.py)
 /site/
@@ -42,34 +27,34 @@ tools/media-kit/node/node_modules/
 /dist/frida/
 
 # Prebuilt binaries staged into the pip packages by tools/release/build_wheels.sh
-/rust/crates/orbit-api/python/orbit_api/liborbit_api.*
-/rust/crates/orbit-api/python/orbit_api/orbit_api.dll
-/rust/crates/orbit-service/python/orbit_profiler/orbit-service
-/rust/crates/orbit-service/python/orbit_profiler/orbit-service.exe
-/rust/crates/orbit-service/python/orbit_profiler/liborbit_api.*
-/rust/crates/orbit-service/python/orbit_profiler/orbit_api.dll
-/rust/crates/orbit-service/python/orbit_profiler/orbit.h
+/crates/orbit-api/python/orbit_api/liborbit_api.*
+/crates/orbit-api/python/orbit_api/orbit_api.dll
+/crates/orbit-service/python/orbit_profiler/orbit-service
+/crates/orbit-service/python/orbit_profiler/orbit-service.exe
+/crates/orbit-service/python/orbit_profiler/liborbit_api.*
+/crates/orbit-service/python/orbit_profiler/orbit_api.dll
+/crates/orbit-service/python/orbit_profiler/orbit.h
 /dist/wheels/
-/rust/crates/orbit-api/python/build/
-/rust/crates/orbit-api/python/dist/
-/rust/crates/orbit-api/python/*.egg-info/
-/rust/crates/orbit-service/python/build/
-/rust/crates/orbit-service/python/dist/
-/rust/crates/orbit-service/python/*.egg-info/
+/crates/orbit-api/python/build/
+/crates/orbit-api/python/dist/
+/crates/orbit-api/python/*.egg-info/
+/crates/orbit-service/python/build/
+/crates/orbit-service/python/dist/
+/crates/orbit-service/python/*.egg-info/
 integrations/unreal/OrbitProfiler/Intermediate/
 integrations/unreal/OrbitProfiler/Binaries/
 
-# MSVC outputs of the test apps (src/OrbitTestC/build.ps1, src/OrbitTestCpp/build.ps1)
-src/OrbitTestC/*.exe
-src/OrbitTestC/*.obj
-src/OrbitTestC/*.pdb
-src/OrbitTestC/*.ilk
-src/OrbitTestCpp/*.exe
-src/OrbitTestCpp/*.obj
-src/OrbitTestCpp/*.pdb
-src/OrbitTestCpp/*.ilk
+# MSVC outputs of the test apps (tools/test-programs/OrbitTestC/build.ps1, tools/test-programs/OrbitTestCpp/build.ps1)
+tools/test-programs/OrbitTestC/*.exe
+tools/test-programs/OrbitTestC/*.obj
+tools/test-programs/OrbitTestC/*.pdb
+tools/test-programs/OrbitTestC/*.ilk
+tools/test-programs/OrbitTestCpp/*.exe
+tools/test-programs/OrbitTestCpp/*.obj
+tools/test-programs/OrbitTestCpp/*.pdb
+tools/test-programs/OrbitTestCpp/*.ilk
 
-# Packaged Windows service and SDK (build-service-windows.ps1)
+# Packaged Windows service and SDK (tools/build/build-service-windows.ps1)
 /dist/windows/
 
 # Local CMake build tree and the elevated-test log on Windows

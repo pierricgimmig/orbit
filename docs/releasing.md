@@ -33,7 +33,7 @@ Linux arm64 is not in the release.
 Linux x86-64, on `ubuntu-22.04`:
 
 - `orbit-service`, static musl (`x86_64-unknown-linux-musl`). The WASM viewer
-  in `src/OrbitLiveViewer/viewer-dist` is embedded by `orbit-live-server` at
+  in `crates/orbit-live-viewer/viewer-dist` is embedded by `orbit-live-server` at
   compile time. The job checks that the binary is statically linked.
 - The files the service looks up next to its own executable
   (`std::env::current_exe()`, overridable with `ORBIT_FRIDA_AGENT` and
@@ -45,7 +45,7 @@ Linux x86-64, on `ubuntu-22.04`:
   purpose (the static service cannot `dlopen`).
 - `licenses/` for the Frida devkits.
 
-macOS, on `macos-15`, via `./build-service-macos.sh --universal`:
+macOS, on `macos-15`, via `tools/build/build-service-macos.sh --universal`:
 
 - One universal `orbit-service` (Apple silicon and Intel), plus
   `liborbit_frida_agent.dylib`, `orbit-frida-helper`, `liborbit_api.dylib`,
@@ -55,10 +55,10 @@ macOS, on `macos-15`, via `./build-service-macos.sh --universal`:
   scheduler, live disassembly, or auto-profiling.
 - No GPU helper. That binary is Linux-only.
 
-Windows x86-64, on `windows-2022`, via `.\build-service-windows.ps1`:
+Windows x86-64, on `windows-2022`, via `.\tools\build\build-service-windows.ps1`:
 
 - `orbit-service.exe` with the viewer embedded, linked against the static C
-  runtime (`rust/.cargo/config.toml`), so it depends on system DLLs only;
+  runtime (`.cargo/config.toml`), so it depends on system DLLs only;
   the script checks that with `dumpbin /dependents`.
 - `orbit_frida_agent.dll` and `orbit-frida-helper.exe` beside it, for
   function hooks; `orbit_api.dll`, `orbit_api.dll.lib`, `orbit_api.lib` and

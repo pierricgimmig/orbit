@@ -29,7 +29,7 @@ jobs:
         workflow_conclusion: ''
         name: missing_license_headers
     - name: Report missing headers
-      run: ./contrib/scripts/report-license-headers.sh
+      run: ./.github/scripts/report-license-headers.sh
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         COMMIT_SHA: ${{ github.event.workflow_run.head_commit.id }}

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # Kill whatever a previous (aborted) run left behind, using the pidfiles in $CACHE/run:
 #   recorder.pid (node 40-record.mjs), chrome.pid (Playwright's browser), xvfb.pid, qemu.pid (VM: ssh poweroff first).
 # usage: steps/05-stale.sh [--keep-vm]

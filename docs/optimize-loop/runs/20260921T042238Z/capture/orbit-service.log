@@ -1,0 +1,25 @@
+
+  Orbit live viewer:  http://127.0.0.1:51497/   (this machine only; --host 0.0.0.0 opens it to the network)
+
+  Pick a process in the Capture strip and press Record.
+  Ctrl-C to stop the server.
+
+orbit-service: indexed 9820 functions across 6 modules for pid 3297534
+orbit-service: swept 1 scope segment(s) left by dead processes
+orbit-service: capture started (pid 3297534)
+orbit-gpu-helper: 1 device(s), polling every 100ms
+orbit-service: 6 sampling ring(s) at 1000 Hz, unwinder ready
+orbit-service: showing pid 3297534 and 0 related process(es); the Scheduler track stays machine-wide
+orbit-service: no scheduling tracepoints; thread bars will show only RUNNING (tracepoints need CAP_PERFMON and a readable tracefs)
+orbit-service: tracepoint unavailable -- sched:sched_switch: no format file in tracefs; using the compiled-in layout
+orbit-service: tracepoint unavailable -- sched:sched_switch: no id in tracefs (not mounted, or not readable)
+orbit-service: tracepoint unavailable -- sched:sched_wakeup: no format file in tracefs; using the compiled-in layout
+orbit-service: tracepoint unavailable -- sched:sched_wakeup: no id in tracefs (not mounted, or not readable)
+orbit-service: tracepoint unavailable -- task:task_newtask: no format file in tracefs; using the compiled-in layout
+orbit-service: tracepoint unavailable -- task:task_newtask: no id in tracefs (not mounted, or not readable)
+orbit-service: symbolizing 7 modules, 15130 symbols
+orbit-service: manual instrumentation: opened segment of pid 3274537 (16 rings)
+orbit-service: manual instrumentation: 2 segment(s), 31632 events, 0 links (not drawn yet)
+orbit-service: 2 event(s) started before the capture and were dropped
+orbit-service: 12796 callstack samples recorded
+orbit-service: capture stopped

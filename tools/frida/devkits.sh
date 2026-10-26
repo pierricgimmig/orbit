@@ -15,7 +15,7 @@ case "$target" in
   x86_64-pc-windows-msvc) platform=windows-x86_64 ;;
   *) echo "Unsupported native Frida target: $target" >&2; exit 1 ;;
 esac
-root=${ORBIT_FRIDA_DEVKIT_ROOT:-"$PWD/rust/target/frida-devkits"}
+root=${ORBIT_FRIDA_DEVKIT_ROOT:-"$PWD/target/frida-devkits"}
 for component in core gum; do
   name="frida-$component-devkit-17.17.0-$platform.tar.xz"
   kit="$root/$target/$component"

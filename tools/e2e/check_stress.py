@@ -92,7 +92,7 @@ def analyse(rows, threads, calls):
 def rows_from_bundle(path, pid):
     """The hooked scopes of `pid`, and how often its threads changed CPU:
     consecutive scheduler slices of one thread on different CPUs, which is
-    the migration the probes mind (docs/uprobes-duplicate-events.md)."""
+    the migration the probes mind (docs/design/uprobes-duplicate-events.md)."""
     import pyarrow.parquet as pq
     with zipfile.ZipFile(path) as z:
         table = pq.read_table(io.BytesIO(z.read("events.parquet")))

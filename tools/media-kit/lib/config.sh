@@ -1,3 +1,7 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # Shared configuration. Every value can be overridden from the environment.
 KIT="${KIT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # The Orbit checkout that contains this kit (tools/media-kit). Override to

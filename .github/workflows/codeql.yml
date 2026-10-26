@@ -23,8 +23,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'cpp', 'python' ]
-        # CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript', 'python', 'ruby' ]
+        # Python: the e2e harness, the pip packages and the tools. The C++
+        # tree this used to scan is on the `cpp` branch.
+        language: [ 'python' ]
         # Learn more about CodeQL language support at https://aka.ms/codeql-docs/language-support
 
     steps:
@@ -38,20 +39,13 @@ jobs:
       uses: github/codeql-action/init@v4
       with:
         languages: ${{ matrix.language }}
-        build-mode: ${{ matrix.language == 'cpp' && 'manual' || 'none' }}
+        build-mode: none
         # If you wish to specify custom queries, you can do so here or in a config file.
         # By default, queries listed here will override any specified in a config file.
         # Prefix the list here with "+" to use these queries and those in the config file.
         
         # Details on CodeQL's query packs refer to : https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
         # queries: security-extended,security-and-quality
-
-    # CodeQL's tracer needs to observe the real compiler invocations, so the
-    # sandbox and disk cache are turned off for this build only. Cached
-    # objects bypass the compiler and cannot populate the CodeQL database.
-    - name: Bazel Build
-      if: ${{ matrix.language == 'cpp' }}
-      run: bazel build --spawn_strategy=local --disk_cache= //...
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4

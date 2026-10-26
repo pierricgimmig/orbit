@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 """Write a small, deterministic Chrome Trace Event Format file (a fake game engine: main, render and
 worker threads with nested X slices, a counter track, instants and a flow) for the import clip."""
 import json, random, sys

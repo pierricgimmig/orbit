@@ -55,7 +55,7 @@ Instructions for the manual writer:
   a file you can write extends to any code running as you, so a file
   planted under the right name owns the machine. Fine for a personal
   development box, not for a shared one. Then `sudo -n orbit-service-sudo
-  "$PWD/rust/crates/orbit-service/target/release/orbit-service" --serve
+  "$PWD/target/release/orbit-service" --serve
   44766`, and `tools/e2e/orbit_e2e.py --sudo` uses it by itself.
 - **No target needed.** A capture can run with no process selected: the
   scheduler track, the service's own lanes and the agent track still fill.
@@ -432,14 +432,14 @@ in the URL opens a tab on load.
   itself (modules and hooking stay the service's). This is how the web
   site embeds a capture.
   Screenshot: `23-static-viewer.png`.
-- **Python.** `rust/crates/orbit-capture/python/open_capture.py <unzipped dir>`
+- **Python.** `crates/orbit-capture/python/open_capture.py <unzipped dir>`
   reads the tables with pyarrow and prints the columns and counts; its
   README documents every column. The `python-reader` scenario runs it on
   the bundle the suite just exported.
 
 ## 8. Manual instrumentation
 
-- **The API** is the `orbit-api` crate at `rust/crates/orbit-api`: Rust
+- **The API** is the `orbit-api` crate at `crates/orbit-api`: Rust
   functions `init`, `shutdown`, `start`, `stop`, `start_async`, `instant`,
   `link`, `value`, `now_ns`, and the RAII helpers `span`, `span_async`,
   `scope`, `scope_async`. The same crate builds `liborbit_api` (static and
@@ -447,7 +447,7 @@ in the URL opens a tab on load.
   `orbit_instant`, `orbit_link`, `orbit_value`, `orbit_now_ns`, ...) and a
   versioned function table (`orbit_api_table_v1`).
 - **Shipping shape: one header, one library, no linking.**
-  `rust/crates/orbit-api/include/orbit.h` is a single file a C or C++
+  `crates/orbit-api/include/orbit.h` is a single file a C or C++
   project includes; it links nothing. `orbit_init()` loads `liborbit_api`
   at run time -- from `$ORBIT_API_LIB`, beside the executable, beside the
   `orbit-service` on `PATH` (then `~/.local/bin`, `~/.orbit/bin`), or the
@@ -455,18 +455,18 @@ in the URL opens a tab on load.
   without a library every call is one predictable branch and `orbit_init()`
   returns `ORBIT_E_NOLIB`. The ring protocol therefore lives only in the
   library that ships beside the service (`build-service-musl.sh`,
-  `build-service-macos.sh` and `install.sh` place it there), never in a
+  `tools/build/build-service-macos.sh` and `install.sh` place it there), never in a
   compiled application. `#define ORBIT_STATIC` keeps the link-time shape
   for musl. `ORBIT_SCOPE("name")` is RAII in C++ and a cleanup attribute in
   GNU C.
-- **Python** is the pure-Python package at `rust/crates/orbit-api/python`
+- **Python** is the pure-Python package at `crates/orbit-api/python`
   (`pip install orbit-api`, module `orbit_api`): the same search order,
   ctypes over the same library, `with orbit.scope(...)` and `@orbit.scope`.
 - **Distribution.** Prebuilt wheels, never source-to-compile, so no toolchain
   is needed to install. `tools/release/build_wheels.sh <platform>` cuts two
   platform wheels from one build (so their ring protocol matches): `orbit-api`
   bundles a `liborbit_api` cross-built against glibc 2.17 (manylinux2014); and
-  `orbit-profiler` (`rust/crates/orbit-service/python`) carries the static
+  `orbit-profiler` (`crates/orbit-service/python`) carries the static
   `orbit-service` binary, the library and `orbit.h`, installs an
   `orbit-service` command, and depends on `orbit-api`. The
   `.github/workflows/python-wheels.yml` matrix builds a wheel per platform
@@ -476,11 +476,12 @@ in the URL opens a tab on load.
   `orbit.h` prefer a library found beside `orbit-service` over any bundled
   copy, and the service now logs a one-line warning naming the version when it
   finds a segment written by a mismatched library.
-- **Examples** for each language: `rust/crates/orbit-test-rust`
-  (`OrbitTestRust`), `src/OrbitTestC`, `src/OrbitTestCpp` (RAII, built
-  header-only by their `build.sh`; `ORBIT_STATIC=1` links), and
-  `src/OrbitTestPython` (the package). Each runs every call; the `api-*`
-  scenarios capture them with `ORBIT_API_LIB` naming the tree's library.
+- **Examples** for each language: `crates/orbit-test-rust`
+  (`OrbitTestRust`) and, under `tools/test-programs/`, `OrbitTestC`,
+  `OrbitTestCpp` (RAII, built header-only by their `build.sh`;
+  `ORBIT_STATIC=1` links) and `OrbitTestPython` (the package). Each runs
+  every call; the `api-*` scenarios capture them with `ORBIT_API_LIB` naming
+  the tree's library.
   Screenshots: `07-api-rust.png`, `08-api-c.png`, `09-api-cpp.png`,
   `10-api-python.png`.
 - **Unreal Engine.** `integrations/unreal/` has the `OrbitProfiler` plugin
@@ -505,7 +506,7 @@ in the URL opens a tab on load.
 
 ## 9. Agents and automation
 
-- **`orbit-scope`** (`rust/target/release/orbit-scope`) puts anything that
+- **`orbit-scope`** (`target/release/orbit-scope`) puts anything that
   can run a command on the timeline: `orbit-scope start <name>` / `stop`,
   `instant <name>`, `value <name> <number>`, and `run [--name N] -- <cmd>`
   which wraps a command in a scope. `--track` names the track (default

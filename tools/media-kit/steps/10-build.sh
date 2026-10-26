@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # Build orbit-service (static musl) with the WASM viewer embedded, from a git ref.
 # usage: steps/10-build.sh <git-ref> [--rebuild]      prints the binary path on stdout
 # Works in a private clone under $CACHE/src (never touches $ORBIT_REPO's working tree, never pushes).
@@ -25,12 +29,12 @@ git -C "$SRC" checkout -q --force --detach "$SHA"
 git -C "$SRC" clean -q -fd -e target   # keep cargo target dirs for incremental builds
 command -v rustup >/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
 L="$CACHE/logs/build-$SHORT"
-log "wasm viewer (src/OrbitLiveViewer/build_wasm.sh; log $L-wasm.log)"
-( cd "$SRC/src/OrbitLiveViewer" && ./build_wasm.sh ) > "$L-wasm.log" 2>&1 || { tail -30 "$L-wasm.log" >&2; die "wasm build failed"; }
+log "wasm viewer (crates/orbit-live-viewer/build_wasm.sh; log $L-wasm.log)"
+( cd "$SRC/crates/orbit-live-viewer" && ./build_wasm.sh ) > "$L-wasm.log" 2>&1 || { tail -30 "$L-wasm.log" >&2; die "wasm build failed"; }
 log "orbit-service musl (log $L-service.log)"
-( cd "$SRC/rust" && cargo build --release --target x86_64-unknown-linux-musl --manifest-path crates/orbit-service/Cargo.toml ) \
+( cd "$SRC" && cargo build --release --target x86_64-unknown-linux-musl -p orbit-service ) \
   > "$L-service.log" 2>&1 || { tail -30 "$L-service.log" >&2; die "service build failed"; }
-cp "$SRC/rust/crates/orbit-service/target/x86_64-unknown-linux-musl/release/orbit-service" "$OUT"
+cp "$SRC/target/x86_64-unknown-linux-musl/release/orbit-service" "$OUT"
 # The wasm build regenerates tracked viewer-dist files; restore them so the clone stays clean.
 git -C "$SRC" checkout -q -- . ; git -C "$SRC" status --short | head -5 >&2 || true
 log "built $OUT ($(du -h "$OUT" | cut -f1))"

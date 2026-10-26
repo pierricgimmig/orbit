@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # usage: steps/20-vm.sh up|down|status
 # QEMU **TCG only** (software emulation). Never add -enable-kvm / -accel kvm: nested KVM crashes
 # the host kernel of the box this kit was written on. The guest is needed because the box kernel

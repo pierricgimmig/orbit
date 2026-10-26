@@ -31,16 +31,16 @@ Set-Location $root
 
 Log "=== 1/2: orbit-etw live session test (ORBIT_ETW_LIVE=1) ==="
 $env:ORBIT_ETW_LIVE = '1'
-& "$cargo\cargo.exe" +1.88.0 test --manifest-path rust/Cargo.toml -p orbit-etw --test live -- --nocapture *>&1 | Tee-Object -Append -FilePath $log
+& "$cargo\cargo.exe" +1.88.0 test -p orbit-etw --test live -- --nocapture *>&1 | Tee-Object -Append -FilePath $log
 Log "etw-live exit: $LASTEXITCODE"
 Remove-Item Env:ORBIT_ETW_LIVE -ErrorAction SilentlyContinue
 
 Log ""
 Log "=== 2/2: end-to-end ETW capture smoke (scheduler, states, samples) ==="
-$svc = "$root\rust\crates\orbit-service\target\debug\orbit-service.exe"
-$tgt = "$root\rust\target\release\OrbitTestRust.exe"
-if (-not (Test-Path $svc)) { Log "building orbit-service..."; & "$cargo\cargo.exe" +1.88.0 build --manifest-path rust/crates/orbit-service/Cargo.toml *>&1 | Tee-Object -Append -FilePath $log }
-if (-not (Test-Path $tgt)) { Log "building OrbitTestRust..."; & "$cargo\cargo.exe" +1.88.0 build --release --manifest-path rust/Cargo.toml -p orbit-test-rust *>&1 | Tee-Object -Append -FilePath $log }
+$svc = "$root\target\debug\orbit-service.exe"
+$tgt = "$root\target\release\OrbitTestRust.exe"
+if (-not (Test-Path $svc)) { Log "building orbit-service..."; & "$cargo\cargo.exe" +1.88.0 build -p orbit-service *>&1 | Tee-Object -Append -FilePath $log }
+if (-not (Test-Path $tgt)) { Log "building OrbitTestRust..."; & "$cargo\cargo.exe" +1.88.0 build --release -p orbit-test-rust *>&1 | Tee-Object -Append -FilePath $log }
 & python "$root\tools\e2e\windows_etw_smoke.py" --service $svc --target $tgt --require --seconds 3 *>&1 | Tee-Object -Append -FilePath $log
 Log "etw-smoke exit: $LASTEXITCODE"
 Log "=== done ==="

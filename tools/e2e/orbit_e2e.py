@@ -36,7 +36,7 @@ sys.path.insert(0, HERE)
 from cdp import Chrome  # noqa: E402  (path set above)
 
 DEFAULT_BOX3D = os.path.expanduser("~/git/box3d")
-SERVICE = os.path.join(REPO, "rust/crates/orbit-service/target/release/orbit-service")
+SERVICE = os.path.join(REPO, "target/release/orbit-service")
 
 
 class Failure(AssertionError):
@@ -122,7 +122,7 @@ class Service:
         if not os.path.exists(binary):
             raise Failure(
                 f"{binary} is missing.\nBuild it:  cargo build --release "
-                "--manifest-path rust/crates/orbit-service/Cargo.toml"
+                "-p orbit-service"
             )
         self.port = port
         self.base = f"http://127.0.0.1:{port}"
@@ -513,26 +513,26 @@ def _build_app(lang):
     # orbit.h and orbit_api load liborbit_api at run time, by default from
     # beside the orbit-service on PATH. The suite's service is not on PATH, so
     # name the tree's library explicitly; Target inherits the environment.
-    lib = os.path.join(REPO, "rust/target/release/liborbit_api.so")
+    lib = os.path.join(REPO, "target/release/liborbit_api.so")
     if not os.path.exists(lib):
         subprocess.run(["cargo", "build", "--release", "-p", "orbit-api"],
-                       cwd=os.path.join(REPO, "rust"), check=True)
+                       cwd=REPO, check=True)
     os.environ.setdefault("ORBIT_API_LIB", lib)
     if lang == "rust":
-        binary = os.path.join(REPO, "rust/target/release/OrbitTestRust")
+        binary = os.path.join(REPO, "target/release/OrbitTestRust")
         if not os.path.exists(binary):
             subprocess.run(["cargo", "build", "--release", "-p", "orbit-test-rust"],
-                           cwd=os.path.join(REPO, "rust"), check=True)
+                           cwd=REPO, check=True)
         return [binary, "--seconds", "0"]
     if lang in ("c", "cpp"):
         name = {"c": "OrbitTestC", "cpp": "OrbitTestCpp"}[lang]
-        folder = os.path.join(REPO, "src", name)
+        folder = os.path.join(REPO, "tools/test-programs", name)
         binary = os.path.join(folder, name)
         if not os.path.exists(binary):
             subprocess.run([os.path.join(folder, "build.sh")], check=True)
         return [binary, "--seconds", "0"]
     if lang == "python":
-        return [sys.executable, os.path.join(REPO, "src/OrbitTestPython/OrbitTestPython.py"),
+        return [sys.executable, os.path.join(REPO, "tools/test-programs/OrbitTestPython/OrbitTestPython.py"),
                 "--seconds", "0"]
     raise Failure(f"unknown app language {lang}")
 
@@ -1014,7 +1014,7 @@ def hook_crash(run):
 AGENT_PID = 0xA6E70000
 KIND_API_SCOPE, KIND_VALUE = 1, 6
 SCRATCH = os.environ.get("ORBIT_E2E_SCRATCH", "/tmp/orbit-e2e")
-ORBIT_SCOPE = os.path.join(REPO, "rust/target/release/orbit-scope")
+ORBIT_SCOPE = os.path.join(REPO, "target/release/orbit-scope")
 PYARROW_PYTHON = os.environ.get("ORBIT_E2E_PYARROW_PYTHON", sys.executable)
 
 
@@ -1059,7 +1059,7 @@ def _week_capture(run, seconds=4.0):
 def _orbit_scope(run, *args):
     if not os.path.exists(ORBIT_SCOPE):
         subprocess.run(["cargo", "build", "--release", "-p", "orbit-api", "--bin", "orbit-scope"],
-                       cwd=os.path.join(REPO, "rust"), check=True)
+                       cwd=REPO, check=True)
     result = subprocess.run(
         [ORBIT_SCOPE, "--url", run.service.base, *args],
         capture_output=True, text=True, timeout=30,
@@ -1583,7 +1583,7 @@ def python_reader(run):
     import zipfile
     with zipfile.ZipFile(path) as z:
         z.extractall(folder)
-    script = os.path.join(REPO, "rust/crates/orbit-capture/python/open_capture.py")
+    script = os.path.join(REPO, "crates/orbit-capture/python/open_capture.py")
     result = subprocess.run([PYARROW_PYTHON, script, folder], capture_output=True, text=True, timeout=120)
     check(result.returncode == 0, f"open_capture.py failed: {result.stderr[-400:]}")
     out = result.stdout

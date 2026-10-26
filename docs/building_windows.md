@@ -36,7 +36,7 @@ puts back to the 1 ms default when the capture stops.
 
 ## Prerequisites
 
-- Rust 1.88.0 through rustup (`rust/rust-toolchain.toml` pins it).
+- Rust 1.88.0 through rustup (`rust-toolchain.toml` pins it).
 - Visual Studio 2022 with the *Desktop development with C++* workload. The
   Rust toolchain links with its linker; the Frida adapters in the agent and
   the helper compile with its `cl` through the `cc` crate; the C and C++
@@ -51,7 +51,7 @@ session's PATH; every build script here dot-sources it.
 ## Build
 
 ```powershell
-.\build-service-windows.ps1
+.\tools\build\build-service-windows.ps1
 ```
 
 writes `dist\windows\`:
@@ -64,13 +64,13 @@ writes `dist\windows\`:
 - `OrbitTestRust.exe`, an instrumented test program.
 - `licenses\`, Frida's.
 
-Every binary links the C runtime statically (`rust\.cargo\config.toml`
+Every binary links the C runtime statically (`.cargo\config.toml`
 sets `+crt-static` for the MSVC target), so the result depends on system
 DLLs only; the script checks each binary with `dumpbin /dependents`. The
 Frida devkits are downloaded once, checksum-verified, from the pinned
 release named in `tools/frida/devkits.sh`.
 
-A bare `cargo build` at the `rust/` workspace root does **not** work on
+A bare `cargo build --workspace` at the repository root does **not** work on
 Windows: the workspace includes Linux-only crates (`orbit-ptrace`,
 `orbit-trampoline`, `orbit-unwind` -- ptrace-based user-space
 instrumentation) that do not compile there and are not in the Windows
@@ -81,16 +81,16 @@ Piece by piece, from `rust\`:
 
 ```powershell
 cargo +1.88.0 test -p orbit-scope-ring -p orbit-api -p orbit-etw   # producer and ETW crates
-cargo +1.88.0 test --manifest-path crates\orbit-service\Cargo.toml  # the service
+cargo +1.88.0 test -p orbit-service  # the service
 cargo +1.88.0 build --release -p orbit-api -p orbit-test-rust
 ```
 
 The C and C++ test apps:
 
 ```powershell
-.\src\OrbitTestC\build.ps1      # header-only; loads orbit_api.dll at run time
-.\src\OrbitTestCpp\build.ps1
-.\src\OrbitTestC\build.ps1 -Static   # links orbit_api.lib instead
+.\tools\test-programs\OrbitTestC\build.ps1      # header-only; loads orbit_api.dll at run time
+.\tools\test-programs\OrbitTestCpp\build.ps1
+.\tools\test-programs\OrbitTestC\build.ps1 -Static   # links orbit_api.lib instead
 ```
 
 ## Run
@@ -126,7 +126,7 @@ way (`ORBIT_ETW_LIVE=1`).
 
 ## How the Windows pieces fit
 
-- **`rust/crates/orbit-etw`** runs the kernel logger: `StartTraceW` with the
+- **`crates/orbit-etw`** runs the kernel logger: `StartTraceW` with the
   thread, process, context-switch, dispatcher and profile flags, the
   sampling interval through `TraceSetInformation`, stack walks on the
   profile event, and a consumer thread in `ProcessTrace` with raw
@@ -135,7 +135,7 @@ way (`ORBIT_ETW_LIVE=1`).
   same `ContextSwitchManager` and `ThreadStateManager` the Linux perf path
   feeds; stack walks become samples after the kernel half is dropped and a
   deferred user half merged.
-- **`rust/crates/orbit-service/src/windows.rs`** is the capture loop, with
+- **`crates/orbit-service/src/windows.rs`** is the capture loop, with
   the Linux loop's scope names (`capture pass`, `read context switches`,
   `read samples`, `drain scope rings`, `push to viewer`), plus process and
   thread discovery (`NtQuerySystemInformation`), modules (Toolhelp), thread

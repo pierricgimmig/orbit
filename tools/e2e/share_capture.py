@@ -4,7 +4,7 @@
 # found in the LICENSE file.
 """Exercise Share with a local S3 CLI stand-in and a real browser, no AWS writes.
 
-Requires the built rust/crates/orbit-service/target/debug/orbit-service,
+Requires the built target/debug/orbit-service,
 google-chrome, openssl and the rebuilt viewer pack. Uses only the standard library.
 """
 import functools
@@ -52,7 +52,7 @@ def main():
         work = Path(tmp)
         objects = work / 'objects'
         objects.mkdir()
-        (objects / 'viewer').symlink_to(ROOT / 'src/OrbitLiveViewer/viewer-dist', target_is_directory=True)
+        (objects / 'viewer').symlink_to(ROOT / 'crates/orbit-live-viewer/viewer-dist', target_is_directory=True)
         s3_port, service_port, chrome_port = port(), port(), port()
         viewer = f'https://127.0.0.1:{s3_port}/viewer/index.html'
         object_base = f'https://localhost:{s3_port}'  # Different origin: browser must pass CORS.
@@ -113,7 +113,7 @@ else:
 
         try:
             with (work / 'service.log').open('w') as log:
-                service = subprocess.Popen([str(ROOT / 'rust/crates/orbit-service/target/debug/orbit-service'),
+                service = subprocess.Popen([str(ROOT / 'target/debug/orbit-service'),
                                             '--host', '127.0.0.1', '--serve', str(service_port)],
                                            env=env, stdout=log, stderr=log)
             wait_until(lambda: urllib.request.urlopen(base + '/api/status', timeout=1).status == 200)

@@ -51,12 +51,12 @@ jobs:
       - name: Build static orbit-service
         run: |
           set -euo pipefail
-          test -f src/OrbitLiveViewer/viewer-dist/index.html
-          test -f src/OrbitLiveViewer/viewer-dist/orbit_live_viewer_bg.wasm
+          test -f crates/orbit-live-viewer/viewer-dist/index.html
+          test -f crates/orbit-live-viewer/viewer-dist/orbit_live_viewer_bg.wasm
           # orbit-live-server's build script embeds viewer-dist into the binary.
           cargo +1.88.0 build --locked --release --target x86_64-unknown-linux-musl \
-            --manifest-path rust/crates/orbit-service/Cargo.toml
-          bin=rust/crates/orbit-service/target/x86_64-unknown-linux-musl/release/orbit-service
+            -p orbit-service
+          bin=target/x86_64-unknown-linux-musl/release/orbit-service
           file "$bin"
           file "$bin" | grep -q 'statically linked'
 
@@ -67,23 +67,23 @@ jobs:
           # static musl and looks for these next to its own executable.
           ./tools/frida/devkits.sh x86_64-unknown-linux-gnu
           cargo +1.88.0 build --locked --release \
-            --manifest-path rust/crates/orbit-frida-helper/Cargo.toml
+            -p orbit-frida-helper
           cargo +1.88.0 build --locked --release \
-            --manifest-path rust/Cargo.toml -p orbit-frida-agent --features native
+            -p orbit-frida-agent --features native
           cargo +1.88.0 build --locked --release \
-            --manifest-path rust/Cargo.toml -p orbit-api -p orbit-gpu-helper
+            -p orbit-api -p orbit-gpu-helper
 
       - name: Pack archive
         run: |
           set -euo pipefail
           stage=dist/orbit
           mkdir -p "$stage/licenses"
-          cp rust/crates/orbit-service/target/x86_64-unknown-linux-musl/release/orbit-service "$stage/"
-          cp rust/target/release/liborbit_frida_agent.so "$stage/"
-          cp rust/crates/orbit-frida-helper/target/release/orbit-frida-helper "$stage/"
-          cp rust/target/release/liborbit_api.so "$stage/"
-          cp rust/crates/orbit-api/include/orbit.h "$stage/"
-          cp rust/target/release/orbit-gpu-helper "$stage/"
+          cp target/x86_64-unknown-linux-musl/release/orbit-service "$stage/"
+          cp target/release/liborbit_frida_agent.so "$stage/"
+          cp target/release/orbit-frida-helper "$stage/"
+          cp target/release/liborbit_api.so "$stage/"
+          cp crates/orbit-api/include/orbit.h "$stage/"
+          cp target/release/orbit-gpu-helper "$stage/"
           cp tools/frida/licenses/* "$stage/licenses/"
           chmod 755 "$stage/orbit-service" "$stage/orbit-frida-helper" "$stage/orbit-gpu-helper"
           tar -C dist -czf orbit-linux-x86_64.tar.gz orbit
@@ -110,14 +110,14 @@ jobs:
         run: rustup toolchain install 1.88.0 --profile minimal
 
       - name: Build universal service
-        run: ./build-service-macos.sh --universal
+        run: tools/build/build-service-macos.sh --universal
 
       - name: Pack archive
         run: |
           set -euo pipefail
           stage=dist/orbit
           mkdir -p "$stage"
-          # build-service-macos.sh --universal writes dist/macos-universal,
+          # tools/build/build-service-macos.sh --universal writes dist/macos-universal,
           # including the Frida files the service loads from its own directory.
           cp -R dist/macos-universal/. "$stage/"
           test -f "$stage/orbit-service"
@@ -150,7 +150,7 @@ jobs:
         run: rustup toolchain install 1.88.0 --profile minimal
 
       - name: Build service and SDK
-        run: .\build-service-windows.ps1
+        run: .\tools\build\build-service-windows.ps1
 
       - name: Pack archive
         run: |
@@ -224,7 +224,7 @@ jobs:
               "- `orbit-gpu-helper` (optional NVIDIA lanes; dynamically linked)\n"
               "- `licenses/` (Frida)\n\n"
               "**macOS** (`orbit-macos-universal.tar.gz`): universal binary (Apple silicon and Intel) from "
-              "`./build-service-macos.sh --universal`. Ad-hoc signed, not notarized. "
+              "`tools/build/build-service-macos.sh --universal`. Ad-hoc signed, not notarized. "
               "Manual scopes and Frida function hooks. Attaching needs a task port. "
               "No call-stack sampling, scheduler, live disassembly, or auto-profiling. No GPU helper.\n\n"
               "**Windows x86-64** (`orbit-windows-x86_64.zip`): static-CRT binaries from "
