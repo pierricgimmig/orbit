@@ -59,7 +59,7 @@ name an icon get a relative `favicon.png` link; without one, the browser
 requests `/favicon.ico` from the host root and 404s on a project site.
 
 `.github/workflows/pages.yml` builds the viewer pack, then this script with
-the saved stream `docs/blog/captures/ghosts-on.perfr.stream` (CI has no
+the saved stream `docs/blog/captures/ghosts-on.orbit.stream` (CI has no
 process to capture), and deploys the `site/` tree to Pages.
 
 `site/` is ignored by git; the inputs are.

@@ -66,7 +66,7 @@ jobs:
       # No live Box3D capture in CI. The saved stream is the front-page
       # capture and one of the blog clips.
       - name: Build site
-        run: python3 tools/site/build_site.py --stream docs/blog/captures/ghosts-on.perfr.stream
+        run: python3 tools/site/build_site.py --stream docs/blog/captures/ghosts-on.orbit.stream
 
       - uses: actions/configure-pages@v5
 

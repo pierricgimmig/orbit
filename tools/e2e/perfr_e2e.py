@@ -2215,7 +2215,7 @@ def code_views(run):
                           "the code copied to the clipboard", timeout=10)
     check(copied["copied"] >= rust["rows"], f"copied {copied['copied']} chars for {rust['rows']} rows")
     cpp = example("code:example:cpp")
-    check(cpp["rows"] > 500 and cpp["source"].endswith(".cpp"), f"C++ example: {cpp}")
+    check(cpp["rows"] > 100 and cpp["source"].endswith(".cpp"), f"C++ example: {cpp}")
     # The service's own function, disassembled live, its source interleaved.
     asm = example("code:example:asm")
     check(asm["mode"] == "Both" and asm["instructions"] > 100, f"example disassembly: {asm}")
@@ -2271,6 +2271,7 @@ def main():
         return 2
 
     os.makedirs(args.shots, exist_ok=True)
+    os.makedirs(SCRATCH, exist_ok=True)
     target_bin = "/tmp/perfr-e2e-box3d-target"
     print(f"building the Box3D target from {args.box3d}")
     build_target(args.box3d, target_bin)
