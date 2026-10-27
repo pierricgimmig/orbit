@@ -1,14 +1,14 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
-# Builds the pip wheels for Orbit:
-#   orbit-api       manual instrumentation for Python (bundles liborbit_api)
-#   orbit-profiler  the orbit-service binary + library + header, one command
+# Builds the pip wheels for perfr:
+#   perfr-api       manual instrumentation for Python (bundles libperfr_api)
+#   perfr  the perfr binary + library + header, one command
 #
 # Both wheels for a platform come from one build (tools/release/build_wheels.sh)
 # so the ring protocol matches between the library that writes and the service
-# that reads. Wheels are uploaded as artifacts. On an orbit-v* tag (the Rust
+# that reads. Wheels are uploaded as artifacts. On a perfr-v* tag (the Rust
 # release scheme, not the legacy C++ v1.* tags) they publish to PyPI via
 # Trusted Publishing once those publishers exist. workflow_dispatch builds
 # wheels and does not publish.
@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-    - 'orbit-v*'
+    - 'perfr-v*'
 
 permissions: read-all
 
@@ -73,18 +73,18 @@ jobs:
       if: matrix.key == 'linux-x86_64'
       run: |
         python -m venv /tmp/v
-        /tmp/v/bin/pip install --no-index --find-links dist/wheels orbit-profiler
-        env -u ORBIT_API_LIB PATH=/usr/bin:/bin /tmp/v/bin/python -c \
-          "import orbit_api as o; assert o.init() == 0 and o.available(); print('ok', o.library_path())"
+        /tmp/v/bin/pip install --no-index --find-links dist/wheels perfr
+        env -u PERFR_API_LIB PATH=/usr/bin:/bin /tmp/v/bin/python -c \
+          "import perfr_api as o; assert o.init() == 0 and o.available(); print('ok', o.library_path())"
         /tmp/v/bin/python -c '
-          import os, orbit_profiler as p
+          import os, perfr as p
           root = os.path.dirname(p.binary_path())
-          for name in ("orbit-service", "orbit-frida-helper", "liborbit_frida_agent.so"):
+          for name in ("perfr", "perfr-frida-helper", "libperfr_frida_agent.so"):
               path = os.path.join(root, name)
               assert os.path.isfile(path), path
           print("frida companions ok", root)
         '
-        /tmp/v/bin/orbit-service --help >/dev/null
+        /tmp/v/bin/perfr --help >/dev/null
 
     - uses: actions/upload-artifact@v4
       with:

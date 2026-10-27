@@ -1,8 +1,8 @@
-/* Copyright (c) 2026 The Orbit Authors. All rights reserved.
+/* Copyright (c) 2026 The perfr Authors. All rights reserved.
    Use of this source code is governed by a BSD-style license that can be
    found in the LICENSE file. */
 
-/* White, quiet, one accent: the blue of the Orbit logo. */
+/* White, quiet, one accent: the blue of the perfr logo. */
 :root {
   --bg: #ffffff;
   --bg-soft: #f8f9fa;

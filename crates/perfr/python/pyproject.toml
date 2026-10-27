@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "perfr"
+version = "0.1.0"
+description = "perfr: a low-overhead profiler. The capture service and web viewer in one command, plus the C/C++ and Python instrumentation API."
+readme = "README.md"
+license = "BSD-2-Clause"
+requires-python = ">=3.8"
+authors = [{ name = "The perfr Authors" }]
+keywords = ["profiling", "tracing", "instrumentation", "performance", "perfr"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Debuggers",
+  "Topic :: System :: Monitoring",
+]
+# Pinned to the same release: the service and the instrumentation library must
+# speak the same ring protocol, and both wheels are cut from one build.
+dependencies = ["perfr-api==0.1.0"]
+
+[project.scripts]
+perfr = "perfr:main"
+
+[project.urls]
+Homepage = "https://github.com/perfr/perfr"
+Source = "https://github.com/perfr/perfr/tree/main/crates/perfr/python"
+
+[tool.setuptools]
+packages = ["perfr"]
+
+# The service binary, libperfr_api and perfr.h are dropped into the package by
+# tools/release/build_wheels.sh before the wheel is built.
+[tool.setuptools.package-data]
+perfr = [
+  "perfr", "perfr.exe",
+  "libperfr_api.so", "libperfr_api.dylib", "perfr_api.dll", "perfr.h",
+  # The Frida engine's companions, present when the wheel was built with
+  # PERFR_COMPANIONS_DIR (see tools/release/build_wheels.sh).
+  "libperfr_frida_agent.so", "libperfr_frida_agent.dylib", "perfr-frida-helper", "licenses/*",
+]

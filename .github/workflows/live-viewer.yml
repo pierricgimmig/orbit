@@ -1,4 +1,4 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -7,12 +7,12 @@ on:
   push:
     branches: ['main']
     paths:
-      - 'crates/orbit-live-*/**'
+      - 'crates/perfr-live-*/**'
       - '.github/workflows/live-viewer.yml'
   pull_request:
     branches: ['main']
     paths:
-      - 'crates/orbit-live-*/**'
+      - 'crates/perfr-live-*/**'
       - '.github/workflows/live-viewer.yml'
 
 permissions: read-all
@@ -32,18 +32,18 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      # The seven viewer crates: the server side orbit-service links, the
+      # The seven viewer crates: the server side perfr links, the
       # trace importers, and the eframe viewer itself (its tests run natively,
       # no window). The service crates have their own jobs.
       - name: Test the live-viewer crates
         run: >
-          cargo test -p orbit-live-event -p orbit-live-ring -p orbit-live-protocol
-          -p orbit-live-render -p orbit-live-server -p orbit-live-chrome -p orbit-live-viewer
+          cargo test -p perfr-live-event -p perfr-live-ring -p perfr-live-protocol
+          -p perfr-live-render -p perfr-live-server -p perfr-live-chrome -p perfr-live-viewer
       - name: Compile eframe WebRunner for wasm32
-        run: cargo build -p orbit-live-viewer --target wasm32-unknown-unknown
+        run: cargo build -p perfr-live-viewer --target wasm32-unknown-unknown
       - name: Compile benches
-        run: cargo bench -p orbit-live-render -p orbit-live-ring --no-run
+        run: cargo bench -p perfr-live-render -p perfr-live-ring --no-run
       # The complexity test is compiled out of debug (`cfg(not(debug_assertions))`).
       # Run it once with optimizations so CI still guards O(width log n).
       - name: Test pixel rasterizer complexity (release)
-        run: cargo test -p orbit-live-render --release --lib tests::pixel_prepare_is_not_linear_in_scopes -- --exact
+        run: cargo test -p perfr-live-render --release --lib tests::pixel_prepare_is_not_linear_in_scopes -- --exact

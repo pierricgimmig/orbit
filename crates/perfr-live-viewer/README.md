@@ -1,0 +1,387 @@
+# perfr live WASM viewer
+
+A **single perfr Service binary** can serve this page: point a browser at
+`--http_port` (default **44766**) and control a thin live capture from there.
+
+The browser does **not** parse ELF/DWARF/modules or protobuf. perfr Service
+decodes existing `ClientCaptureEvent`s (API scopes, function-call timers,
+scheduling slices, thread-state slices), packs them into 32-byte events, and
+keeps them in an in-process **ring**. The page receives a WebSocket stream of
+those packed events (and can also pull a rasterized frame from the service).
+
+## Run
+
+```
+# The service serves the viewer on one port (see ../../run.sh):
+perfr --serve 44766
+
+# Or, viewer + demo producer only (no capture stack):
+cargo run -p perfr-live-server --release -- --http-port 44766
+```
+
+Open `http://<host>:44766/`.
+
+| Control | What it does |
+|---|---|
+| **Process** | Searchable process menu, refreshed and sorted by CPU usage every second, including while open. |
+| **Record** | Against PerfrService: real capture of the selected pid (CSW, thread state, API, optional sampling + hooks). Rust-only / missing hooks: Record starts the **Demo** producer and the strip says so. |
+| **Demo** | In-process dummy scopes (no attach). Separate from Record when hooks are present. |
+| **Capture strip** | Sampling (default 1 ms / 1000 Hz, DWARF unwind), user-space vs kernel uprobes, function search (service-side, paged). Symbols load on the machine running PerfrService — the browser never parses ELF/DWARF. |
+| **Ring bytes** | Recreates the in-process ring (oldest live data is dropped) |
+| **Spill path** | Directory for serialize-on-overflow (`perfr-live-spill.bin`) |
+
+`--http_port 0` disables the viewer.
+
+## Toolbar and right pane
+
+The desktop toolbar keeps capture controls, process selection, scope search and
+symbol-loading status on one row. **More** contains **Report** (`R`), **Self**
+(`F2`), **Inspector** (`I`), **Follow latest** (`Space`) and
+**Fit capture** (`Home`), with reminders for pan/zoom and scrolling shortcuts.
+Open the process picker with **Ctrl+Shift+P** (**⌘⇧P** on Mac). Type to filter,
+use **Up/Down** to move through results, and press **Enter** to select the highlighted
+process (the first result by default). **Escape** dismisses the picker. Navigation
+keeps the highlighted process visible and preserves it across CPU reordering.
+Other global shortcuts are inactive while typing in a text field.
+
+Inspector shares the resizable right pane with function reports and holds viewer
+statistics, FPS, stream rate, ring settings and symbol-loading errors/retry.
+Ctrl-drag over scopes opens the rectangle report in the same pane's **Selection**
+tab. Copy and clear remain available there.
+
+Symbol status shows a live elapsed timer while loading, then the final count and
+service-measured duration. Linux reports counts as modules finish indexing; the
+macOS Frida catalogue arrives as one result, so its count becomes available at
+completion. The timer redraws each frame without sending a request per frame.
+
+## Function hooks in the Rust service viewer
+
+Live, Functions, Flat, Top-down and Bottom-up share the hook selection.
+Drag across rows to select functions (Shift-drag adds to the selection), then
+use a selected row's checkbox or right-click menu to hook/unhook the whole
+selection. Right-clicking a row outside the selection acts on that row alone.
+Hook changes configure the next recording. Changing target process clears the
+previous process's hook choices.
+
+Right-click a scope in the capture timeline to hook or unhook its function.
+This action affects that function alone, regardless of report selection.
+Live rows and timeline scopes resolve their captured names against the selected
+process's symbols; arbitrary manual labels and ambiguous names cannot be hooked.
+
+Live's type column distinguishes **D** (Frida or uprobes), **MS** (manual scopes)
+and **MA** (manual async tracks). Frida already enters through the SDK's internal
+`DynamicApiV1` bridge, whose `perfr_start_dynamic` uses the same nesting state as
+manual instrumentation and marks the scope as dynamic. The service forwards that
+mark in the event's flags byte. The viewer preserves it through timeline picking
+and keeps statistics and histograms separate by process, name and source, so a
+manual scope and a dynamic scope with the same name remain distinct.
+
+## Open a Chrome or Perfetto trace
+
+Drag a Chrome Trace Event Format file or a Perfetto proto trace onto the
+canvas, or click **Open** (Ctrl/Cmd+O). Accepted files: `.json`,
+`.json.gz`, `.pftrace`, `.perfetto-trace`, `.pb`, any of those `.gz`, and a
+`.zip` that holds one of them. The format is sniffed from the first decoded
+bytes (`[` / `{` is JSON, a `0x0a` packet tag is Perfetto), not from the
+name. (The catapult `theverge_trace.json` fixture in the tables below was
+the load-test file; the pill that fetched it is gone.) Same-origin
+`/?trace=/path.pftrace` fetches that path. Loading **does not start Demo**
+— it replaces the session with a capture-like machine/process/thread tree
+from `pid`/`tid` metadata.
+
+The initial time window **fits the real timed-event cluster** (B/E/X, async,
+counters — not `ph=M` at ts=0). **Home** or **double-click the ruler** fits
+again. WASD hold-pan/zoom stays cursor-locked. The time slider spans that
+cluster, not hours of empty axis left of the first scope.
+
+| Chrome `ph` | Live viewer |
+|---|---|
+| `B`/`E`, `X` | `API_SCOPE` clips (paired by pid+tid, plus `id` when present) |
+| `I`/`i` (`g`/`p`/`t`) | zero-duration markers (global / process / thread) |
+| `C` | `VALUE` tracks (one series per counter name or `args` field) |
+| `S`/`T`/`F`, `n`/`o`/`d`, `b`/`e` | `API_TRACK` on a lane keyed by async **name** (ids still pair) |
+| `s`/`t`/`f` (+ `bind_id`) | instant markers + flow arrows (not stored on the 32-byte event) |
+| `M` | process/thread names and sort indices |
+| `P` + `stackFrames` | nested `FUNCTION_CALL` sample clips |
+| `R`, `c` | instants |
+| `N`/`O`/`D` | snapshot/instant on one lane **per object name** (not per id) |
+| `v` (memory dump) | single marker; dump payload is **not** interned |
+
+Timestamps are microseconds by default (`×1000` → ns). If `displayTimeUnit` is
+`ns`, `ts`/`dur` are treated as nanoseconds. Args are interned as a compact
+hover string keyed by intern id. `systemTraceEvents` is ingested when it is
+an event array or a Linux/Android `tracing_mark_write` string (theverge’s
+field is an empty list).
+
+### Perfetto proto traces
+
+A `.pftrace` is a stream of length-delimited `TracePacket`s. The crate walks
+them with a schema-less protobuf reader (`perfr-live-chrome/src/proto.rs`,
+no protoc, no generated code) and feeds the **same ingestor** the JSON path
+uses, so lanes, pairing, naming and hover args come out the same way.
+Timestamps are converted to the trace clock (BOOTTIME, or the snapshot's
+`primary_trace_clock`) through `clock_snapshot`, including Chrome's
+incremental sequence-scoped µs clocks.
+
+| Perfetto packet | Live viewer |
+|---|---|
+| `track_event` slice begin/end/instant on a thread track | `B`/`E`/`I` on that pid/tid |
+| ... on a process, global or named child track | nestable async `b`/`e`/`n`, one lane per **track name**; Chrome's unnamed per-id tracks lane by event name |
+| `track_event` counter, `counter` tracks (`unit_multiplier`, `is_incremental`) | `C` value series named by the track |
+| `chrome_histogram_sample` | `C` value series named by the histogram |
+| `track_event.legacy_event` (Chrome's `X`, `S`/`T`/`F`, `M`, `N`/`O`/`D`, ids, `bind_id`) | the JSON phase, verbatim |
+| `track_descriptor`, `thread_descriptor`, `process_descriptor`, `process_tree` | process / thread names and sort order |
+| `interned_data` + `sequence_flags` | per-sequence name / category / arg / callstack tables |
+| `debug_annotations` (nested, interned strings) | hover args |
+| `flow_ids` / `terminating_flow_ids` (first id of an event) | flow arrows |
+| `ftrace_events` `sched_switch` / `sched_waking`, plain and `compact_sched` | `SCHEDULING_SLICE` per core + `THREAD_STATE` (running / runnable / sleep kinds from `prev_state`) |
+| `ftrace_events` `print` (`B\|pid\|name` atrace marks) | scopes on the writing thread |
+| `chrome_events` (`trace_events`, `legacy_json_trace`, `legacy_ftrace_output`) | the JSON path, embedded |
+| `perf_sample` with an interned callstack | nested `FUNCTION_CALL` sample clips |
+
+Not mapped (counted in `stats.skipped_packets` / `skipped_other`):
+`extra_counter_values` (per-slice thread time), `sys_stats`, `process_stats`,
+`cpu_frequency`, GPU / memory snapshots, ETW, `track_event` callstacks
+(`callstack_iid`), and Chrome's `(` / `)` context phases. An event with
+several flow ids draws its first; flows on async lanes are not drawn.
+Packets are not time-ordered across producers: thread-state bars wait for
+the tid's process (a `process_tree` often sits at the end of the file) and
+sched comms name threads at the end; where two cores' ftrace bundles
+overlap out of order a sleep / runnable slice can be lost, while the
+per-core running slices are exact.
+
+The 64 MB capture ring is not used. Events go into the viewer's `TrackIndex`
+(32 bytes each + interned strings). wasm32 heap is capped at **2 GiB**
+(`build_wasm.sh --max-memory`). gzip is inflated as chunks arrive (not
+buffered then decoded). A 1–2 GB uncompressed JSON is stream-parsed
+(the file is not kept as `serde_json::Value`). Hover-args intern is capped
+(512 chars, 100k entries) so unique-per-event dumps cannot explode RAM.
+One enormous object (a heap dump, a layout-tree snapshot) still transits
+the scan window.
+
+Optional same-origin deep link: `/?trace=/traces/foo.json` (or `.pftrace`).
+
+### Measured ingest + view (this VM, 2026-08-30)
+
+Native `chrome_view` / `chrome_ingest` (release). These are wall-clock
+numbers from actually downloading and running the files, not estimates.
+Not browser GPU fps.
+
+| Trace | URL | Comp. | Uncomp. | Events out | Ingest | First view* | Zoom collect† |
+|---|---|---|---|---|---|---|---|
+| theverge (Chrome-native coverage) | [catapult `theverge_trace.json`](https://raw.githubusercontent.com/catapult-project/catapult/main/tracing/test_data/theverge_trace.json) | 54,370,856 B | 54,370,856 B | 30,834 (58,103 in; B/E 54,224; C 344; S/T/F 785; O/D 2,101; 6 proc / **25 threads**) | 0.271 s / 19 MB RSS | 3 ms | 4292 fps |
+| huge_trace | [catapult `huge_trace.json`](https://raw.githubusercontent.com/catapult-project/catapult/master/tracing/test_data/huge_trace.json) | 13.2 MB | 13.2 MB | 53,223 | 0.076 s | 4 ms | 5802 fps |
+| Lighthouse progressive-app | [lighthouse fixture](https://raw.githubusercontent.com/GoogleChrome/lighthouse/main/core/test/fixtures/traces/progressive-app.json) | 2.9 MB | 2.9 MB | 10,562 | 0.029 s | 1 ms | 7849 fps |
+| wan22 rank4 (load-time hammer) | [HuggingFace `trace_rank4.json.gz`](https://huggingface.co/datasets/Akshat/wan2.2-rocm-profiles/resolve/main/wan22_profile_u4_r2/torch_profile/20260602-182319_stage_0_rep_0_diffusion_1780424599/trace_rank4.json.gz) (CC-BY-4.0) | 266,439,928 B | 3,311,005,743 B | 12,253,693 (X 12,119,297; flow 134,394; M 72; 18 proc / 32 threads) | **1806.9 s** / **6.22 GB RSS** | 1.346 s | 3.3 fps (2.83M prims in the 1/8 window) |
+
+\* CPU `collect_instances` / LOD choose after insert — time-to-first-timeline-prepare, not a painted WASM frame.  
+† 60× `collect_instances` on a 1/8 window; prepare rate, not vsync.
+
+theverge first-paint window (this change, measured): content
+`122403254982000..122411498936000` ns (8.243954 s B/E cluster). Fit 1.1× →
+`t0=122402842784300` `t1=122411911133700` (9.068349 s). One mid zoom-in →
+`t0=122403254982000` `t1=122411498936000` (8.243954 s). Not `0..1.224e14`
+(34 h). GPU instances already origin-shift `(t-t0)` as f64; this was a
+timeline-domain bug (slider/pan floor 0 + 60 s zoom cap), not f32 absolute ns.
+
+theverge pid 66343 used to mint **1,866 threads** (1,847 object-id lanes + 14 async-id lanes + 4 real tids). Expanding that process cost **47.43 ms/frame** vs **5.63 ms** collapsed (`chrome_nav`, 60× sync+Y-cull collect). After grouping O/D and async by **name**: 11 threads (4 real + 3 object names + 3 async names + 1 counter), **0.76 ms/frame expanded** / **0.09 ms collapsed**.
+
+wan22 was streamed (gzip never materialized as a 3.08 GiB buffer; peak RSS
+is events + unique interned args — 12.1M intern ids, mostly per-event
+PyTorch args, measured **before** the 100k-entry args cap). wasm32 2 GiB
+cannot hold that intern table; the cap keeps clips and names and drops
+later hover strings.
+
+### Measured Perfetto ingest (this VM, 2026-09-28)
+
+Native `chrome_ingest` (release) on Perfetto's public `test/data` traces,
+checked against `trace_processor` counts. Events out include one
+scheduling slice plus one or two thread states per `sched_switch`.
+
+| Trace | File | Events out | trace_processor | Ingest |
+|---|---|---|---|---|
+| chrome_rendering_desktop.pftrace (Chrome, TrackEvent + legacy) | 8.3 MB | 111,475 | 111,472 slices, 5,000 flows (we draw 4,958) | 0.08 s / 17 MB RSS |
+| chrome_scroll_without_vsync.pftrace | 1.4 MB | 20,690 | 20,679 slices, 56 threads (81 lanes incl. async) | 0.02 s |
+| chrome_5672_histograms.pftrace.gz | 1.1 MB gz | 145,368 | 145,368 instants, 145,290 histogram samples | 0.09 s |
+| chrome_example_wikipedia.perfetto_trace.gz | 21.5 MB gz | 298,037 | 297,603 slices, 29,776 flows (we draw 21,138: multi-id events) | 0.18 s / 27 MB |
+| example_android_trace_30s.pb.gz (ftrace + atrace) | 4.7 MB gz | 839,279 | 384,623 sched_switch (exact), 20,746 slices | 0.13 s / 31 MB |
+| cpu_counters.pb (ftrace only) | 10 MB | 161,493 | 94,469 sched_switch (exact) | 0.03 s |
+
+## Look (perfr palette, not a barcode)
+
+Scope / thread colors come from `ThreadColor.cpp` / `TimeGraph::GetColor`
+(`#E74435 #2B91AF #B975B5 #57A64A #D7AB69 #F86516`). API scopes and tracks
+are `palette[name_hash % 6]` (interned name, or `name_id` bytes on a miss);
+even depth RGB *= 210/255. Function-call / CPU lanes stay `palette[tid % 6]`.
+Manual `perfr_api_color` is the Material-500 table in `ApiInterface/perfr.h`.
+Thread states match `ThreadStateBar.cpp`. Chrome is the Qt capture window
+(`#434343` canvas, `#323232` track, `#353535` window).
+
+The shipped page is **eframe / egui-wgpu** (WebRunner on a full-window canvas).
+Process list, Start/Stop capture, Start/Stop demo, ring/spill, and status are
+egui widgets in the perfr Fusion palette (`#353535` window, `#191919` inputs,
+`#434343` canvas, white text, `#64B5F6` selected). The timeline is **one**
+egui `PaintCallback` — not millions of `RectShape`s.
+
+This workspace pins **rustc 1.88** via `rust-toolchain.toml` so current eframe
+(0.32) builds. `viewer-dist/fallback.html` is a last-ditch no-wasm page; it is
+not the UI we ship.
+
+## Renderer (verified, not assumed)
+
+Owner hunch: paint from **pixels**, not one quad per scope, when zoomed out.
+
+perfr's cheap live intervals are **non-overlapping per lane**
+(`(kind, tid, depth)` or scheduling core). Each pixel column is one binary
+search on `end_ns`:
+
+**O(lanes × width × log n_lane)** once `n > width`. When a lane has fewer
+events than pixels, a linear fill is cheaper (O(n) ≤ O(width)); that is a
+hybrid, not “ship naive as the only path.”
+
+When a sampled visible scope is wider than ~4 px the same view switches to
+**instanced SDF rounded rects** (plus an Evan Wallace analytical drop shadow
+in WGSL). That path walks only visible events. Do not CPU-blit a barcode for
+the zoomed-in case. The naive “fill every scope” raster stays in the crate so
+benches can compare. Without a WASM pack the page uses `GET /api/timeline`
+(instanced Canvas2D) or `GET /api/frame` (perfr-colored columns).
+
+```
+cargo bench -p perfr-live-render
+cargo bench -p perfr-live-ring
+```
+
+`rasterize_vs_scopes` / `rasterize_vs_pixels` print the numbers. Re-run the
+benches on the machine you care about; do not treat any write-up as a
+substitute. The unit test `pixel_prepare_is_not_linear_in_scopes` fails if
+the column walk regresses to O(n) (release only; debug skips the wall-clock
+check because unoptimized codegen is not a complexity signal).
+
+Y-cull, instanced early-out, dirty GPU upload, density LOD, idle chrome,
+native lane parallelism (`render-wN` self-profile threads; viewer native
+Cargo enables `--features parallel`), WASM rayon/SAB pool when isolation
+headers allow SharedArrayBuffer (else sequential), and selected-scope pulse: see
+`crates/perfr-live-render/RENDER_OPTS.md` for what landed and **measured**
+CPU-prepare medians (this VM has no discrete GPU).
+
+## Build
+
+The viewer is seven crates of the one Cargo workspace at the repository
+root:
+
+| Crates | Role | Built by |
+| --- | --- | --- |
+| `perfr-live-event`, `-ring`, `-protocol`, `-render`, `-server` | what the service links to serve the page | `cargo build -p perfr` |
+| `perfr-live-chrome` | Chrome JSON and Perfetto proto import | the viewer |
+| `perfr-live-viewer` | the wasm32 eframe front end | `./build_wasm.sh` |
+
+Only `perfr-live-viewer` depends on eframe / wgpu / winit (~200 crates), so a
+service build never compiles them.
+
+### Native crates (tests + benches, no browser)
+
+```
+cargo test -p perfr-live-event -p perfr-live-ring -p perfr-live-protocol \
+           -p perfr-live-render -p perfr-live-server -p perfr-live-chrome \
+           -p perfr-live-viewer
+cargo bench -p perfr-live-render -p perfr-live-ring
+```
+
+`cargo test -p perfr-live-viewer` compiles the eframe app + callback on
+native (no window).
+
+### WASM pack (eframe WebRunner)
+
+Needs `wasm32-unknown-unknown` and `wasm-bindgen-cli` matching `wasm-bindgen 0.2.100`:
+
+```
+./crates/perfr-live-viewer/build_wasm.sh
+```
+
+This writes `viewer-dist/perfr_live_viewer.js` and `.wasm`, which are checked
+in. `perfr-live-server`’s build script embeds whatever is in `viewer-dist/`, so
+rebuild `perfr` afterwards to pick up a new pack.
+
+Without a WASM pack, `/` shows a link to `fallback.html` (HTML/JS last-ditch).
+
+### Embed in the service
+
+`crates/perfr` depends on `perfr-live-server` by path and embeds
+the pack through that crate's build script; `../../run.sh` builds and runs
+it. The C++ `PerfrService` that once linked this workspace through the
+`perfr-live-ffi` C ABI is on the `cpp` branch of the Orbit repository, with that crate.
+
+## Protocol
+
+WebSocket `ws://<host>:<http_port>/ws`, binary frames:
+
+```
+[u32 le payload_len][u8 type][payload]
+```
+
+| Type | Payload |
+|---|---|
+| 1 Hello | `OLIV` + version + event size |
+| 2 EventBatch | `u32 count` + `count` packed 32-byte events |
+| 3 InternedString | `u32 id` + `u32 len` + UTF-8 |
+| 4 CaptureStarted | `u32 pid` + `u64 start_ns` |
+| 5 CaptureFinished | empty |
+| 6 Status | flags + ring counters |
+
+Event layout matches `perfr_grpc_protos::ClientCaptureEvent` fields already
+used for API scopes, `FunctionCall`, `SchedulingSlice`, and `ThreadStateSlice`.
+It is not a new capture file format.
+
+## Real capture (PerfrService)
+
+`./run.sh --sudo` builds `perfr` and runs it as root so `sched_switch`
+/ thread state work. Pick a process in the Capture strip; the service loads symbols
+(`SymbolHelper` + `FindSymbolsFilePath`). Function search is
+`GET /api/functions/search?q=&limit=` and never dumps the symbol table.
+
+`POST /api/capture/start` JSON: `pid`, `enable_api`, `context_switches`,
+`thread_states`, `sampling`, `samples_per_second`, `unwinding`
+(`dwarf` \| `frame_pointers`), `dynamic_instrumentation_method`
+(`user_space` \| `kernel_uprobes`), `instrumented_functions: [{function_id}]`.
+Callstack samples are resolved on the service and ingested as nested
+`FUNCTION_CALL` clips (duration `1/samples_per_second`). Instrumented
+`FunctionCall` events use interned pretty names, not raw function ids.
+
+## Out of scope (this change)
+
+PerfrApp / CaptureData / the Qt client, ELF/DWARF in WASM/JS, sampling
+reports, GPU/Vulkan tracks, presets, a dual end-time index, or changing
+the 32-byte `LiveEvent` layout. VALUE stays off GPU LODs.
+
+## Instrumentation presets
+
+Use **More → Instrumentation presets**, or **Presets** in Functions/settings, to
+save hooked functions and load several selections together. Files use exact
+module filenames and function names, so installation paths and runtime IDs can
+change. See [the preset guide](../../docs/instrumentation-presets.md) for the
+format, composition, and unresolved-symbol handling.
+
+## Logs
+
+The viewer logs to the browser console and relays the same lines to the
+service, which writes them into its own log file
+(`~/.perfr/logs/perfr-*.log`, see
+[crates/README.md](../../crates/README.md#logs)) tagged `viewer <page id>
+<module>`, so a session reads as one file from both ends: what the page asked
+for, what the socket did, a panic, and what the service made of it. **More**
+shows the file's path under the build line.
+
+In the Rust code use the `log` macros (`log::info!`, `log::warn!`,
+`log::error!`); `logging.rs` prints them and batches them to `POST /api/log`
+about twice a second (at once for a warning) with `navigator.sendBeacon`, which
+still works from a panic hook. Info lines from the viewer's own crates and
+warnings from everything else (eframe, wgpu) are kept. Nothing is sent while
+the page is showing a capture file from a static site. A failure before the
+wasm runs (the pack did not load, a JS error) is relayed by `index.html` the
+same way, as page `js`.
+
+`POST /api/log` takes `{"page":"7c1e","lines":[{"t_ms":<Date.now()>,
+"level":"warn","target":"perfr_live_viewer::net","message":"..."}]}`, at
+most 512 lines of 4 KB each per call, and answers 204. Anything that can
+reach the service may use it; a line's origin in the file is `viewer <page>
+<target>`.

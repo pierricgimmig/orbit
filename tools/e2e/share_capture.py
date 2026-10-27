@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Exercise Share with a local S3 CLI stand-in and a real browser, no AWS writes.
 
-Requires the built target/debug/orbit-service,
+Requires the built target/debug/perfr,
 google-chrome, openssl and the rebuilt viewer pack. Uses only the standard library.
 """
 import functools
@@ -48,11 +48,11 @@ def wait_until(test, timeout=30):
 
 def main():
     service = chrome = https = None
-    with tempfile.TemporaryDirectory(prefix='orbit-share-test-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='perfr-share-test-') as tmp:
         work = Path(tmp)
         objects = work / 'objects'
         objects.mkdir()
-        (objects / 'viewer').symlink_to(ROOT / 'crates/orbit-live-viewer/viewer-dist', target_is_directory=True)
+        (objects / 'viewer').symlink_to(ROOT / 'crates/perfr-live-viewer/viewer-dist', target_is_directory=True)
         s3_port, service_port, chrome_port = port(), port(), port()
         viewer = f'https://127.0.0.1:{s3_port}/viewer/index.html'
         object_base = f'https://localhost:{s3_port}'  # Different origin: browser must pass CORS.
@@ -98,11 +98,11 @@ else:
 ''')
         mock.chmod(0o755)
         env = {**os.environ, 'PATH': str(work) + os.pathsep + os.environ['PATH'],
-               'ORBIT_SHARE_BUCKET': 'test-bucket', 'ORBIT_SHARE_VIEWER_URL': viewer,
+               'PERFR_SHARE_BUCKET': 'test-bucket', 'PERFR_SHARE_VIEWER_URL': viewer,
                'MOCK_S3_DIR': str(objects), 'MOCK_S3_URL': object_base,
-               'ORBIT_LOG_DIR': str(work / 'logs')}
-        env.pop('ORBIT_SHARE_PUBLIC_BASE_URL', None)
-        env.pop('ORBIT_LIVE_DEV', None)
+               'PERFR_LOG_DIR': str(work / 'logs')}
+        env.pop('PERFR_SHARE_PUBLIC_BASE_URL', None)
+        env.pop('PERFR_LIVE_DEV', None)
         base = f'http://127.0.0.1:{service_port}'
 
         def post(path, body=None):
@@ -113,7 +113,7 @@ else:
 
         try:
             with (work / 'service.log').open('w') as log:
-                service = subprocess.Popen([str(ROOT / 'target/debug/orbit-service'),
+                service = subprocess.Popen([str(ROOT / 'target/debug/perfr'),
                                             '--host', '127.0.0.1', '--serve', str(service_port)],
                                            env=env, stdout=log, stderr=log)
             wait_until(lambda: urllib.request.urlopen(base + '/api/status', timeout=1).status == 200)
@@ -142,19 +142,19 @@ else:
             chrome = Chrome(port=chrome_port)
             chrome.call('Security.setIgnoreCertificateErrors', ignore=True)
             chrome.goto(shared['viewer_url'], settle=1)
-            state = wait_until(lambda: chrome.eval('window.__orbit_sel ? JSON.parse(window.__orbit_sel) : null'))
+            state = wait_until(lambda: chrome.eval('window.__perfr_sel ? JSON.parse(window.__perfr_sel) : null'))
             state = wait_until(lambda: (lambda s: s if s and s.get('events') == 2 else None)(
-                chrome.eval('window.__orbit_sel ? JSON.parse(window.__orbit_sel) : null')))
+                chrome.eval('window.__perfr_sel ? JSON.parse(window.__perfr_sel) : null')))
             assert chrome.eval("document.querySelector('a[download]').href") == shared['download_url']
             assert chrome.screenshot(str(work / 'shared.png')) > 20000, 'Viewer painted a blank screenshot'
             chrome.goto(base, settle=1)
             def rect(label):
-                rows = chrome.eval("JSON.parse(window.__orbit_ui || '[]')") or []
+                rows = chrome.eval("JSON.parse(window.__perfr_ui || '[]')") or []
                 return next((row[1:] for row in rows if row[0] == label), None)
             x, y, width, height = wait_until(lambda: rect('Share'))
             chrome.click(x + width / 2, y + height / 2)
             wait_until(lambda: rect('Copy link'))
-            archives = list((objects / 'captures').glob('*.orbit.zip'))
+            archives = list((objects / 'captures').glob('*.perfr.zip'))
             assert len(archives) == 2, 'The Share button did not upload a new capture'
             full = next(a for a in archives if a != archive)
             with zipfile.ZipFile(full) as bundle:

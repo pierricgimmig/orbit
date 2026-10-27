@@ -8,9 +8,9 @@ Pick a process, choose what to record, and press Record. The timeline starts str
 
 The red button starts and stops a capture. **X** does the same, unless the page is showing a file you opened (a static capture has no Record button). On a window narrower than 840 CSS pixels the word on the button is **Rec**, then **Stop**.
 
-**Open** loads a saved Orbit capture (`.orbit.zip`), a Chrome trace (`.json` / `.json.gz`) or a Perfetto trace (`.pftrace` / `.pb`). You can also drop the file on the page, or press **Ctrl+O** (⌘O). Opening a Chrome or Perfetto trace stops a live capture first. Opening a `.orbit.zip` does not: the service answers `busy: stop the capture before opening one` until you stop. [Traces](everywhere.html#chrome-and-perfetto-traces) has the formats.
+**Open** loads a saved perfr capture (`.perfr.zip`), a Chrome trace (`.json` / `.json.gz`) or a Perfetto trace (`.pftrace` / `.pb`). You can also drop the file on the page, or press **Ctrl+O** (⌘O). Opening a Chrome or Perfetto trace stops a live capture first. Opening a `.perfr.zip` does not: the service answers `busy: stop the capture before opening one` until you stop. [Traces](everywhere.html#chrome-and-perfetto-traces) has the formats.
 
-**Save** downloads **Capture (.orbit.zip)**, or **Selected slice (.orbit.zip)** when a time range is selected. **Clear** empties the capture. Clear is refused while a capture is still running.
+**Save** downloads **Capture (.perfr.zip)**, or **Selected slice (.perfr.zip)** when a time range is selected. **Clear** empties the capture. Clear is refused while a capture is still running.
 
 ## What to collect
 
@@ -20,7 +20,7 @@ Settings, **COLLECT**:
 |---|---|---|
 | **CSW** | Context switches / Scheduler track | One scheduler lane per core |
 | **States** | Thread state slices | Running, Sleeping, and the other states |
-| **API** | Manual orbit.h API scopes | Scopes from `orbit.h`, Rust and Python |
+| **API** | Manual perfr.h API scopes | Scopes from `perfr.h`, Rust and Python |
 | **Sample** | Callstack sampling | A stack sample per period |
 
 The field beside Sample is a period in milliseconds (`ms`). It starts at `1.0`. The viewer sends it as `samples_per_second`. The service on main does not read that field: a Linux or Windows capture samples at a fixed 1 kHz.
@@ -52,7 +52,7 @@ Right-click a function in the Flat report or a call tree and choose **Hook funct
 
 **Auto-unhook** is on by default. Past the rate — 100 k calls/s until you change it — the service switches that function off mid-capture, on Frida and on uprobes. The checkbox sits on the HOOKS row, and while it is on a drag field reads “k calls/s”. The hover text: a function that hot is not something to time with a hook, the samples already show it, and hooked it costs the target about a core.
 
-When it fires, the instrumentation line turns amber and an instant marks the moment on the thread. The checkbox and the rate are stored by the service in `~/.config/orbit/settings.json` (`auto_unhook`, `max_hook_calls_per_s`). A change is written at once and applies to the next Record. `0` on a capture request means never unhook for that capture.
+When it fires, the instrumentation line turns amber and an instant marks the moment on the thread. The checkbox and the rate are stored by the service in `~/.config/perfr/settings.json` (`auto_unhook`, `max_hook_calls_per_s`). A change is written at once and applies to the next Record. `0` on a capture request means never unhook for that capture.
 
 ## Auto-profiling
 
@@ -62,13 +62,13 @@ On Linux, **Auto** lets the service choose what to hook. It needs root or `CAP_S
 
 Every two seconds it reads the sampling report of the last five and hooks the next functions it points at, highest inclusive share first, up to three at a time, skipping any the hook-safety check calls unsafe. It keeps a quarter of the budget free, so it stops adding once the set is at 75% of the budget. It unhooks a function that is past half the budget on its own, one that completed no call while it was armed (retried later, waiting longer each time, and left alone after three silent tries), one that was entered and never returned, and the hottest of the rest while the set is over the budget.
 
-The budget starts at 1000 scopes/s (`auto_profile_scopes_per_s` in `~/.config/orbit/settings.json`). It hooks with the kernel engine, the one that can arm mid-capture, inside the 16-hook cap and under Auto-unhook. The status line reads “auto-profiling: N function(s) hooked, X of Y scopes/s”. Each change is an instant `auto-profile: hooked …` or `auto-profile: unhooked …` on the target’s main thread. Turning the switch off leaves the hooks that are already armed.
+The budget starts at 1000 scopes/s (`auto_profile_scopes_per_s` in `~/.config/perfr/settings.json`). It hooks with the kernel engine, the one that can arm mid-capture, inside the 16-hook cap and under Auto-unhook. The status line reads “auto-profiling: N function(s) hooked, X of Y scopes/s”. Each change is an instant `auto-profile: hooked …` or `auto-profile: unhooked …` on the target’s main thread. Turning the switch off leaves the hooks that are already armed.
 
 The capture-start body takes `"auto_profile": true`. `POST /api/auto_profile` with `{"on": true}` or `{"on": false}` toggles it, and `/api/status` reports `auto_profile` and `auto_profile_status`.
 
 ## Save a slice and share it
 
-Select a time range on the timeline, then use **Save → Selected slice (.orbit.zip)**.
+Select a time range on the timeline, then use **Save → Selected slice (.perfr.zip)**.
 The file keeps overlapping scopes whole, samples within the selected range,
 their callstack frames, and thread/process names. The selected window is stored
 in the archive alongside the retained events' full bounds.
@@ -79,6 +79,6 @@ With no selection, **Share** uploads the whole capture. When the upload finishes
 opens it; both stay until the capture is cleared, re-recorded or replaced. On
 narrow screens these controls are in **More**. Sharing is accepted from the
 service's own viewer opened by IP address or as `localhost`.
-Recipients can view the timeline and sampling reports without running Orbit,
+Recipients can view the timeline and sampling reports without running perfr,
 and download the complete archive. Private-bucket links expire after seven
 days by default, or sooner if the service's AWS credentials expire.

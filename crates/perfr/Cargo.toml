@@ -1,0 +1,57 @@
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "perfr"
+version = "0.1.0"
+description = "The perfr capture service: samples, traces and hooks a process and serves the live viewer"
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/perfr/perfr"
+rust-version = "1.88"
+
+[[bin]]
+name = "perfr"
+path = "src/main.rs"
+
+[dependencies]
+tempfile = "3"
+# The log facade; logging.rs is the one implementation (stderr and a file).
+log = "0.4"
+perfr-frida-transport = { path = "../perfr-frida-transport" }
+# Pure Rust; already in the tree through perfr-capture. Used by the wire bench only.
+miniz_oxide = "0.8"
+# The disassembler behind the code views (pure Rust); the trampoline crate
+# already carries it.
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info", "intel"] }
+perfr-api = { path = "../perfr-api" }
+perfr-capture = { path = "../perfr-capture" }
+perfr-live-event = { path = "../perfr-live-event" }
+perfr-live-server = { path = "../perfr-live-server" }
+# Rust's own demangler: std-only, one crate, no deps. C++ names stay mangled here (blog post 02).
+rustc-demangle = "0.1"
+memmap2 = "0.9"
+cpp_demangle = "0.5"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+perfr-maps = { path = "../perfr-maps" }
+perfr-object = { path = "../perfr-object" }
+object = { version = "0.36", default-features = false, features = ["read_core", "elf", "std"] }
+perfr-perf-records = { path = "../perfr-perf-records" }
+perfr-scope-ring = { path = "../perfr-scope-ring" }
+perfr-thread-states = { path = "../perfr-thread-states" }
+perfr-tracing-state = { path = "../perfr-tracing-state" }
+perfr-wire = { path = "../perfr-wire" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+perfr-perf-ring = { path = "../perfr-perf-ring" }
+perfr-unwind = { path = "../perfr-unwind" }
+
+# The kernel logger: scheduler, thread states and stack samples on Windows.
+[target.'cfg(windows)'.dependencies]
+perfr-etw = { path = "../perfr-etw" }

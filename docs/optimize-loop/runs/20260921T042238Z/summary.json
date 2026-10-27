@@ -2,13 +2,13 @@
   "timestamp": "2026-09-21T04:22:38Z",
   "target_name": "stockfish",
   "project": "/home/pierric/git/stockfish",
-  "config_path": "/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/stockfish.toml",
+  "config_path": "/tmp/claude-1000/-home-pierric-git-perfr/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/stockfish.toml",
   "host": "rixbox",
   "secondary": null,
   "bench": {
     "ok": true,
     "command": [
-      "/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-bench.sh"
+      "/tmp/claude-1000/-home-pierric-git-perfr/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-bench.sh"
     ],
     "iterations": 4,
     "metric": "nps",
@@ -61,15 +61,15 @@
     "ok": true,
     "passed": true,
     "command": [
-      "/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-bench.sh"
+      "/tmp/claude-1000/-home-pierric-git-perfr/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-bench.sh"
     ],
     "returncode": 0,
     "expect_returncode": 0,
     "fingerprint": "1659671",
-    "stdout_tail": "ORBIT_METRIC throughput=1198318\nORBIT_FINGERPRINT 1659671\n"
+    "stdout_tail": "PERFR_METRIC throughput=1198318\nPERFR_FINGERPRINT 1659671\n"
   },
   "profile": {
-    "backend": "orbit-http",
+    "backend": "perfr-http",
     "ok": true,
     "samples": 12796,
     "hotspots": [
@@ -204,12 +204,12 @@
     },
     "symbol_error": null,
     "pid": 3297534,
-    "command": "/home/pierric/git/orbit/rust/crates/orbit-service/target/release/orbit-service --serve ; capture pid of: ['/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-capture.sh']",
-    "service_log": "/home/pierric/git/orbit/docs/optimize-loop/runs/20260921T042238Z/capture/orbit-service.log",
-    "note": "Generic PID attach via orbit-service serve mode. Falls back to orbit file-mode (--pid --out) if serve mode records no samples.",
+    "command": "/home/pierric/git/perfr/rust/crates/perfr/target/release/perfr --serve ; capture pid of: ['/tmp/claude-1000/-home-pierric-git-perfr/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-capture.sh']",
+    "service_log": "/home/pierric/git/perfr/docs/optimize-loop/runs/20260921T042238Z/capture/perfr.log",
+    "note": "Generic PID attach via perfr serve mode. Falls back to perfr file-mode (--pid --out) if serve mode records no samples.",
     "attempts": [
       {
-        "backend": "orbit-http",
+        "backend": "perfr-http",
         "ok": true,
         "samples": 12796,
         "hotspots": [
@@ -344,9 +344,9 @@
         },
         "symbol_error": null,
         "pid": 3297534,
-        "command": "/home/pierric/git/orbit/rust/crates/orbit-service/target/release/orbit-service --serve ; capture pid of: ['/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-capture.sh']",
-        "service_log": "/home/pierric/git/orbit/docs/optimize-loop/runs/20260921T042238Z/capture/orbit-service.log",
-        "note": "Generic PID attach via orbit-service serve mode. Falls back to orbit file-mode (--pid --out) if serve mode records no samples."
+        "command": "/home/pierric/git/perfr/rust/crates/perfr/target/release/perfr --serve ; capture pid of: ['/tmp/claude-1000/-home-pierric-git-perfr/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/sf-capture.sh']",
+        "service_log": "/home/pierric/git/perfr/docs/optimize-loop/runs/20260921T042238Z/capture/perfr.log",
+        "note": "Generic PID attach via perfr serve mode. Falls back to perfr file-mode (--pid --out) if serve mode records no samples."
       }
     ],
     "perf_event_paranoid": {

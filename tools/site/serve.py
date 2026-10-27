@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -67,7 +67,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def log_message(self, fmt, *args):  # quieter than the default
-        if os.environ.get("ORBIT_SITE_LOG"):
+        if os.environ.get("PERFR_SITE_LOG"):
             super().log_message(fmt, *args)
 
     def send_head(self):

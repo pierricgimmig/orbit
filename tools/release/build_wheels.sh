@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
 # Builds the pip artifacts for one or more platforms:
 #
-#   orbit-api        the pure-Python instrumentation package with a prebuilt
-#                    liborbit_api bundled in (a platform wheel).
-#   orbit-profiler   the orbit-service binary, liborbit_api and orbit.h in a
-#                    platform wheel, with an `orbit-service` console command.
+#   perfr-api        the pure-Python instrumentation package with a prebuilt
+#                    libperfr_api bundled in (a platform wheel).
+#   perfr            the perfr binary, libperfr_api and perfr.h in a
+#                    platform wheel, with a `perfr` console command.
 #
 # Both wheels for a platform are cut from ONE build so the ring protocol
 # version matches between the library that writes and the service that reads.
@@ -23,19 +23,19 @@
 # The library is built against glibc 2.17 (manylinux2014) so the wheel installs
 # on any modern Linux; the service binary is a fully static musl build.
 #
-# The orbit-profiler wheel always includes the Frida companions. The service
-# loads liborbit_frida_agent and spawns orbit-frida-helper from the directory
-# that contains the orbit-service executable. This script builds those for the
+# The perfr wheel always includes the Frida companions. The service
+# loads libperfr_frida_agent and spawns perfr-frida-helper from the directory
+# that contains the perfr executable. This script builds those for the
 # wheel's target (glibc or macOS, not the musl service triple). Set
-# ORBIT_COMPANIONS_DIR to skip that build and copy a directory already laid
+# PERFR_COMPANIONS_DIR to skip that build and copy a directory already laid
 # out the way tools/frida/build.sh <dir> writes it.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$(pwd)
 
-API_PKG="$ROOT/crates/orbit-api/python"
-SVC_PKG="$ROOT/crates/orbit-service/python"
-HEADER="$ROOT/crates/orbit-api/include/orbit.h"
+API_PKG="$ROOT/crates/perfr-api/python"
+SVC_PKG="$ROOT/crates/perfr/python"
+HEADER="$ROOT/crates/perfr-api/include/perfr.h"
 OUT="$ROOT/dist/wheels"
 GLIBC="2.17" # manylinux2014 floor
 
@@ -48,25 +48,25 @@ command -v cargo-zigbuild >/dev/null || { echo "need cargo-zigbuild (pip install
 python3 -c "import build, wheel" 2>/dev/null || { echo "need python 'build' and 'wheel' (pip install build wheel)" >&2; exit 1; }
 
 # One release version, stamped in five places. Refuse to build if they drift:
-# orbit-profiler pins orbit-api to the exact version because the two must
+# perfr pins perfr-api to the exact version because the two must
 # speak the same ring protocol, and a stale pin would install a mismatch.
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/crates/orbit-api/Cargo.toml" | head -1)
-drift() { echo "version drift: $1 (orbit-api Cargo.toml says $VERSION)" >&2; exit 1; }
+VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/crates/perfr-api/Cargo.toml" | head -1)
+drift() { echo "version drift: $1 (perfr-api Cargo.toml says $VERSION)" >&2; exit 1; }
 grep -q "^version = \"$VERSION\"" "$API_PKG/pyproject.toml" || drift "$API_PKG/pyproject.toml"
 grep -q "^version = \"$VERSION\"" "$SVC_PKG/pyproject.toml" || drift "$SVC_PKG/pyproject.toml"
-grep -q "\"orbit-api==$VERSION\"" "$SVC_PKG/pyproject.toml" || drift "orbit-profiler must pin orbit-api==$VERSION"
-grep -q "__version__ = \"$VERSION\"" "$API_PKG/orbit_api/__init__.py" || drift "$API_PKG/orbit_api/__init__.py"
-grep -q "__version__ = \"$VERSION\"" "$SVC_PKG/orbit_profiler/__init__.py" || drift "$SVC_PKG/orbit_profiler/__init__.py"
+grep -q "\"perfr-api==$VERSION\"" "$SVC_PKG/pyproject.toml" || drift "perfr must pin perfr-api==$VERSION"
+grep -q "__version__ = \"$VERSION\"" "$API_PKG/perfr_api/__init__.py" || drift "$API_PKG/perfr_api/__init__.py"
+grep -q "__version__ = \"$VERSION\"" "$SVC_PKG/perfr/__init__.py" || drift "$SVC_PKG/perfr/__init__.py"
 echo "release version $VERSION"
 
 # key -> "lib_target service_target platform_tag lib_file"
 target_spec() {
   case "$1" in
-    linux-x86_64)  echo "x86_64-unknown-linux-gnu  x86_64-unknown-linux-musl  manylinux_2_17_x86_64   liborbit_api.so" ;;
-    linux-aarch64) echo "aarch64-unknown-linux-gnu aarch64-unknown-linux-musl manylinux_2_17_aarch64  liborbit_api.so" ;;
-    macos-x86_64)  echo "x86_64-apple-darwin       x86_64-apple-darwin        macosx_11_0_x86_64      liborbit_api.dylib" ;;
-    macos-arm64)   echo "aarch64-apple-darwin      aarch64-apple-darwin       macosx_11_0_arm64       liborbit_api.dylib" ;;
-    windows-x86_64) echo "x86_64-pc-windows-msvc   x86_64-pc-windows-msvc     win_amd64               orbit_api.dll" ;;
+    linux-x86_64)  echo "x86_64-unknown-linux-gnu  x86_64-unknown-linux-musl  manylinux_2_17_x86_64   libperfr_api.so" ;;
+    linux-aarch64) echo "aarch64-unknown-linux-gnu aarch64-unknown-linux-musl manylinux_2_17_aarch64  libperfr_api.so" ;;
+    macos-x86_64)  echo "x86_64-apple-darwin       x86_64-apple-darwin        macosx_11_0_x86_64      libperfr_api.dylib" ;;
+    macos-arm64)   echo "aarch64-apple-darwin      aarch64-apple-darwin       macosx_11_0_arm64       libperfr_api.dylib" ;;
+    windows-x86_64) echo "x86_64-pc-windows-msvc   x86_64-pc-windows-msvc     win_amd64               perfr_api.dll" ;;
     *) echo "unknown platform key '$1' (use linux-x86_64 linux-aarch64 macos-x86_64 macos-arm64 windows-x86_64)" >&2; return 1 ;;
   esac
 }
@@ -77,7 +77,7 @@ native_mac() { [[ $(uname -s) == Darwin && "$1" == macos-* ]]; }
 # Windows wheels are built on Windows (Git Bash) with MSVC: no zig, no cross.
 native_windows() { [[ "$1" == windows-* ]]; }
 # The service binary's file name on the platform being built.
-service_file() { if [[ "$1" == windows-* ]]; then echo orbit-service.exe; else echo orbit-service; fi; }
+service_file() { if [[ "$1" == windows-* ]]; then echo perfr.exe; else echo perfr; fi; }
 
 # Frida's devkits and the helper are per-target glibc/macOS binaries, not musl.
 companion_triple() {
@@ -92,7 +92,7 @@ companion_triple() {
 }
 
 # build_frida_companions <key> <dest>
-# Writes liborbit_frida_agent.*, orbit-frida-helper, and licenses/ into dest.
+# Writes libperfr_frida_agent.*, perfr-frida-helper, and licenses/ into dest.
 build_frida_companions() {
   local key=$1 dest=$2 triple lib host
   triple=$(companion_triple "$key")
@@ -106,13 +106,13 @@ build_frida_companions() {
   else
     cargo=(cargo build --release --target "$triple")
   fi
-  "${cargo[@]}" --manifest-path "$ROOT/Cargo.toml" -p orbit-frida-helper >/dev/null
-  "${cargo[@]}" --manifest-path "$ROOT/Cargo.toml" -p orbit-frida-agent --features native >/dev/null
-  local helper=orbit-frida-helper
+  "${cargo[@]}" --manifest-path "$ROOT/Cargo.toml" -p perfr-frida-helper >/dev/null
+  "${cargo[@]}" --manifest-path "$ROOT/Cargo.toml" -p perfr-frida-agent --features native >/dev/null
+  local helper=perfr-frida-helper
   case "$key" in
-    macos-*) lib=liborbit_frida_agent.dylib ;;
-    windows-*) lib=orbit_frida_agent.dll; helper=orbit-frida-helper.exe ;;
-    *) lib=liborbit_frida_agent.so ;;
+    macos-*) lib=libperfr_frida_agent.dylib ;;
+    windows-*) lib=perfr_frida_agent.dll; helper=perfr-frida-helper.exe ;;
+    *) lib=libperfr_frida_agent.so ;;
   esac
   mkdir -p "$dest/licenses"
   cp "$ROOT/target/$triple/release/$lib" "$dest/"
@@ -154,29 +154,29 @@ for key in "$@"; do
 
   rustup target add "$lib_target" "$svc_target" >/dev/null 2>&1 || true
 
-  # 1. liborbit_api, against the glibc floor on Linux (zig picks the version).
-  echo "-- liborbit_api ($lib_target)"
+  # 1. libperfr_api, against the glibc floor on Linux (zig picks the version).
+  echo "-- libperfr_api ($lib_target)"
   if [[ "$key" == linux-* ]]; then
-    cargo_for "$key" "$ROOT/Cargo.toml" "$lib_target.$GLIBC" -p orbit-api
+    cargo_for "$key" "$ROOT/Cargo.toml" "$lib_target.$GLIBC" -p perfr-api
   else
-    cargo_for "$key" "$ROOT/Cargo.toml" "$lib_target" -p orbit-api
+    cargo_for "$key" "$ROOT/Cargo.toml" "$lib_target" -p perfr-api
   fi
   lib="$ROOT/target/$lib_target/release/$lib_file"
 
-  # 2. orbit-service. The musl target is static and self-contained.
-  echo "-- orbit-service ($svc_target)"
-  cargo_for "$key" "$ROOT/Cargo.toml" "$svc_target" -p orbit-service
+  # 2. perfr. The musl target is static and self-contained.
+  echo "-- perfr ($svc_target)"
+  cargo_for "$key" "$ROOT/Cargo.toml" "$svc_target" -p perfr
   svc="$ROOT/target/$svc_target/release/$(service_file "$key")"
 
   # 3. Stage the artifacts into each package and build the wheels.
-  cp "$lib" "$API_PKG/orbit_api/$lib_file"
+  cp "$lib" "$API_PKG/perfr_api/$lib_file"
   build_and_tag "$API_PKG" "$plat"
 
-  cp "$svc" "$SVC_PKG/orbit_profiler/$(service_file "$key")"
-  cp "$lib" "$SVC_PKG/orbit_profiler/$lib_file"
-  cp "$HEADER" "$SVC_PKG/orbit_profiler/orbit.h"
+  cp "$svc" "$SVC_PKG/perfr/$(service_file "$key")"
+  cp "$lib" "$SVC_PKG/perfr/$lib_file"
+  cp "$HEADER" "$SVC_PKG/perfr/perfr.h"
   staged_companions=()
-  companions_src=${ORBIT_COMPANIONS_DIR:-}
+  companions_src=${PERFR_COMPANIONS_DIR:-}
   companions_tmp=
   if [[ -z "$companions_src" ]]; then
     companions_tmp=$(mktemp -d)
@@ -184,17 +184,17 @@ for key in "$@"; do
     companions_src=$companions_tmp
   fi
   shopt -s nullglob
-  for f in "$companions_src"/liborbit_frida_agent.* "$companions_src"/orbit_frida_agent.dll "$companions_src"/orbit-frida-helper "$companions_src"/orbit-frida-helper.exe; do
-    cp "$f" "$SVC_PKG/orbit_profiler/"
-    staged_companions+=("$SVC_PKG/orbit_profiler/$(basename "$f")")
+  for f in "$companions_src"/libperfr_frida_agent.* "$companions_src"/perfr_frida_agent.dll "$companions_src"/perfr-frida-helper "$companions_src"/perfr-frida-helper.exe; do
+    cp "$f" "$SVC_PKG/perfr/"
+    staged_companions+=("$SVC_PKG/perfr/$(basename "$f")")
   done
   shopt -u nullglob
   if [[ -d "$companions_src/licenses" ]]; then
-    cp -r "$companions_src/licenses" "$SVC_PKG/orbit_profiler/licenses"; staged_companions+=("$SVC_PKG/orbit_profiler/licenses")
+    cp -r "$companions_src/licenses" "$SVC_PKG/perfr/licenses"; staged_companions+=("$SVC_PKG/perfr/licenses")
   fi
   [[ -z "${companions_tmp}" ]] || rm -rf "$companions_tmp"
-  if [[ ! -f "$SVC_PKG/orbit_profiler/orbit-frida-helper" && ! -f "$SVC_PKG/orbit_profiler/orbit-frida-helper.exe" ]] || \
-     [[ ! -f "$SVC_PKG/orbit_profiler/liborbit_frida_agent.so" && ! -f "$SVC_PKG/orbit_profiler/liborbit_frida_agent.dylib" && ! -f "$SVC_PKG/orbit_profiler/orbit_frida_agent.dll" ]]; then
+  if [[ ! -f "$SVC_PKG/perfr/perfr-frida-helper" && ! -f "$SVC_PKG/perfr/perfr-frida-helper.exe" ]] || \
+     [[ ! -f "$SVC_PKG/perfr/libperfr_frida_agent.so" && ! -f "$SVC_PKG/perfr/libperfr_frida_agent.dylib" && ! -f "$SVC_PKG/perfr/perfr_frida_agent.dll" ]]; then
     echo "Frida companions were not staged for $key" >&2
     exit 1
   fi
@@ -202,9 +202,9 @@ for key in "$@"; do
   build_and_tag "$SVC_PKG" "$plat"
 
   # Leave the trees clean: the bundled binaries are build products, not source.
-  rm -rf "$API_PKG/orbit_api/$lib_file" \
-         "$SVC_PKG/orbit_profiler/$(service_file "$key")" \
-         "$SVC_PKG/orbit_profiler/$lib_file" "$SVC_PKG/orbit_profiler/orbit.h" \
+  rm -rf "$API_PKG/perfr_api/$lib_file" \
+         "$SVC_PKG/perfr/$(service_file "$key")" \
+         "$SVC_PKG/perfr/$lib_file" "$SVC_PKG/perfr/perfr.h" \
          "${staged_companions[@]}"
 done
 

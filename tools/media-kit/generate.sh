@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# One-command media generation for the Orbit live viewer.
+# One-command media generation for the perfr live viewer.
 #   ./generate.sh --ref <git-ref> --out <dir> [options]
 # Options:
-#   --ref REF          git ref/sha/branch of pierricgimmig/orbit to build (from $ORBIT_REPO, else fetched read-only)
-#   --binary PATH      use this prebuilt orbit-service (viewer embedded) instead of building --ref
-#   --out DIR          output directory (default /workspace/orbit-media)
+#   --ref REF          git ref/sha/branch of perfr/perfr to build (from $PERFR_REPO, else fetched read-only)
+#   --binary PATH      use this prebuilt perfr (viewer embedded) instead of building --ref
+#   --out DIR          output directory (default /workspace/perfr-media)
 #   --only IDS         comma-separated clip ids to (re)record/convert (default: all, see clips.mjs)
 #   --skip-existing    resume: keep clips already recorded without error in DIR/raw, record the rest, convert all
 #   --steps LIST       subset of: prereqs,build,vm,target,record,convert,manifest,down (default: all)
@@ -18,11 +18,11 @@
 # --out at tools/site/media; that directory is the publish step's output):
 #   python3 publish_site_media.py --from <dir>
 # Long runs: launch detached, e.g.
-#   setsid nohup ./generate.sh --ref main --out /workspace/orbit-media > /dev/null 2>&1 &
-#   tail -f /workspace/orbit-media/raw/generate.log
+#   setsid nohup ./generate.sh --ref main --out /workspace/perfr-media > /dev/null 2>&1 &
+#   tail -f /workspace/perfr-media/raw/generate.log
 set -euo pipefail
 cd "$(dirname "$0")"; . lib/config.sh
-REF=""; BIN=""; OUT=/workspace/orbit-media; ONLY=""; STEPS="prereqs,build,vm,target,record,convert,manifest,down"; KEEP_VM=0; CLEAN=1; SKIP=""
+REF=""; BIN=""; OUT=/workspace/perfr-media; ONLY=""; STEPS="prereqs,build,vm,target,record,convert,manifest,down"; KEEP_VM=0; CLEAN=1; SKIP=""
 CMDLINE="./generate.sh $*"
 while [ $# -gt 0 ]; do case "$1" in
   --ref) REF="$2"; shift 2;; --binary) BIN="$2"; shift 2;; --out) OUT="$2"; shift 2;; --only) ONLY="$2"; shift 2;;
@@ -54,7 +54,7 @@ if has build || has target; then
   if [ -z "$BIN" ]; then [ -n "$REF" ] || die "--ref or --binary is required"; BIN=$(steps/10-build.sh "$REF" | tail -1); fi
   [ -x "$BIN" ] || die "no service binary: $BIN"
 fi
-[ -n "$REF" ] && SHA=$(git -C "$CACHE/src" rev-parse "$REF^{commit}" 2>/dev/null || git -C "$ORBIT_REPO" rev-parse "$REF" 2>/dev/null || echo "")
+[ -n "$REF" ] && SHA=$(git -C "$CACHE/src" rev-parse "$REF^{commit}" 2>/dev/null || git -C "$PERFR_REPO" rev-parse "$REF" 2>/dev/null || echo "")
 if [ $CLEAN = 1 ] && [ -z "$ONLY" ] && has record; then
   log "cleaning previous outputs in $OUT"; rm -rf "$OUT/raw"/*.mkv "$OUT/raw/commands.txt" "$OUT/raw/clips.json" "$OUT/raw/convert.json" "$OUT/stills" "$OUT"/[0-9][0-9]-*.{mp4,webm,gif,png} "$OUT/MANIFEST.md"
 fi

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Windows kernel-logger smoke test: scheduler, thread states and samples.
 
-Starts orbit-service, runs OrbitTestRust, records it for a few seconds and
+Starts perfr, runs PerfrTestRust, records it for a few seconds and
 reads the capture back as a bundle: the target's threads must have
 scheduling slices, thread-state bars with more than one state, and samples
 whose frames resolve into the target's own functions. Needs an elevated
@@ -44,7 +44,7 @@ def read_line_within(child, seconds):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--service', required=True)
-    parser.add_argument('--target', required=True, help='OrbitTestRust.exe (any instrumented, busy target works)')
+    parser.add_argument('--target', required=True, help='PerfrTestRust.exe (any instrumented, busy target works)')
     parser.add_argument('--seconds', type=float, default=3.0)
     parser.add_argument('--require', action='store_true', help='fail instead of skipping when the kernel logger is unavailable')
     args = parser.parse_args()
@@ -63,10 +63,10 @@ def main():
             data = response.read()
             return json.loads(data) if data.startswith((b'{', b'[')) else data
 
-    api_lib = str(Path(service_path).with_name('orbit_api.dll'))
+    api_lib = str(Path(service_path).with_name('perfr_api.dll'))
     env = dict(os.environ)
     if Path(api_lib).is_file():
-        env['ORBIT_API_LIB'] = api_lib
+        env['PERFR_API_LIB'] = api_lib
     with tempfile.TemporaryFile(mode='w+') as log:
         service = subprocess.Popen([service_path, '--host', '127.0.0.1', '--serve', str(port)], stdout=log, stderr=log)
         target = subprocess.Popen([target_path, '--seconds', str(int(args.seconds) + 15)], stdout=subprocess.PIPE, stderr=log, text=True, env=env)

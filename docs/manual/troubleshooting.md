@@ -23,13 +23,13 @@ sudo sysctl -w kernel.perf_event_paranoid=0
 To keep that across reboots, the same report writes:
 
 ```
-echo 'kernel.perf_event_paranoid=0' | sudo tee /etc/sysctl.d/99-orbit-perf.conf
+echo 'kernel.perf_event_paranoid=0' | sudo tee /etc/sysctl.d/99-perfr-perf.conf
 ```
 
 Or grant the binary capabilities, without changing the sysctl. The report’s command is:
 
 ```
-sudo setcap cap_perfmon,cap_sys_ptrace+ep /path/to/orbit-service
+sudo setcap cap_perfmon,cap_sys_ptrace+ep /path/to/perfr
 ```
 
 On kernels older than 5.8 that line uses `cap_sys_admin` instead of `cap_perfmon`. File capabilities are ignored on a filesystem mounted `nosuid`. Sampling another user’s process also needs `CAP_SYS_PTRACE` and permission to ptrace it (`kernel.yama.ptrace_scope`).
@@ -43,7 +43,7 @@ Kernel uprobes are checked in `perf_uprobe_event_init` before `perf_event_parano
 When no probe arms, the instrumentation line is:
 
 ```
-no hooks armed: uprobes need CAP_SYS_ADMIN. Run the service with sudo, or: sudo setcap cap_sys_admin,cap_perfmon,cap_dac_read_search+ep <orbit-service>
+no hooks armed: uprobes need CAP_SYS_ADMIN. Run the service with sudo, or: sudo setcap cap_sys_admin,cap_perfmon,cap_dac_read_search+ep <perfr>
 ```
 
 Frida does not use that capability. Its note on the HOOKS row is “requires permission to attach to the target”.
@@ -68,7 +68,7 @@ On Windows the scheduler, thread states and call-stack samples come from the NT 
 Windows: no kernel logger (needs an elevated prompt): no scheduler, thread states or samples
 ```
 
-Open a terminal with *Run as administrator* and start `orbit-service` there. A UAC-filtered token (an administrator account in a normal prompt) is not elevated. The service sets the machine's profile interval to 1 kHz for the capture and puts it back to the 1 ms default when the capture stops; it changes nothing else.
+Open a terminal with *Run as administrator* and start `perfr` there. A UAC-filtered token (an administrator account in a normal prompt) is not elevated. The service sets the machine's profile interval to 1 kHz for the capture and puts it back to the 1 ms default when the capture stops; it changes nothing else.
 
 Only one kernel logger session exists per machine. A session another tool left running (`xperf`, `wpr`, a profiler that crashed) is stopped when a capture starts; a tool recording at the same time loses its session.
 
@@ -76,7 +76,7 @@ Frida hooks from an elevated service into an unelevated target of the same user 
 
 ## Opening or clearing while a capture is running
 
-Clear, and opening a `.orbit.zip`, are refused until you stop:
+Clear, and opening a `.perfr.zip`, are refused until you stop:
 
 - `busy: stop the capture before clearing`
 - `busy: stop the capture before opening one`
@@ -85,7 +85,7 @@ Opening a Chrome or Perfetto trace is different. The viewer stops the capture it
 
 ## The timeline stays empty
 
-- No process selected, and **CSW** / **States** off, and nothing in the target calling `orbit.h`: there is nothing to draw. Turn on Sample or CSW, or [instrument the code](index.html#instrument-your-code).
+- No process selected, and **CSW** / **States** off, and nothing in the target calling `perfr.h`: there is nothing to draw. Turn on Sample or CSW, or [instrument the code](index.html#instrument-your-code).
 - The process row or the service log says CSW needs a lower paranoid value. See the table above.
 - On Windows, the status line says the kernel logger needs an elevated prompt. See above.
 - Uprobes selected, Functions hooked, and the amber line says no hooks armed. The setcap command is in the line.

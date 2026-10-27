@@ -1,4 +1,4 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -28,77 +28,77 @@ jobs:
       - name: Fetch pinned native devkits
         run: ./tools/frida/devkits.sh
       - name: Test native transport and agent lifecycle
-        run: cargo +1.88.0 test --locked -p orbit-frida-agent -p orbit-frida-transport --features orbit-frida-agent/native
+        run: cargo +1.88.0 test --locked -p perfr-frida-agent -p perfr-frida-transport --features perfr-frida-agent/native
       - name: Test native controller
-        run: cargo +1.88.0 test --locked -p orbit-frida-helper
+        run: cargo +1.88.0 test --locked -p perfr-frida-helper
       - name: Build service and native libraries
         run: |
-          cargo +1.88.0 build --locked -p orbit-service
-          cargo +1.88.0 build --locked -p orbit-frida-agent -p orbit-api --features orbit-frida-agent/native
-          cargo +1.88.0 build --locked -p orbit-frida-helper
-          cargo +1.88.0 build --locked -p orbit-test-rust
+          cargo +1.88.0 build --locked -p perfr
+          cargo +1.88.0 build --locked -p perfr-frida-agent -p perfr-api --features perfr-frida-agent/native
+          cargo +1.88.0 build --locked -p perfr-frida-helper
+          cargo +1.88.0 build --locked -p perfr-test-rust
       - name: Build target and install test runtime
         run: |
-          python3 -m venv /tmp/orbit-frida-test
-          /tmp/orbit-frida-test/bin/pip install --only-binary=:all: pyarrow
+          python3 -m venv /tmp/perfr-frida-test
+          /tmp/perfr-frida-test/bin/pip install --only-binary=:all: pyarrow
           # This fixture links the static API; the default header uses dlopen.
           if [ "$(uname -s)" = Darwin ]; then
-            cc -O1 -g -fno-omit-frame-pointer -DORBIT_STATIC -I crates/orbit-api/include tools/e2e/frida_target.c target/debug/liborbit_api.a -lSystem -liconv -o /tmp/orbit-frida-target
+            cc -O1 -g -fno-omit-frame-pointer -DPERFR_STATIC -I crates/perfr-api/include tools/e2e/frida_target.c target/debug/libperfr_api.a -lSystem -liconv -o /tmp/perfr-frida-target
           else
-            cc -O1 -g -fno-omit-frame-pointer -DORBIT_STATIC -I crates/orbit-api/include tools/e2e/frida_target.c target/debug/liborbit_api.a -lpthread -ldl -lm -o /tmp/orbit-frida-target
+            cc -O1 -g -fno-omit-frame-pointer -DPERFR_STATIC -I crates/perfr-api/include tools/e2e/frida_target.c target/debug/libperfr_api.a -lpthread -ldl -lm -o /tmp/perfr-frida-target
           fi
       - name: Drive a capture through the MCP server
         run: |
           if [ "$(uname -s)" = Darwin ]; then ext=dylib; prefix=(sudo); else ext=so; prefix=(); fi
-          "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/mcp_loop.py --helper target/debug/orbit-frida-helper --service target/debug/orbit-service --agent "target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target
+          "${prefix[@]}" /tmp/perfr-frida-test/bin/python tools/e2e/mcp_loop.py --helper target/debug/perfr-frida-helper --service target/debug/perfr --agent "target/debug/libperfr_frida_agent.$ext" --target /tmp/perfr-frida-target
       - name: Verify live attachment, exact spans and restart
         run: |
           if [ "$(uname -s)" = Darwin ]; then ext=dylib; else ext=so; fi
           # Hosted Macs have no interactive authorization dialog. Run both
           # our own target and collector as root for this attachment test.
           if [ "$(uname -s)" = Darwin ]; then prefix=(sudo); else prefix=(); fi
-          "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/orbit-frida-helper --service target/debug/orbit-service --agent "target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target
+          "${prefix[@]}" /tmp/perfr-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/perfr-frida-helper --service target/debug/perfr --agent "target/debug/libperfr_frida_agent.$ext" --target /tmp/perfr-frida-target
       - name: Verify detach and controller death with a call in flight
         run: |
           if [ "$(uname -s)" = Darwin ]; then ext=dylib; prefix=(sudo); else ext=so; prefix=(); fi
           for mode in --inflight --controller-death; do
-            "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/orbit-frida-helper --service target/debug/orbit-service --agent "target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target "$mode"
+            "${prefix[@]}" /tmp/perfr-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/perfr-frida-helper --service target/debug/perfr --agent "target/debug/libperfr_frida_agent.$ext" --target /tmp/perfr-frida-target "$mode"
           done
       - name: Verify injected API in a target without manual instrumentation
         run: |
-          cc -O1 -g -DORBIT_NO_API tools/e2e/frida_target.c -lpthread -o /tmp/orbit-frida-plain-target
+          cc -O1 -g -DPERFR_NO_API tools/e2e/frida_target.c -lpthread -o /tmp/perfr-frida-plain-target
           if [ "$(uname -s)" = Darwin ]; then ext=dylib; prefix=(sudo); else ext=so; prefix=(); fi
-          "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/orbit-frida-helper --service target/debug/orbit-service --agent "target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-plain-target --no-manual
+          "${prefix[@]}" /tmp/perfr-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/perfr-frida-helper --service target/debug/perfr --agent "target/debug/libperfr_frida_agent.$ext" --target /tmp/perfr-frida-plain-target --no-manual
       - name: Verify shared API discovery without API symbols
         if: runner.os == 'Linux'
         run: |
-          objcopy --strip-symbol=orbit_init --strip-symbol=orbit_start_dynamic --strip-symbol=orbit_stop --strip-symbol=orbit_start /tmp/orbit-frida-target /tmp/orbit-frida-hidden-api-target
-          /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/orbit-frida-helper --service target/debug/orbit-service --agent target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-hidden-api-target
+          objcopy --strip-symbol=perfr_init --strip-symbol=perfr_start_dynamic --strip-symbol=perfr_stop --strip-symbol=perfr_start /tmp/perfr-frida-target /tmp/perfr-frida-hidden-api-target
+          /tmp/perfr-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/perfr-frida-helper --service target/debug/perfr --agent target/debug/libperfr_frida_agent.so --target /tmp/perfr-frida-hidden-api-target
       - name: Verify startup failure does not block manual capture
         if: runner.os == 'Linux'
-        run: /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/orbit-frida-helper --service target/debug/orbit-service --agent target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --missing-agent
+        run: /tmp/perfr-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/perfr-frida-helper --service target/debug/perfr --agent target/debug/libperfr_frida_agent.so --target /tmp/perfr-frida-target --missing-agent
       - name: Verify missing native helper does not block manual capture
         if: runner.os == 'Linux'
-        run: /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/orbit-frida-helper --service target/debug/orbit-service --agent target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --missing-helper
+        run: /tmp/perfr-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/perfr-frida-helper --service target/debug/perfr --agent target/debug/libperfr_frida_agent.so --target /tmp/perfr-frida-target --missing-helper
       - name: Verify retained Linux uprobe backend
         if: runner.os == 'Linux'
-        run: sudo /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/orbit-frida-helper --service target/debug/orbit-service --agent target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --engine kernel_uprobes
+        run: sudo /tmp/perfr-frida-test/bin/python tools/e2e/frida_smoke.py --helper target/debug/perfr-frida-helper --service target/debug/perfr --agent target/debug/libperfr_frida_agent.so --target /tmp/perfr-frida-target --engine kernel_uprobes
       - name: Smoke test two services in one timeline
-        run: /tmp/orbit-frida-test/bin/python tools/e2e/multi_machine_smoke.py --service target/debug/orbit-service --target target/debug/OrbitTestRust
+        run: /tmp/perfr-frida-test/bin/python tools/e2e/multi_machine_smoke.py --service target/debug/perfr --target target/debug/PerfrTestRust
       - name: Collect macOS crash reports
         if: failure() && runner.os == 'macOS'
         run: |
           # CrashReporter writes asynchronously, including crashes of sudo targets.
           sleep 5
-          mkdir -p /tmp/orbit-crashes
-          sudo find /Library/Logs/DiagnosticReports /var/root/Library/Logs/DiagnosticReports "$HOME/Library/Logs/DiagnosticReports" -type f \( -name '*orbit*.ips' -o -name '*orbit*.crash' \) -exec cp {} /tmp/orbit-crashes/ \; 2>/dev/null || true
-          sudo chmod -R a+rX /tmp/orbit-crashes
-          for report in /tmp/orbit-crashes/*; do
+          mkdir -p /tmp/perfr-crashes
+          sudo find /Library/Logs/DiagnosticReports /var/root/Library/Logs/DiagnosticReports "$HOME/Library/Logs/DiagnosticReports" -type f \( -name '*perfr*.ips' -o -name '*perfr*.crash' \) -exec cp {} /tmp/perfr-crashes/ \; 2>/dev/null || true
+          sudo chmod -R a+rX /tmp/perfr-crashes
+          for report in /tmp/perfr-crashes/*; do
             if [ -f "$report" ]; then cat "$report"; fi
           done
       - uses: actions/upload-artifact@v4
         if: failure() && runner.os == 'macOS'
         with:
           name: frida-crashes-${{ matrix.runner }}
-          path: /tmp/orbit-crashes/
+          path: /tmp/perfr-crashes/
           if-no-files-found: ignore

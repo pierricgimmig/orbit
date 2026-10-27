@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -15,7 +15,7 @@ case "$target" in
   x86_64-pc-windows-msvc) platform=windows-x86_64 ;;
   *) echo "Unsupported native Frida target: $target" >&2; exit 1 ;;
 esac
-root=${ORBIT_FRIDA_DEVKIT_ROOT:-"$PWD/target/frida-devkits"}
+root=${PERFR_FRIDA_DEVKIT_ROOT:-"$PWD/target/frida-devkits"}
 for component in core gum; do
   name="frida-$component-devkit-17.17.0-$platform.tar.xz"
   kit="$root/$target/$component"

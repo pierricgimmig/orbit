@@ -1,4 +1,4 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -21,8 +21,8 @@ param([string]$Output = 'dist\windows')
 $ErrorActionPreference = 'Stop'
 Push-Location (Join-Path $PSScriptRoot '..\..')
 try {
-    if (-not (Test-Path 'crates\orbit-live-viewer\viewer-dist\index.html')) {
-        throw 'crates\orbit-live-viewer\viewer-dist\index.html is missing: the service embeds the viewer at build time'
+    if (-not (Test-Path 'crates\perfr-live-viewer\viewer-dist\index.html')) {
+        throw 'crates\perfr-live-viewer\viewer-dist\index.html is missing: the service embeds the viewer at build time'
     }
     . .\tools\windows\msvc-env.ps1
     # rustup-init puts the toolchain in %USERPROFILE%\.cargo\bin; the PATH
@@ -39,32 +39,32 @@ try {
     & .\tools\frida\devkits.ps1 $target
     if ($LASTEXITCODE -ne 0) { throw 'Frida devkits' }
 
-    cargo +1.88.0 build --locked --release --target $target -p orbit-service
-    if ($LASTEXITCODE -ne 0) { throw 'orbit-service build failed' }
-    cargo +1.88.0 build --locked --release --target $target -p orbit-api -p orbit-test-rust -p orbit-frida-agent --features orbit-frida-agent/native
-    if ($LASTEXITCODE -ne 0) { throw 'orbit-api / agent build failed' }
-    cargo +1.88.0 build --locked --release --target $target -p orbit-frida-helper
-    if ($LASTEXITCODE -ne 0) { throw 'orbit-frida-helper build failed' }
+    cargo +1.88.0 build --locked --release --target $target -p perfr
+    if ($LASTEXITCODE -ne 0) { throw 'perfr build failed' }
+    cargo +1.88.0 build --locked --release --target $target -p perfr-api -p perfr-test-rust -p perfr-frida-agent --features perfr-frida-agent/native
+    if ($LASTEXITCODE -ne 0) { throw 'perfr-api / agent build failed' }
+    cargo +1.88.0 build --locked --release --target $target -p perfr-frida-helper
+    if ($LASTEXITCODE -ne 0) { throw 'perfr-frida-helper build failed' }
 
     New-Item -ItemType Directory -Force "$Output\include", "$Output\licenses" | Out-Null
     $files = @{
-        "target\$target\release\orbit-service.exe" = 'orbit-service.exe'
-        "target\$target\release\orbit_service.pdb" = 'orbit_service.pdb'
-        "target\$target\release\orbit-frida-helper.exe" = 'orbit-frida-helper.exe'
-        "target\$target\release\orbit_frida_agent.dll" = 'orbit_frida_agent.dll'
-        "target\$target\release\orbit_api.dll" = 'orbit_api.dll'
-        "target\$target\release\orbit_api.dll.lib" = 'orbit_api.dll.lib'
-        "target\$target\release\orbit_api.lib" = 'orbit_api.lib'
-        "target\$target\release\OrbitTestRust.exe" = 'OrbitTestRust.exe'
-        'crates\orbit-api\include\orbit.h' = 'include\orbit.h'
-        'crates\orbit-api\python\orbit_api\__init__.py' = 'orbit_api.py'
+        "target\$target\release\perfr.exe" = 'perfr.exe'
+        "target\$target\release\perfr.pdb" = 'perfr.pdb'
+        "target\$target\release\perfr-frida-helper.exe" = 'perfr-frida-helper.exe'
+        "target\$target\release\perfr_frida_agent.dll" = 'perfr_frida_agent.dll'
+        "target\$target\release\perfr_api.dll" = 'perfr_api.dll'
+        "target\$target\release\perfr_api.dll.lib" = 'perfr_api.dll.lib'
+        "target\$target\release\perfr_api.lib" = 'perfr_api.lib'
+        "target\$target\release\PerfrTestRust.exe" = 'PerfrTestRust.exe'
+        'crates\perfr-api\include\perfr.h' = 'include\perfr.h'
+        'crates\perfr-api\python\perfr_api\__init__.py' = 'perfr_api.py'
         'docs\building_windows.md' = 'README.md'
     }
     foreach ($entry in $files.GetEnumerator()) {
         if (-not (Test-Path $entry.Key)) {
             # The service's PDB is the one optional file: its name follows the
             # crate, and a build without line tables has none.
-            if ($entry.Value -eq 'orbit_service.pdb') { continue }
+            if ($entry.Value -eq 'perfr.pdb') { continue }
             throw "missing $($entry.Key)"
         }
         Copy-Item $entry.Key (Join-Path $Output $entry.Value) -Force
@@ -72,7 +72,7 @@ try {
     Copy-Item 'tools\frida\licenses\*' "$Output\licenses\" -Force
 
     # Static CRT: nothing but system DLLs may be imported.
-    foreach ($binary in 'orbit-service.exe', 'orbit-frida-helper.exe', 'orbit_frida_agent.dll', 'orbit_api.dll') {
+    foreach ($binary in 'perfr.exe', 'perfr-frida-helper.exe', 'perfr_frida_agent.dll', 'perfr_api.dll') {
         $imports = (dumpbin /nologo /dependents (Join-Path $Output $binary) | Select-String -Pattern '^\s+(\S+\.dll)\s*$' | ForEach-Object { $_.Matches[0].Groups[1].Value.ToLowerInvariant() })
         $runtime = $imports | Where-Object { $_ -like 'vcruntime*' -or $_ -like 'msvcp*' -or $_ -like 'msvcr*' -or $_ -like 'api-ms-win-crt-*' -or $_ -eq 'ucrtbase.dll' }
         if ($runtime) { throw "$binary links the C runtime dynamically: $($runtime -join ', ')" }

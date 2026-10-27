@@ -1,4 +1,4 @@
-# Orbit e2e report
+# perfr e2e report
 
 Run 2026-09-07 23:37 at commit `57fc49e30` on `rixbox`.
 

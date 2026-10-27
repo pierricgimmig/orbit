@@ -1,6 +1,6 @@
 # The uprobes duplicate-event workaround, and what is underneath it
 
-Investigated 2026-08-31. Two questions: what is the workaround in Orbit's C++,
+Investigated 2026-08-31. Two questions: what is the workaround in perfr's C++,
 and is there a Linux kernel bug behind it. The first is answered definitively;
 the second is answered partially, and the honest limits are marked.
 
@@ -32,12 +32,12 @@ incoming uprobe when either:
 for a thread with no open entries returns `nullopt` rather than asserting, so
 an unmatched *end* is tolerated silently.
 
-So the symptom Orbit compensated for is duplicated **entry** events correlated
+So the symptom perfr compensated for is duplicated **entry** events correlated
 with **thread migration**, plus the resulting entry/exit accounting drift.
 
 ## Why the shape of the duplicate is a strong clue
 
-Orbit opens these probes **per CPU**: `TracerImpl` comments that sample-delivery
+perfr opens these probes **per CPU**: `TracerImpl` comments that sample-delivery
 fds are "two (uprobe + uretprobe) per CPU per instrumented function", and
 `uprobes_retaddr_event_open(module, offset, pid, cpu)` is called for each CPU in
 the cpuset. Every CPU therefore has its own ring buffer for the same probe.
@@ -68,7 +68,7 @@ state and preventing correct recovery. The fix disables preemption across the
 XOL instruction so the pair is guaranteed to run on one CPU. It was found
 through long stability runs where the effect appeared rarely.
 
-That is the same failure shape Orbit sees: probe state that assumes one CPU,
+That is the same failure shape perfr sees: probe state that assumes one CPU,
 broken by a migration inside the probe's window, surfacing as a duplicated or
 unmatched event.
 
@@ -76,7 +76,7 @@ unmatched event.
 
 - The upstream patch above is **arm64 kprobes**, not **x86-64 uprobes**. It
   establishes that "per-CPU probe state + migration inside the XOL window" is a
-  real, acknowledged kernel failure mode. It is *not* proof that Orbit's x86-64
+  real, acknowledged kernel failure mode. It is *not* proof that perfr's x86-64
   uprobe duplicates come from the same code path.
 - I did **not** find an upstream commit, bugzilla entry or LKML thread reporting
   duplicated *perf samples* from x86-64 uprobes on task migration. It may exist;
@@ -90,12 +90,12 @@ unmatched event.
   stack pointer shows has been left — which is how `longjmp` and similar
   non-local exits are handled. One trampoline hit can legitimately produce
   several return-probe callbacks. A consumer assuming 1:1 entry/exit sees that
-  as duplicated ends. Orbit's tolerant `ProcessFunctionExit` handles it either
+  as duplicated ends. perfr's tolerant `ProcessFunctionExit` handles it either
   way.
 
 ## What this means for the Rust port
 
-`orbit-tracing-state`'s `function_calls` and `return_addresses` modules were
+`perfr-tracing-state`'s `function_calls` and `return_addresses` modules were
 ported quirk-for-quirk, including the tolerant unmatched-exit behaviour, so the
 port inherits the same resilience. The `(sp, ip, cpu)` duplicate detection lives
 in `UprobesUnwindingVisitor`, which is **not yet ported** — when it is, this
@@ -108,7 +108,7 @@ not needing the workaround. Worth measuring before choosing.
 
 ## Follow-up: the Rust service took the per-task route (2026-09-01)
 
-`crates/orbit-service/src/uprobes.rs` arms probes with `pid = <thread>,
+`crates/perfr/src/uprobes.rs` arms probes with `pid = <thread>,
 cpu = -1` plus `PERF_ATTR.inherit`, not per CPU. Every thread therefore has
 exactly one buffer for a given probe wherever it is scheduled, so the
 `(sp, ip, cpu)` duplicate this document describes cannot be constructed, and
@@ -134,7 +134,7 @@ instrumented capture, an entry that never closes or one that closes with the
 next return and swallows a real call.
 
 `UprobesUnwindingVisitor::OnUprobes`'s filter is now in
-`crates/orbit-service/src/uprobes.rs`, rule for rule:
+`crates/perfr/src/uprobes.rs`, rule for rule:
 
 - every uprobe sample carries the user `sp` and `ip`
   (`PERF_SAMPLE_REGS_USER` with the `SAMPLE_REGS_USER_SP_IP` mask, two
@@ -250,15 +250,15 @@ settled it.
 ## Follow-up: into the kernel, and a blog post with two captures (2026-09-06, superseded above)
 
 Blog post 20, "Ghosts on Migration", is written from this investigation, with
-two real captures embedded (`docs/blog/captures/ghosts-{off,on}.orbit.stream`):
+two real captures embedded (`docs/blog/captures/ghosts-{off,on}.perfr.stream`):
 the same Box3D workload, four functions hooked, oversubscribed onto few cores,
 with the filter off (41% of `b3World_Step` scopes wrongly nested, 8 of 24
-threads) and on (0%). Reproduce with `ORBIT_E2E_DEDUPE=0` /`=1` and
-`ORBIT_E2E_STRESS_CPUS`/`ORBIT_E2E_STRESS_SLEEP` on `dyn-instr-stress`, or the
+threads) and on (0%). Reproduce with `PERFR_E2E_DEDUPE=0` /`=1` and
+`PERFR_E2E_STRESS_CPUS`/`PERFR_E2E_STRESS_SLEEP` on `dyn-instr-stress`, or the
 scratch scripts `box3d_full.py` / `embed2.py`.
 
 **Raw hits confirm loss, not duplication.** The service can dump every hit
-before pairing (`--uprobe-dump <path>`, or `ORBIT_UPROBE_DUMP`): timestamp,
+before pairing (`--uprobe-dump <path>`, or `PERFR_UPROBE_DUMP`): timestamp,
 tid, cpu, function, entry/return, sp, ip. Walking a thread's hits by stack
 frame, every nesting break is a *missing* hit -- an entry above an open frame
 (lost return) or a return with nothing open at its frame (lost entry) -- and

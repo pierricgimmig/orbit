@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 """
-Test script for Orbit's Python profiling feature.
-Run this and attach Orbit to profile it.
+Test script for perfr's Python profiling feature.
+Run this and attach perfr to profile it.
 
 Usage:
   python3 test_python_profiling.py
 
-Then attach Orbit to the python3 process.
+Then attach perfr to the python3 process.
 """
 
 import hashlib
@@ -179,7 +179,7 @@ def main_loop():
     print(f"PID: {os.getpid()}")
     print(f"Python version: {sys.version}")
     print("-" * 50)
-    print("Running... Attach Orbit now to profile this process.")
+    print("Running... Attach perfr now to profile this process.")
     print("Press Ctrl+C to stop.")
     print("-" * 50)
 

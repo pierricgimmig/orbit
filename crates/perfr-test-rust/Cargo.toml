@@ -1,0 +1,22 @@
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "perfr-test-rust"
+version = "0.1.0"
+description = "PerfrTestRust: a program that makes every manual-instrumentation call, from Rust"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "PerfrTestRust"
+path = "src/main.rs"
+
+[dependencies]
+perfr-api = { path = "../perfr-api" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

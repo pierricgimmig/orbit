@@ -1,4 +1,4 @@
-Copyright (c) 2020 The Orbit Authors. All rights reserved.
+Copyright (c) 2026 The perfr Authors. All rights reserved.
 
 BSD 2-Clause License
 
@@ -22,3 +22,13 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+----------------------------------------------------------------------
+
+perfr was called Orbit until October 2026, and parts of it are ported from
+the Orbit profiler (https://github.com/google/orbit):
+
+Copyright (c) 2020 The Orbit Authors. All rights reserved.
+
+Those parts are distributed under the same BSD 2-Clause License, whose
+text appears above, and this notice must be kept with them.

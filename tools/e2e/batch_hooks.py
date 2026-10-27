@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -26,12 +26,12 @@ with sync_playwright() as p:
    'inclusive_percent':100-i*10,'exclusive':i,'of_parent_percent':100-i*10} for i in range(1,4)]}))
  page.route('**/api/symbols/modules?*',lambda r:r.fulfill(json={'pid':42,'modules':[{'name':'beta','path':'/a','function_count':2},{'name':'alpha','path':'/z','function_count':9}]}))
  page.goto(args.url)
- page.wait_for_function('window.__orbit_ui')
+ page.wait_for_function('window.__perfr_ui')
  page.wait_for_timeout(1000)
  def rows():
-  v=page.evaluate('window.__orbit_ui');return json.loads(v) if isinstance(v,str) else v
+  v=page.evaluate('window.__perfr_ui');return json.loads(v) if isinstance(v,str) else v
  def rect(label):
-  page.wait_for_function("label => { let v=window.__orbit_ui; v=typeof v==='string'?JSON.parse(v):v; return v?.some(r=>r[0]===label); }",arg=label)
+  page.wait_for_function("label => { let v=window.__perfr_ui; v=typeof v==='string'?JSON.parse(v):v; return v?.some(r=>r[0]===label); }",arg=label)
   return next(r for r in rows() if r[0]==label)
  def click(label,button='left'):
   if label in ['Report', 'Self'] and not any(r[0]==label for r in rows()): click('More')
@@ -45,7 +45,7 @@ with sync_playwright() as p:
  assert any(r[0] == 'Hook 3' for r in rows()), rows()
  click('fn:function_2',button='right');click('menu:hook')
  def hooks():
-  v=page.evaluate('window.__orbit_sel');v=json.loads(v) if isinstance(v,str) else v
+  v=page.evaluate('window.__perfr_sel');v=json.loads(v) if isinstance(v,str) else v
   return sorted(v['hooks'])
  assert hooks()==[1,2,3], hooks()
  click('hook:function_2');assert hooks()==[],hooks()

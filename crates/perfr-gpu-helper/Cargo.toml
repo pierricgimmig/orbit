@@ -1,0 +1,21 @@
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "perfr-gpu-helper"
+version = "0.1.0"
+description = "GPU telemetry helper: polls NVML and writes pod events to stdout"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "perfr-gpu-helper"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+perfr-tracing-state = { path = "../perfr-tracing-state" }
+perfr-wire = { path = "../perfr-wire" }

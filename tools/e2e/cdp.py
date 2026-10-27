@@ -1,4 +1,4 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -124,7 +124,7 @@ class Chrome:
 
     def __init__(self, port=9333, width=1600, height=1000, binary="google-chrome"):
         self.port = port
-        self.profile = f"/tmp/orbit-e2e-chrome-{port}"
+        self.profile = f"/tmp/perfr-e2e-chrome-{port}"
         self.proc = subprocess.Popen(
             [
                 binary,

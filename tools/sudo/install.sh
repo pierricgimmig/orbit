@@ -1,9 +1,9 @@
 #!/bin/bash
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
-# Lets one user run any binary named orbit-service with CAP_SYS_ADMIN,
+# Lets one user run any binary named perfr with CAP_SYS_ADMIN,
 # CAP_PERFMON and CAP_DAC_READ_SEARCH (as themselves, uid-wise, but
 # CAP_SYS_ADMIN is root in all but name) without a password, through the
 # wrapper next to this script. Run once, as root:
@@ -13,10 +13,10 @@
 #
 # Afterwards, from anywhere:
 #
-#   sudo -n orbit-service-sudo "$PWD/target/release/orbit-service" --serve 44766
+#   sudo -n perfr-sudo "$PWD/target/release/perfr" --serve 44766
 #
-# and tools/e2e/orbit_e2e.py --sudo uses it by itself. Remove with
-#   sudo rm /etc/sudoers.d/orbit-service /usr/local/bin/orbit-service-sudo
+# and tools/e2e/perfr_e2e.py --sudo uses it by itself. Remove with
+#   sudo rm /etc/sudoers.d/perfr /usr/local/bin/perfr-sudo
 set -eu
 if [ "$(id -u)" != 0 ]; then
   echo "run as root: sudo $0" >&2
@@ -28,20 +28,20 @@ if [ -z "$user" ] || ! id -u -- "$user" >/dev/null 2>&1; then
   exit 1
 fi
 here=$(cd -- "$(dirname -- "$0")" && pwd)
-wrapper=/usr/local/bin/orbit-service-sudo
-install -o root -g root -m 0755 -- "$here/orbit-service-sudo" "$wrapper"
-rule=/etc/sudoers.d/orbit-service
+wrapper=/usr/local/bin/perfr-sudo
+install -o root -g root -m 0755 -- "$here/perfr-sudo" "$wrapper"
+rule=/etc/sudoers.d/perfr
 tmp=$(mktemp)
 cat > "$tmp" <<RULE
-# Orbit: $user may run any binary named orbit-service they own, as
+# perfr: $user may run any binary named perfr they own, as
 # themselves with CAP_SYS_ADMIN, CAP_PERFMON and CAP_DAC_READ_SEARCH,
 # through the wrapper, which checks the name and the owner. CAP_SYS_ADMIN
 # is root in all but name. Written by $0.
-Defaults!$wrapper env_keep += "ORBIT_SOURCE_ROOTS ORBIT_E2E_STRESS ORBIT_UPROBE_RING_KB ORBIT_DRAIN_MS"
+Defaults!$wrapper env_keep += "PERFR_SOURCE_ROOTS PERFR_E2E_STRESS PERFR_UPROBE_RING_KB PERFR_DRAIN_MS"
 $user ALL=(root) NOPASSWD: $wrapper
 RULE
 visudo -c -q -f "$tmp"
 install -o root -g root -m 0440 -- "$tmp" "$rule"
 rm -f -- "$tmp"
 echo "installed $wrapper and $rule for $user"
-echo "check: sudo -n $wrapper /bin/true   # must say 'refused: /bin/true is not named orbit-service'"
+echo "check: sudo -n $wrapper /bin/true   # must say 'refused: /bin/true is not named perfr'"

@@ -2789,317 +2789,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "orbit-api"
-version = "0.1.0"
-dependencies = [
- "libc",
- "orbit-scope-ring",
-]
-
-[[package]]
-name = "orbit-capture"
-version = "0.1.0"
-dependencies = [
- "arrow-array",
- "arrow-ipc",
- "arrow-schema",
- "bytes",
- "miniz_oxide 0.8.9",
- "orbit-live-event",
- "orbit-live-protocol",
- "parquet",
- "serde_json",
-]
-
-[[package]]
-name = "orbit-collector"
-version = "0.1.0"
-dependencies = [
- "libc",
- "orbit-perf-merge",
- "orbit-perf-records",
- "orbit-perf-ring",
- "orbit-tracing-state",
- "orbit-wire",
-]
-
-[[package]]
-name = "orbit-etw"
-version = "0.1.0"
-dependencies = [
- "orbit-thread-states",
- "orbit-tracing-state",
-]
-
-[[package]]
-name = "orbit-frida-agent"
-version = "0.1.0"
-dependencies = [
- "libc",
- "orbit-api",
- "orbit-frida-build",
- "orbit-frida-transport",
- "orbit-scope-ring",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "orbit-frida-build"
-version = "0.1.0"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "orbit-frida-helper"
-version = "0.1.0"
-dependencies = [
- "cc",
- "libc",
- "orbit-frida-build",
- "orbit-frida-transport",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "orbit-frida-transport"
-version = "0.1.0"
-dependencies = [
- "libc",
- "orbit-scope-ring",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "orbit-gpu-helper"
-version = "0.1.0"
-dependencies = [
- "libc",
- "orbit-tracing-state",
- "orbit-wire",
-]
-
-[[package]]
-name = "orbit-live-chrome"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "orbit-live-event",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "orbit-live-event"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "orbit-live-protocol"
-version = "0.1.0"
-dependencies = [
- "miniz_oxide 0.8.9",
- "orbit-live-event",
- "serde",
-]
-
-[[package]]
-name = "orbit-live-render"
-version = "0.1.0"
-dependencies = [
- "clap",
- "criterion",
- "orbit-live-event",
- "rayon",
-]
-
-[[package]]
-name = "orbit-live-ring"
-version = "0.1.0"
-dependencies = [
- "clap",
- "criterion",
- "orbit-live-event",
- "parking_lot",
-]
-
-[[package]]
-name = "orbit-live-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "futures-util",
- "libc",
- "log",
- "orbit-live-event",
- "orbit-live-protocol",
- "orbit-live-render",
- "orbit-live-ring",
- "parking_lot",
- "rand 0.8.8",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
- "tower-http",
-]
-
-[[package]]
-name = "orbit-live-viewer"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "eframe",
- "egui",
- "egui-wgpu",
- "js-sys",
- "log",
- "orbit-live-chrome",
- "orbit-live-event",
- "orbit-live-protocol",
- "orbit-live-render",
- "rfd",
- "serde",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm-bindgen-rayon",
- "web-sys",
- "wgpu",
-]
-
-[[package]]
-name = "orbit-maps"
-version = "0.1.0"
-
-[[package]]
-name = "orbit-object"
-version = "0.1.0"
-dependencies = [
- "gimli",
- "msvc-demangler",
- "object",
- "pdb",
-]
-
-[[package]]
-name = "orbit-perf-merge"
-version = "0.1.0"
-
-[[package]]
-name = "orbit-perf-records"
-version = "0.1.0"
-
-[[package]]
-name = "orbit-perf-ring"
-version = "0.1.0"
-dependencies = [
- "libc",
- "orbit-perf-records",
-]
-
-[[package]]
-name = "orbit-pod-dump"
-version = "0.1.0"
-dependencies = [
- "orbit-wire",
-]
-
-[[package]]
-name = "orbit-ptrace"
-version = "0.1.0"
-dependencies = [
- "libc",
- "orbit-maps",
-]
-
-[[package]]
-name = "orbit-scope-ring"
-version = "0.1.0"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "orbit-service"
-version = "0.1.0"
-dependencies = [
- "cpp_demangle",
- "iced-x86",
- "libc",
- "log",
- "memmap2",
- "miniz_oxide 0.8.9",
- "object",
- "orbit-api",
- "orbit-capture",
- "orbit-etw",
- "orbit-frida-transport",
- "orbit-live-event",
- "orbit-live-server",
- "orbit-maps",
- "orbit-object",
- "orbit-perf-records",
- "orbit-perf-ring",
- "orbit-scope-ring",
- "orbit-thread-states",
- "orbit-tracing-state",
- "orbit-unwind",
- "orbit-wire",
- "rustc-demangle",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "orbit-test-rust"
-version = "0.1.0"
-dependencies = [
- "libc",
- "orbit-api",
-]
-
-[[package]]
-name = "orbit-thread-states"
-version = "0.1.0"
-
-[[package]]
-name = "orbit-tracing-state"
-version = "0.1.0"
-
-[[package]]
-name = "orbit-trampoline"
-version = "0.1.0"
-dependencies = [
- "iced-x86",
- "orbit-maps",
- "orbit-ptrace",
-]
-
-[[package]]
-name = "orbit-unwind"
-version = "0.1.0"
-dependencies = [
- "framehop",
- "libc",
- "object",
- "orbit-maps",
- "orbit-perf-records",
- "orbit-perf-ring",
-]
-
-[[package]]
-name = "orbit-wire"
-version = "0.1.0"
-
-[[package]]
 name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3216,6 +2905,317 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "perfr"
+version = "0.1.0"
+dependencies = [
+ "cpp_demangle",
+ "iced-x86",
+ "libc",
+ "log",
+ "memmap2",
+ "miniz_oxide 0.8.9",
+ "object",
+ "perfr-api",
+ "perfr-capture",
+ "perfr-etw",
+ "perfr-frida-transport",
+ "perfr-live-event",
+ "perfr-live-server",
+ "perfr-maps",
+ "perfr-object",
+ "perfr-perf-records",
+ "perfr-perf-ring",
+ "perfr-scope-ring",
+ "perfr-thread-states",
+ "perfr-tracing-state",
+ "perfr-unwind",
+ "perfr-wire",
+ "rustc-demangle",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "perfr-api"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "perfr-scope-ring",
+]
+
+[[package]]
+name = "perfr-capture"
+version = "0.1.0"
+dependencies = [
+ "arrow-array",
+ "arrow-ipc",
+ "arrow-schema",
+ "bytes",
+ "miniz_oxide 0.8.9",
+ "parquet",
+ "perfr-live-event",
+ "perfr-live-protocol",
+ "serde_json",
+]
+
+[[package]]
+name = "perfr-collector"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "perfr-perf-merge",
+ "perfr-perf-records",
+ "perfr-perf-ring",
+ "perfr-tracing-state",
+ "perfr-wire",
+]
+
+[[package]]
+name = "perfr-etw"
+version = "0.1.0"
+dependencies = [
+ "perfr-thread-states",
+ "perfr-tracing-state",
+]
+
+[[package]]
+name = "perfr-frida-agent"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "perfr-api",
+ "perfr-frida-build",
+ "perfr-frida-transport",
+ "perfr-scope-ring",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "perfr-frida-build"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "perfr-frida-helper"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "perfr-frida-build",
+ "perfr-frida-transport",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "perfr-frida-transport"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "perfr-scope-ring",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "perfr-gpu-helper"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "perfr-tracing-state",
+ "perfr-wire",
+]
+
+[[package]]
+name = "perfr-live-chrome"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "perfr-live-event",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "perfr-live-event"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "perfr-live-protocol"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide 0.8.9",
+ "perfr-live-event",
+ "serde",
+]
+
+[[package]]
+name = "perfr-live-render"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "criterion",
+ "perfr-live-event",
+ "rayon",
+]
+
+[[package]]
+name = "perfr-live-ring"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "criterion",
+ "parking_lot",
+ "perfr-live-event",
+]
+
+[[package]]
+name = "perfr-live-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "libc",
+ "log",
+ "parking_lot",
+ "perfr-live-event",
+ "perfr-live-protocol",
+ "perfr-live-render",
+ "perfr-live-ring",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "tower-http",
+]
+
+[[package]]
+name = "perfr-live-viewer"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "eframe",
+ "egui",
+ "egui-wgpu",
+ "js-sys",
+ "log",
+ "perfr-live-chrome",
+ "perfr-live-event",
+ "perfr-live-protocol",
+ "perfr-live-render",
+ "rfd",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-rayon",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
+name = "perfr-maps"
+version = "0.1.0"
+
+[[package]]
+name = "perfr-object"
+version = "0.1.0"
+dependencies = [
+ "gimli",
+ "msvc-demangler",
+ "object",
+ "pdb",
+]
+
+[[package]]
+name = "perfr-perf-merge"
+version = "0.1.0"
+
+[[package]]
+name = "perfr-perf-records"
+version = "0.1.0"
+
+[[package]]
+name = "perfr-perf-ring"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "perfr-perf-records",
+]
+
+[[package]]
+name = "perfr-pod-dump"
+version = "0.1.0"
+dependencies = [
+ "perfr-wire",
+]
+
+[[package]]
+name = "perfr-ptrace"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "perfr-maps",
+]
+
+[[package]]
+name = "perfr-scope-ring"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "perfr-test-rust"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "perfr-api",
+]
+
+[[package]]
+name = "perfr-thread-states"
+version = "0.1.0"
+
+[[package]]
+name = "perfr-tracing-state"
+version = "0.1.0"
+
+[[package]]
+name = "perfr-trampoline"
+version = "0.1.0"
+dependencies = [
+ "iced-x86",
+ "perfr-maps",
+ "perfr-ptrace",
+]
+
+[[package]]
+name = "perfr-unwind"
+version = "0.1.0"
+dependencies = [
+ "framehop",
+ "libc",
+ "object",
+ "perfr-maps",
+ "perfr-perf-records",
+ "perfr-perf-ring",
+]
+
+[[package]]
+name = "perfr-wire"
+version = "0.1.0"
 
 [[package]]
 name = "pin-project"

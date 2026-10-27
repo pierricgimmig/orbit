@@ -1,12 +1,12 @@
-# orbit-media-kit
+# perfr-media-kit
 
-Lives at `tools/media-kit/` in the Orbit repo. Regenerate the landing-page
+Lives at `tools/media-kit/` in the perfr repo. Regenerate the landing-page
 clips for a newer build, then publish them into the site:
 
 ```bash
 cd tools/media-kit
-./generate.sh --ref <git-ref> --out /tmp/orbit-media
-python3 publish_site_media.py --from /tmp/orbit-media
+./generate.sh --ref <git-ref> --out /tmp/perfr-media
+python3 publish_site_media.py --from /tmp/perfr-media
 ```
 
 `publish_site_media.py` writes H.264 MP4 and JPEG posters to `tools/site/media/`
@@ -15,17 +15,17 @@ per-clip crop rects and trims in that script, so a regenerated 1600×1000 set
 is framed the same way. Rebuild with `python3 tools/site/build_site.py`.
 See `tools/site/README.md`.
 
-A single command builds `orbit-service` (with the viewer embedded) from a git ref, boots a Debian VM under QEMU **TCG**,
-runs a dummy `game_loop` workload plus `orbit-service` inside it, drives one headful Chrome with Playwright through
+A single command builds `perfr` (with the viewer embedded) from a git ref, boots a Debian VM under QEMU **TCG**,
+runs a dummy `game_loop` workload plus `perfr` inside it, drives one headful Chrome with Playwright through
 data-driven scenes, records each scene losslessly with ffmpeg x11grab, and converts the recordings to MP4/WebM/GIF/PNG,
 a hero montage, stills and `MANIFEST.md`.
 
 ```bash
 cd tools/media-kit
-./generate.sh --ref <git-ref> --out <dir>             # e.g. --ref da8aa05c --out /tmp/orbit-media
+./generate.sh --ref <git-ref> --out <dir>             # e.g. --ref da8aa05c --out /tmp/perfr-media
 # long run (about 35-45 min on this box), detached so a dropped shell does not kill it:
-setsid nohup ./generate.sh --ref da8aa05c --out /workspace/orbit-media > /dev/null 2>&1 < /dev/null &
-tail -f /workspace/orbit-media/raw/generate.log
+setsid nohup ./generate.sh --ref da8aa05c --out /workspace/perfr-media > /dev/null 2>&1 < /dev/null &
+tail -f /workspace/perfr-media/raw/generate.log
 ```
 
 ## Prerequisites (`steps/00-prereqs.sh`, run by generate.sh)
@@ -39,10 +39,10 @@ tail -f /workspace/orbit-media/raw/generate.log
   (it uses the system Chrome, so it downloads no browsers).
 * Build toolchains are only needed for `--ref` builds: rustup with `nightly-2025-11-15` + `wasm32-unknown-unknown`, `wasm-bindgen-cli 0.2.100`,
   toolchain 1.88 + the `x86_64-unknown-linux-musl` target (rustup installs what `rust-toolchain` asks for).
-  `--binary <orbit-service>` skips the build.
-* Source: `ORBIT_REPO` (default `/workspace/orbit-autoinstr`, a clone of pierricgimmig/orbit). `steps/10-build.sh` works in a private
+  `--binary <perfr>` skips the build.
+* Source: `PERFR_REPO` (default `/workspace/perfr-autoinstr`, a clone of perfr/perfr). `steps/10-build.sh` works in a private
   `git clone --shared` under `.cache/src`, so **the repo's working tree is never touched**. It restores `viewer-dist` in the cache clone after the
-  build, and it only ever fetches (read-only) when a ref is not found locally. Binaries are cached as `.cache/bin/orbit-service-<sha8>`.
+  build, and it only ever fetches (read-only) when a ref is not found locally. Binaries are cached as `.cache/bin/perfr-<sha8>`.
 
 ## The VM (`lib/config.sh`: `VM_DIR`, default `/workspace/autoinstr-test/vm`)
 
@@ -54,7 +54,7 @@ tail -f /workspace/orbit-media/raw/generate.log
   `cloud-init status --wait` returns, and powers off.
 * `steps/30-target.sh start <bin>` compiles `dummy/game_loop.c` **on the box** (the guest has no gcc; both use glibc 2.41) with
   `-O0 -g -fno-omit-frame-pointer -fno-inline -fdebug-prefix-map`, so the Code tab finds `game_loop.c` next to the service. It copies the
-  service, binary and source to `/home/tester/media`, starts `sudo orbit-service --serve 44766 --log-dir logs` detached, waits for
+  service, binary and source to `/home/tester/media`, starts `sudo perfr --serve 44766 --log-dir logs` detached, waits for
   `/api/status`, and starts `./game_loop 40` (phase 2 of its workload begins after 40 s). `stop` stops both and tars the guest logs into `<out>/raw/guest-logs`.
 
 ## What generate.sh does
@@ -110,23 +110,23 @@ Options: `--binary PATH`, `--only id1,id2`, `--skip-existing`, `--steps prereqs,
 
 The viewer paints everything on a `<canvas>`, so there are no DOM selectors. The kit uses the viewer's own test hooks:
 
-* `window.__orbit_ui`: a JSON `[[label, x, y, w, h], ...]` in CSS px of the painted, labelled widgets. Examples are `Record`, `Stop`, `Open`,
+* `window.__perfr_ui`: a JSON `[[label, x, y, w, h], ...]` in CSS px of the painted, labelled widgets. Examples are `Record`, `Stop`, `Open`,
   `Settings`, `Process`, `visible-process:<pid>`, `symbols-status:…`, `More`, `Report`, `Follow:on|off`, pills (`CSW`, `Uprobes`, `Auto`, `Functions`, …),
   report tabs (`Flame`, `Top-down`, …), `report_filter`, `sort:*`, `tree:<fn>`, `live:<fn>`, `hook:<fn>`, `menu:hook`, `menu:disassemble`, and rows
   (`row:scheduler`, `row:thread:<pid>:<tid>`, `sample_bar:<pid>:<tid>`).
-* `window.__orbit_sel`: JSON state such as `recording`, `capture_elapsed`, `view` (`t0`/`t1`), `report_open`, `tab`, `code`, `selected_pid`.
+* `window.__perfr_sel`: JSON state such as `recording`, `capture_elapsed`, `view` (`t0`/`t1`), `report_open`, `tab`, `code`, `selected_pid`.
 
 Prefer these over coordinates. Scenes wait on state (`waitSel(s => s.tab === "Code")`) instead of sleeping where they can.
 Some elements have no hook, so the scenes derive their positions from a neighbouring label. These are the fragile spots, marked `FRAGILE` in `scenes/`.
-They are the **UI elements that need a stable hook (suggested `__orbit_ui` label / data-testid)**:
+They are the **UI elements that need a stable hook (suggested `__perfr_ui` label / data-testid)**:
 
 | element | used by | current workaround | suggested label |
 |---|---|---|---|
 | Auto-profile status line and "Hooked N" text in Settings | 03 | `Functions` pill x −90 / +150 / +260 | `auto-status`, `hooked-count` |
 | Settings close (×), sample period field | 01, 03 | gear toggle | `settings:close`, `settings:sample-period` |
-| Pill on/off state | 01 | x11grab luminance of the pill | include `on:true` in the entry or `__orbit_sel.settings{}` |
-| Follow state | all | read the `Follow:on|off` label inside the More menu | `__orbit_sel.follow` |
-| Timeline scopes (hit test) | 02, 08 | `sample_bar` bottom + 9 + 21.5·depth | `scope:<tid>:<depth>:<name>` for visible scopes, or a `__orbit_hit(x,y)` |
+| Pill on/off state | 01 | x11grab luminance of the pill | include `on:true` in the entry or `__perfr_sel.settings{}` |
+| Follow state | all | read the `Follow:on|off` label inside the More menu | `__perfr_sel.follow` |
+| Timeline scopes (hit test) | 02, 08 | `sample_bar` bottom + 9 + 21.5·depth | `scope:<tid>:<depth>:<name>` for visible scopes, or a `__perfr_hit(x,y)` |
 | Scheduler core lanes | 04 | `row:scheduler` bottom + 6 + 13·core | `row:core:<n>` |
 | Thread-state strip | 04 | `sample_bar` y − 9 | `thread_state:<pid>:<tid>` |
 | Process expand chevron vs drag handle | 09 | `row:thread` x + 12 | `chevron:<pid>` |
@@ -136,12 +136,12 @@ They are the **UI elements that need a stable hook (suggested `__orbit_ui` label
 | Scope search box | 11 | `filter:tracks` x − 90 | `scope_search` |
 | Live histogram; visible (clip) rect of scrolled tables | 07 | keep rows in the upper part of the table | `live-histogram`, a clip rect per scroll area |
 | Process rows in the picker (names) | 01 | `visible-process:<pid>` (the pid comes from `/api/processes`) | `process-name:<name>` |
-| Tooltip text | 02, 04 | none (only visual) | `__orbit_sel.tooltip` |
+| Tooltip text | 02, 04 | none (only visual) | `__perfr_sel.tooltip` |
 
 ## Caveats
 
 * **TCG only**, 6 vCPU / 2 GB. The workload sees roughly 730–780 samples/s at a 1 kHz setting.
-* **One viewer page at a time.** Each connected viewer adds 0.4–0.85 GB to orbit-service's RSS in a 2 GB VM. The recorder uses a single page
+* **One viewer page at a time.** Each connected viewer adds 0.4–0.85 GB to perfr's RSS in a 2 GB VM. The recorder uses a single page
   for all clips (only `goto` reloads). Do not open the viewer elsewhere during a run.
 * **Frame rate.** Chrome renders the WASM canvas with SwiftShader (no GPU), so the canvas updates at about 8–12 fps while the box is busy
   running the TCG VM. Recordings are captured at 30 fps and the clips stay smooth for the cursor, but timeline motion is steppy. Conversion speeds
@@ -156,7 +156,7 @@ They are the **UI elements that need a stable hook (suggested `__orbit_ui` label
 * The `Frida` pill shows as selected on a fresh viewer (known). Scene 01 explicitly switches to `Uprobes`.
 * The report keeps its scroll offset across tabs, and the Live table re-sorts by activity every second. Scene 07 sorts by a
   column first and scrolls each row into the upper part of the table before clicking it. Labels of rows hidden under the
-  histogram area are still reported, because `__orbit_ui` carries no clip rect.
+  histogram area are still reported, because `__perfr_ui` carries no clip rect.
 * The real pointer is hidden with `cursor: none` (Xvfb paints a software cursor into the framebuffer). The drawn overlay
   is the only cursor, and stills hide it and wait two animation frames + 600 ms (the busy canvas delays compositor frames).
 * Coordinates derived from labels (table above) break if the layout changes. Run `./tools-dev.sh clip <id>` after viewer UI changes.
@@ -171,9 +171,9 @@ lib/config.sh          paths, ports, VM size, recording/GIF settings (env-overri
 lib/harness.mjs        Chrome launch (Xvfb, kiosk, DPR), cursor overlay, label lookup, eased input, x11grab recording/stills
 steps/00-prereqs.sh    apt/gifski/node checks (tolerates apt mirror errors)
 steps/05-stale.sh      kill leftovers of an aborted run (pidfiles in .cache/run)
-steps/10-build.sh      build wasm viewer + musl orbit-service from a git ref in .cache/src (cached per sha)
+steps/10-build.sh      build wasm viewer + musl perfr from a git ref in .cache/src (cached per sha)
 steps/20-vm.sh         QEMU TCG VM up/down/status
-steps/30-target.sh     copy + start/stop orbit-service and game_loop in the VM
+steps/30-target.sh     copy + start/stop perfr and game_loop in the VM
 steps/40-record.mjs    record all clips in one page (--only, --skip-existing, --serve)
 steps/50-convert.py    mkv -> mp4/webm/gif/png, hero montage
 steps/60-manifest.py   MANIFEST.md

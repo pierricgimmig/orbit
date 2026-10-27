@@ -1,9 +1,9 @@
-# Orbit feature catalogue
+# perfr feature catalogue
 
 The published user guide is [`index.md`](index.md) and the pages beside it.
 This file stays the agent catalogue: how to reach each feature, and which
 e2e screenshot shows it. `docs/e2e/report.md` is the companion, written by
-`tools/e2e/orbit_e2e.py` on every run. It is not built into the site.
+`tools/e2e/perfr_e2e.py` on every run. It is not built into the site.
 
 The [landing page](../index.html) is the site root. It opens a saved
 capture in the viewer, then four recordings: attach, the timeline, the
@@ -24,13 +24,13 @@ Instructions for the manual writer:
 
 ## 1. Getting started
 
-- **One binary.** `orbit-service --serve 44766` serves the viewer (a WASM
+- **One binary.** `perfr --serve 44766` serves the viewer (a WASM
   page embedded in the binary) and the HTTP/WebSocket API on one port. The
   banner prints the local URL and every LAN address, so the page opens from
   another machine on the network. `--host` picks the bind address (default
-  `0.0.0.0`); `--wire raw|packed|deflate` (env `ORBIT_LIVE_WIRE`) picks the
+  `0.0.0.0`); `--wire raw|packed|deflate` (env `PERFR_LIVE_WIRE`) picks the
   WebSocket encoding, default `packed`. Screenshot: `01-viewer-idle.png`.
-- **Windows.** The same binary shape (`orbit-service.exe`, the viewer embedded)
+- **Windows.** The same binary shape (`perfr.exe`, the viewer embedded)
   on x86-64. Sampling, the scheduler and thread states come from the NT
   Kernel Logger and need the service started from an elevated prompt; the
   status line under the Capture strip says so otherwise. Manual scopes and
@@ -46,17 +46,17 @@ Instructions for the manual writer:
   path honours, is refused there with EACCES. The `instrumentation`
   scenario reports the refusal by name. To run the
   service privileged without a password prompt, once: `sudo
-  tools/sudo/install.sh`. It installs `/usr/local/bin/orbit-service-sudo`
+  tools/sudo/install.sh`. It installs `/usr/local/bin/perfr-sudo`
   and a sudoers rule on that one path; the wrapper runs any executable
-  named `orbit-service` that you own (any build, any checkout) under
+  named `perfr` that you own (any build, any checkout) under
   your uid with `CAP_SYS_ADMIN`, `CAP_PERFMON` and `CAP_DAC_READ_SEARCH`
   in the ambient set, and refuses everything else. Know what that is:
   `CAP_SYS_ADMIN` is root in all but name, and any passwordless rule on
   a file you can write extends to any code running as you, so a file
   planted under the right name owns the machine. Fine for a personal
-  development box, not for a shared one. Then `sudo -n orbit-service-sudo
-  "$PWD/target/release/orbit-service" --serve
-  44766`, and `tools/e2e/orbit_e2e.py --sudo` uses it by itself.
+  development box, not for a shared one. Then `sudo -n perfr-sudo
+  "$PWD/target/release/perfr" --serve
+  44766`, and `tools/e2e/perfr_e2e.py --sudo` uses it by itself.
 - **No target needed.** A capture can run with no process selected: the
   scheduler track, the service's own lanes and the agent track still fill.
 - **Nothing before the start.** The capture's clock starts when the loop
@@ -82,15 +82,15 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   live edge past `capture_start_ns`, carried by the viewer's clock between
   frames so it never stalls); after Stop it stays, greyed, at the length
   the capture had, until Clear or the next Record. Nothing is shown before
-  the first capture. `capture_elapsed` in `window.__orbit_sel`, label
-  `Timer` in `window.__orbit_ui`; the `capture-scheduling` scenario checks
+  the first capture. `capture_elapsed` in `window.__perfr_sel`, label
+  `Timer` in `window.__perfr_ui`; the `capture-scheduling` scenario checks
   that it advances while capturing and freezes after Stop.
-- **Open** opens a saved Orbit capture (`.orbit.zip`) or a Chrome trace
+- **Open** opens a saved perfr capture (`.perfr.zip`) or a Chrome trace
   (`.json` / `.json.gz`); dropping the file on the page does the same.
   Screenshot: `17-opened-slice.png` (a slice reopened through the API).
-- **Save** (the tray icon) is a menu: the whole capture as `.orbit.zip`,
-  the selected time slice as its own `.orbit.zip` (when a selection
-  exists), or the `.orbit.stream` a web page embeds. See section 7.
+- **Save** (the tray icon) is a menu: the whole capture as `.perfr.zip`,
+  the selected time slice as its own `.perfr.zip` (when a selection
+  exists), or the `.perfr.stream` a web page embeds. See section 7.
 - **Clear** (the bin icon) empties the capture everywhere: every event on
   the service and in the page. Refused while a capture is running.
   Screenshot: `20-cleared.png`.
@@ -110,14 +110,14 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   process name shows all of its threads and a thread name shows just that
   thread under its process; the scheduler track matches "scheduler"; a
   process or machine with nothing left under it loses its header. Case-
-  insensitive, and *any* word rather than every word, as C++ Orbit's track
+  insensitive, and *any* word rather than every word, as C++ perfr's track
   filter worked. A `shown/total` count and a × sit beside the box, Escape
   clears it, and a `tracks “…”` chip over the timeline says it is on. It
   is separate from the per-thread hide (right-click) and its "N hidden /
   all" count. `?tracks=physics+render` opens the viewer with it filled.
   Screenshot: `45-track-filter.png`.
 - **Viewer build.** The More menu ends with the viewer's build (UTC time
-  and commit), also `build` in `window.__orbit_sel`. The service serves
+  and commit), also `build` in `window.__perfr_sel`. The service serves
   the viewer with `Cache-Control: no-cache` and an ETag, so a restarted
   service is never a stale tab: a plain reload picks up the new viewer.
 - **Stats line.** Live event count, visible count, draw count, the transport
@@ -141,12 +141,12 @@ opens on first load with a service and closes with its ×. Its rows:
   own as soon as a process is selected, and the service loads them itself
   when a capture starts with hooks and none are loaded yet.
 - **COLLECT** toggles: **CSW** context switches (the scheduler track),
-  **States** thread state slices, **API** manual `orbit.h` scopes,
+  **States** thread state slices, **API** manual `perfr.h` scopes,
   **Sample** callstack sampling with the period in ms next to it. Every
   thread of the target is sampled, including threads born during the
   capture: each sampled thread also carries a task-event ring, and the
   fork record a clone produces names the new thread, which is sampled
-  from that pass on, as C++ Orbit reacts to PERF_RECORD_FORK. A slow
+  from that pass on, as C++ perfr reacts to PERF_RECORD_FORK. A slow
   scan of the thread list is the safety net and logs if it ever finds
   a thread no fork record announced.
 - **UNWIND** is a two-way switch, **DWARF** or **FP**. **HOOKS** is another:
@@ -173,7 +173,7 @@ opens on first load with a service and closes with its ×. Its rows:
   turns amber with a ⚠ naming the function and its rate, and an instant
   `auto-unhooked: <function>` marks the moment on the thread where it
   happened. The checkbox and the rate are **user settings the service
-  keeps on disk** (`~/.config/orbit/settings.json`, `$XDG_CONFIG_HOME`
+  keeps on disk** (`~/.config/perfr/settings.json`, `$XDG_CONFIG_HOME`
   honoured; the invoking user's home under sudo), so they hold across
   browsers and restarts; `GET`/`PUT /api/settings` reads and replaces
   them, and a capture request may carry its own `max_hook_calls_per_s`
@@ -194,7 +194,7 @@ opens on first load with a service and closes with its ×. Its rows:
   It converges on a set that shows where the time goes at about the budget
   or less, and keeps going, so a new code path gets picked up. The budget,
   1000 scopes/s by default, is a user setting (`auto_profile_scopes_per_s`
-  in `~/.config/orbit/settings.json`, the field beside the pill). It hooks
+  in `~/.config/perfr/settings.json`, the field beside the pill). It hooks
   with kernel uprobes, the one engine that can arm mid-capture (a capture
   started with Auto on uses them for every hook; they need CAP_SYS_ADMIN),
   within the 16-hook cap and under Auto-unhook's limit. Each hook and unhook
@@ -221,8 +221,8 @@ opens on first load with a service and closes with its ×. Its rows:
   carries the verdict (`safety`: safe / risky / unsafe / unknown; unknown
   is a non-x86 module, not judged). Screenshot: `46-hook-danger-cue.png`.
 - **Crash diagnostics.** When the target dies mid-capture with hooks armed,
-  the service writes a crash report (`orbit-hook-crash-<pid>.json`, next to
-  a pre-arming `orbit-hooks-<pid>.json` journal) naming the prime suspect
+  the service writes a crash report (`perfr-hook-crash-<pid>.json`, next to
+  a pre-arming `perfr-hooks-<pid>.json` journal) naming the prime suspect
   and listing every armed hook with its entry bytes, disassembled entry and
   safety verdict. The suspect is matched by the kernel's faulting
   instruction pointer when the kernel log is readable (`CAP_SYSLOG`, or
@@ -236,7 +236,7 @@ opens on first load with a service and closes with its ×. Its rows:
   per process with its tracks under it. A thread is a track (its states,
   samples and scopes packed under its row); a thread's async spans are a
   track of their own (`async  <tid>  <name>`), and so is each value graph
-  (`service cpu %`, `service rss MiB`, `events per pass`, any `orbit_value`
+  (`service cpu %`, `service rss MiB`, `events per pass`, any `perfr_value`
   from an instrumented app). New ones start out under the thread that
   emitted them. Screenshot: `19-service-lanes.png`.
 - **Collapse.** The chevron on a process, machine or thread row folds it.
@@ -262,10 +262,10 @@ opens on first load with a service and closes with its ×. Its rows:
   bar under each thread shows one tick per sample, a white line on the
   dark bar, and nothing else stands for a sample on the timeline: the
   sampled frames stay in the report, not on the thread track, as in C++
-  Orbit. Hovering a tick shows that sample's callstack, leaf first, and
+  perfr. Hovering a tick shows that sample's callstack, leaf first, and
   a click puts it on the clipboard, one frame a line.
 - **Cursor line.** A vertical line follows the pointer across every track,
-  as in C++ Orbit, so a scope on one thread can be lined up with the
+  as in C++ perfr, so a scope on one thread can be lined up with the
   others. Where it crosses a graph lane a dot marks the curve and the
   value at that time is written beside it, for every graph in view.
 - **Graph lanes.** Every value name a thread reports is a lane of its own,
@@ -291,11 +291,11 @@ opens on first load with a service and closes with its ×. Its rows:
   selects; a click on nothing never selects.
 - **Sample bar.** Each thread has a dedicated sample bar, a strip on a
   slightly lifted background under its scopes, with a white tick per
-  callstack sample, as in C++ Orbit. Hovering a tick shows the callstack;
+  callstack sample, as in C++ perfr. Hovering a tick shows the callstack;
   clicking one copies it.
 - **Time selection.** The button decides the scope. A **left-drag on one
   thread's sample bar** selects that thread's samples only, drawn right on
-  its bar (C++ Orbit's per-thread callstack selection), with the report
+  its bar (C++ perfr's per-thread callstack selection), with the report
   scoped to the thread. A **right-drag anywhere** -- the ruler, a bar, or
   empty space -- selects every thread's samples in the window, drawn
   full-height. Ctrl+drag (or ⌘+drag) draws a marquee over scopes and
@@ -327,7 +327,7 @@ in the URL opens a tab on load.
   module does not contain the text are not shown, with a "N of M functions
   match" line above the Flat report; a call tree shows only the paths to
   matching nodes and opens them; Modules and Live filter the same way.
-  Escape in the box, or its ×, clears it. C++ Orbit's filter over the
+  Escape in the box, or its ×, clears it. C++ perfr's filter over the
   sampling report. Screenshot: `25-report-filter.png`.
 
 - **Select and copy.** Left-drag over the rows of a report table (Flat,
@@ -341,7 +341,7 @@ in the URL opens a tab on load.
 
 - **Flat** a hooked checkbox, then self and inclusive percentages per
   function, with module; ticking the box hooks the function for the next
-  Record, as in C++ Orbit's sampling report. Every column header sorts
+  Record, as in C++ perfr's sampling report. Every column header sorts
   the rows (a second click flips the direction; the arrow says which);
   sorting by hooked lists every hooked function first.
   Names come from the module's detached debug file when the distribution's
@@ -349,7 +349,7 @@ in the URL opens a tab on load.
   module too; Rust names are demangled. What has no name shows as
   `module+0xoffset`. Screenshot: `03-report-flat.png`.
 - **Top-down / Bottom-up** call trees, expandable, with "expand all" and
-  "collapse all" pills and the expansion slider of C++ Orbit's call tree
+  "collapse all" pills and the expansion slider of C++ perfr's call tree
   on the filter row under the tabs, so the title row above the tabs never
   moves. A tree arrives open along every node over the slider's share of
   the samples; at the left end ("open all", the default) the whole tree
@@ -373,7 +373,7 @@ in the URL opens a tab on load.
   filter box narrows it; the first 500 matches are listed until "Show
   all", which lists every match and lays out only the rows in view, so
   50,000 rows cost what a screenful does. Ticking a row hooks it for the
-  next Record, the same list the report's right-click feeds. C++ Orbit's
+  next Record, the same list the report's right-click feeds. C++ perfr's
   Functions view.
 - **Code** the code views. Right-click a function in the Flat report, a
   call tree or the Functions list and pick "Show disassembly and source":
@@ -381,10 +381,10 @@ in the URL opens a tab on load.
   (Intel syntax, call and branch targets named), walks the module's line
   table for it, and the tab opens with the function's source file when
   the line table names one and the file is under a root the service is
-  allowed to serve (`ORBIT_SOURCE_ROOTS`, the current directory by
+  allowed to serve (`PERFR_SOURCE_ROOTS`, the current directory by
   default; nothing outside those roots is ever read). Three ways to read
   it, in the segmented control: **Source** alone, **Disassembly** alone,
-  and **Both**, the C++ Orbit `AnnotatingLine` layout: the instructions
+  and **Both**, the C++ perfr `AnnotatingLine` layout: the instructions
   are the text, and each source line is inserted, on a raised row, above
   the first instruction it produced; instructions from lines of other
   files (inlined callees) carry `file:line` at their end instead. The
@@ -399,7 +399,7 @@ in the URL opens a tab on load.
   toolbar says so. **Examples** opens code with nothing captured: two
   files of this repository embedded in the viewer (`uprobes.rs`,
   `UprobesUnwindingVisitor.cpp`), opened at their first function, and the
-  running orbit-service's own `UprobeSession::drain_up_to`, disassembled
+  running perfr's own `UprobeSession::drain_up_to`, disassembled
   live from its binary with its source interleaved, the way a hooked
   function in a `-g` build reads. The text is selectable: drag across lines
   to select a range and Ctrl+C copies it; **Copy** in the toolbar copies the
@@ -410,20 +410,20 @@ in the URL opens a tab on load.
 
 ## 7. Capture files
 
-- **Format.** `.orbit.zip` is a stored zip holding Parquet tables
+- **Format.** `.perfr.zip` is a stored zip holding Parquet tables
   (`events`, `samples`, `frames`) and a `manifest.json` with the target pid,
   the slice window if any, and every process and thread name. Encodings do
   the compression (delta on timestamps, dictionaries elsewhere); no codec,
   so any Parquet reader opens it. Blog post 18 has the numbers.
 - **Save / Save slice** from the top bar, or `GET /api/capture/export?format=bundle&t0=..&t1=..`.
   A slice of a file on disk is cut without reading the whole file (row-group
-  statistics), which is what `orbit-service --slice <in> <out> <t0> <t1>` does.
+  statistics), which is what `perfr --slice <in> <out> <t0> <t1>` does.
 - **Open** from the top bar, drop on the page, `POST /api/capture/import`
   with the file as the body, or `POST /api/capture/open {"path": ..., "t0":
   ..., "t1": ...}` to open a file the service can see. Screenshot:
   `17-opened-slice.png`.
 - **Stream export.** `GET /api/capture/export?format=stream` writes the
-  frames a connecting viewer receives as one `.orbit.stream` file. The
+  frames a connecting viewer receives as one `.perfr.stream` file. The
   viewer opens it with `viewer/index.html?capture=<url>` and no service:
   the pills that need a service are hidden and the file name shows next to
   the link dot. Everything else works, the sampling report included: with
@@ -432,63 +432,63 @@ in the URL opens a tab on load.
   itself (modules and hooking stay the service's). This is how the web
   site embeds a capture.
   Screenshot: `23-static-viewer.png`.
-- **Python.** `crates/orbit-capture/python/open_capture.py <unzipped dir>`
+- **Python.** `crates/perfr-capture/python/open_capture.py <unzipped dir>`
   reads the tables with pyarrow and prints the columns and counts; its
   README documents every column. The `python-reader` scenario runs it on
   the bundle the suite just exported.
 
 ## 8. Manual instrumentation
 
-- **The API** is the `orbit-api` crate at `crates/orbit-api`: Rust
+- **The API** is the `perfr-api` crate at `crates/perfr-api`: Rust
   functions `init`, `shutdown`, `start`, `stop`, `start_async`, `instant`,
   `link`, `value`, `now_ns`, and the RAII helpers `span`, `span_async`,
-  `scope`, `scope_async`. The same crate builds `liborbit_api` (static and
-  shared) with a C ABI (`orbit_init`, `orbit_start`, `orbit_stop`,
-  `orbit_instant`, `orbit_link`, `orbit_value`, `orbit_now_ns`, ...) and a
-  versioned function table (`orbit_api_table_v1`).
+  `scope`, `scope_async`. The same crate builds `libperfr_api` (static and
+  shared) with a C ABI (`perfr_init`, `perfr_start`, `perfr_stop`,
+  `perfr_instant`, `perfr_link`, `perfr_value`, `perfr_now_ns`, ...) and a
+  versioned function table (`perfr_api_table_v1`).
 - **Shipping shape: one header, one library, no linking.**
-  `crates/orbit-api/include/orbit.h` is a single file a C or C++
-  project includes; it links nothing. `orbit_init()` loads `liborbit_api`
-  at run time -- from `$ORBIT_API_LIB`, beside the executable, beside the
-  `orbit-service` on `PATH` (then `~/.local/bin`, `~/.orbit/bin`), or the
+  `crates/perfr-api/include/perfr.h` is a single file a C or C++
+  project includes; it links nothing. `perfr_init()` loads `libperfr_api`
+  at run time -- from `$PERFR_API_LIB`, beside the executable, beside the
+  `perfr` on `PATH` (then `~/.local/bin`, `~/.perfr/bin`), or the
   system loader -- checks the ABI version, and fills a process-wide table;
-  without a library every call is one predictable branch and `orbit_init()`
-  returns `ORBIT_E_NOLIB`. The ring protocol therefore lives only in the
+  without a library every call is one predictable branch and `perfr_init()`
+  returns `PERFR_E_NOLIB`. The ring protocol therefore lives only in the
   library that ships beside the service (`build-service-musl.sh`,
   `tools/build/build-service-macos.sh` and `install.sh` place it there), never in a
-  compiled application. `#define ORBIT_STATIC` keeps the link-time shape
-  for musl. `ORBIT_SCOPE("name")` is RAII in C++ and a cleanup attribute in
+  compiled application. `#define PERFR_STATIC` keeps the link-time shape
+  for musl. `PERFR_SCOPE("name")` is RAII in C++ and a cleanup attribute in
   GNU C.
-- **Python** is the pure-Python package at `crates/orbit-api/python`
-  (`pip install orbit-api`, module `orbit_api`): the same search order,
-  ctypes over the same library, `with orbit.scope(...)` and `@orbit.scope`.
+- **Python** is the pure-Python package at `crates/perfr-api/python`
+  (`pip install perfr-api`, module `perfr_api`): the same search order,
+  ctypes over the same library, `with perfr.scope(...)` and `@perfr.scope`.
 - **Distribution.** Prebuilt wheels, never source-to-compile, so no toolchain
   is needed to install. `tools/release/build_wheels.sh <platform>` cuts two
-  platform wheels from one build (so their ring protocol matches): `orbit-api`
-  bundles a `liborbit_api` cross-built against glibc 2.17 (manylinux2014); and
-  `orbit-profiler` (`crates/orbit-service/python`) carries the static
-  `orbit-service` binary, the library and `orbit.h`, installs an
-  `orbit-service` command, and depends on `orbit-api`. The
+  platform wheels from one build (so their ring protocol matches): `perfr-api`
+  bundles a `libperfr_api` cross-built against glibc 2.17 (manylinux2014); and
+  `perfr` (`crates/perfr/python`) carries the static
+  `perfr` binary, the library and `perfr.h`, installs an
+  `perfr` command, and depends on `perfr-api`. The
   `.github/workflows/python-wheels.yml` matrix builds a wheel per platform
   and publishes to PyPI on a version tag. The `curl … | sh` installer and the
   release archives stay for users who do not want Python in the loop. Because
   the service is the authority on the ring version, the Python loader and
-  `orbit.h` prefer a library found beside `orbit-service` over any bundled
+  `perfr.h` prefer a library found beside `perfr` over any bundled
   copy, and the service now logs a one-line warning naming the version when it
   finds a segment written by a mismatched library.
-- **Examples** for each language: `crates/orbit-test-rust`
-  (`OrbitTestRust`) and, under `tools/test-programs/`, `OrbitTestC`,
-  `OrbitTestCpp` (RAII, built header-only by their `build.sh`;
-  `ORBIT_STATIC=1` links) and `OrbitTestPython` (the package). Each runs
-  every call; the `api-*` scenarios capture them with `ORBIT_API_LIB` naming
+- **Examples** for each language: `crates/perfr-test-rust`
+  (`PerfrTestRust`) and, under `tools/test-programs/`, `PerfrTestC`,
+  `PerfrTestCpp` (RAII, built header-only by their `build.sh`;
+  `PERFR_STATIC=1` links) and `PerfrTestPython` (the package). Each runs
+  every call; the `api-*` scenarios capture them with `PERFR_API_LIB` naming
   the tree's library.
   Screenshots: `07-api-rust.png`, `08-api-c.png`, `09-api-cpp.png`,
   `10-api-python.png`.
-- **Unreal Engine.** `integrations/unreal/` has the `OrbitProfiler` plugin
-  (one Core-only module: registers Orbit as an Unreal external profiler, so
-  `-Orbit -statnamedevents` sends every `SCOPED_NAMED_EVENT`,
+- **Unreal Engine.** `integrations/unreal/` has the `PerfrProfiler` plugin
+  (one Core-only module: registers perfr as an Unreal external profiler, so
+  `-perfr -statnamedevents` sends every `SCOPED_NAMED_EVENT`,
   `SCOPE_CYCLE_COUNTER` and engine named event to a capturing service, plus
-  a `frame` instant per frame, and gives game modules `orbit.h`), an
+  a `frame` instant per frame, and gives game modules `perfr.h`), an
   optional one-header engine patch for `TRACE_CPUPROFILER_EVENT_SCOPE*`,
   and the guide. Screenshot: `unreal-named-events.png`.
 - **What reaches the timeline.** Scopes nest per thread, async spans get
@@ -506,12 +506,12 @@ in the URL opens a tab on load.
 
 ## 9. Agents and automation
 
-- **`orbit-scope`** (`target/release/orbit-scope`) puts anything that
-  can run a command on the timeline: `orbit-scope start <name>` / `stop`,
+- **`perfr-scope`** (`target/release/perfr-scope`) puts anything that
+  can run a command on the timeline: `perfr-scope start <name>` / `stop`,
   `instant <name>`, `value <name> <number>`, and `run [--name N] -- <cmd>`
   which wraps a command in a scope. `--track` names the track (default
   `agent`), `--url` the service (default `http://127.0.0.1:44766`, env
-  `ORBIT_TRACK` / `ORBIT_URL`). The scopes appear under a process named for
+  `PERFR_TRACK` / `PERFR_URL`). The scopes appear under a process named for
   the track. Screenshot: `18-agent-track.png`.
 - **`POST /api/scope`** is what the CLI calls: `{"track": "agent",
   "action": "start"|"stop"|"instant"|"value", "name": ..., "value": ...,
@@ -526,7 +526,7 @@ in the URL opens a tab on load.
   queue can show each task as a process and each agent as a thread of it;
   `unix_ns` timestamps are moved onto the capture clock by the service.
   The reply counts what was accepted and what was refused for starting
-  before the running capture. The `q orbit` bridge in
+  before the running capture. The `q perfr` bridge in
   github.com/pierricgimmig/q is the first producer.
 - **HTTP API.** `/api/status`, `/api/processes`, `/api/capture/start|stop|export|import|open|clear`,
   `/api/symbols/load|status|modules`, `/api/functions/search`,
@@ -534,13 +534,13 @@ in the URL opens a tab on load.
   or `scope=<name id>`), `/api/timeline`, `/api/frame`, `/api/config`,
   `/api/self/start|stop`, `/api/demo/start|stop`, and the `/ws` event
   stream.
-- **Readouts for a harness.** The page publishes `window.__orbit_sel`
+- **Readouts for a harness.** The page publishes `window.__perfr_sel`
   (selection, focus, tab, wire, socket rate, view, event count),
-  `window.__orbit_ui` (the rectangle of every pill, report tab, menu item,
+  `window.__perfr_ui` (the rectangle of every pill, report tab, menu item,
   Live row and track row painted this frame, by label such as `Clear`,
   `row:thread:<pid>:<tid>`, `menu:report`, `live:<name>`) and
-  `window.__orbit_self` (the frame-phase breakdown while the Self pane is
-  open). `tools/e2e/orbit_e2e.py` clicks by label through these.
+  `window.__perfr_self` (the frame-phase breakdown while the Self pane is
+  open). `tools/e2e/perfr_e2e.py` clicks by label through these.
 
 - **The web site.** `python3 tools/site/build_site.py` builds a static
   directory: the [landing page](../index.html) (a capture embedded in
@@ -554,7 +554,7 @@ in the URL opens a tab on load.
   trees `depth` (8 to 16) deep, at a rate the slider sets, logarithmic from
   one event a second to a million, sent to the service as it moves while the
   benchmark runs. Start with nothing recording and it starts a capture of
-  its own on pseudo-process `orbit-bench`; start during a capture and it
+  its own on pseudo-process `perfr-bench`; start during a capture and it
   joins it at the live edge. The readout is what the service achieved over
   the last second and the total. Agents use `POST /api/bench/start`
   (`threads`, `depth_min`, `depth_max`, `rate`, all optional),
@@ -580,7 +580,7 @@ in the URL opens a tab on load.
 | `15-live-tab.png` | live-tab | Live statistics and a histogram |
 | `16-flame-tab.png` | flame-tab | The flame graph |
 | `17-opened-slice.png` | save-slice-open | A saved slice reopened |
-| `18-agent-track.png` | agent-scopes | Scopes from `orbit-scope` on the agent track |
+| `18-agent-track.png` | agent-scopes | Scopes from `perfr-scope` on the agent track |
 | `19-service-lanes.png` | service-lanes | The service's cpu and rss lanes |
 | `20-cleared.png` | clear | The empty timeline after Clear |
 | `21-self-pane.png` | wire-and-perf | The viewer's self-profile pane |

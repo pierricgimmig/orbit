@@ -7,7 +7,7 @@ be picked up cold.
 ## What already works (server side, no viewer changes needed)
 
 - **Sampling.** One perf ring per thread of the captured process, unwound by
-  `orbit-unwind` (framehop), symbolized through `orbit-maps` + `orbit-object`.
+  `perfr-unwind` (framehop), symbolized through `perfr-maps` + `perfr-object`.
 - **Callstacks on the timeline.** Each frame is pushed as a `FUNCTION_CALL`
   span one sampling period wide at its stack depth, outermost at depth 0, so
   the existing renderer draws a flame graph. Measured: 6 modules, 5,999
@@ -30,22 +30,22 @@ be picked up cold.
 ## What is missing (viewer side)
 
 The ask: *one vertical white line per sample on a per-thread sample bar,
-selectable, with a sampling report of the selection* — Orbit's C++ UX.
+selectable, with a sampling report of the selection* — perfr's C++ UX.
 
 ### 1. A sample-bar row per thread
 
-Samples are currently only visible as flame-graph spans. Orbit also shows a
+Samples are currently only visible as flame-graph spans. perfr also shows a
 thin bar per thread with one tick per sample, which is what you drag-select
 over.
 
-- Add `kind::SAMPLE = 7` in `orbit-live-event` (`kind` module, `lane_key`,
-  `palette_color`, and the `kind_label` tables in `orbit-live-render`).
+- Add `kind::SAMPLE = 7` in `perfr-live-event` (`kind` module, `lane_key`,
+  `palette_color`, and the `kind_label` tables in `perfr-live-render`).
   Lane key: `{pid, tid, kind: SAMPLE, depth: 0, extra: 0}` — one row per
   thread, like the existing per-thread rows.
-- Emit one `SAMPLE` event per sample from `orbit-service`'s `capture_loop`,
+- Emit one `SAMPLE` event per sample from `perfr`'s `capture_loop`,
   alongside the per-frame spans it already pushes. `name_id` = the leaf
   frame's name, so hovering a tick names the function without a lookup.
-- Draw it in `orbit-live-render` as a 1px vertical line at the sample's
+- Draw it in `perfr-live-render` as a 1px vertical line at the sample's
   timestamp, white, no text, ignoring `duration_ns`. This is a new branch in
   the span rasterizer, not a new pipeline.
 - Row height should be small (a strip, not a lane) — see `SCHEDULER_H` /
@@ -73,7 +73,7 @@ drag-end), plus `nudge_selection`. So the work is wiring, not new interaction:
 
 ### 4. Rebuild the pack
 
-`crates/orbit-live-viewer/build_wasm.sh` needs `nightly-2025-11-15` with
+`crates/perfr-live-viewer/build_wasm.sh` needs `nightly-2025-11-15` with
 `-Z build-std` (wasm-bindgen-rayon wants a std rebuilt with atomics) and
 `wasm-bindgen-cli 0.2.100`. That toolchain **is** installed on this machine,
 so the rebuild is a matter of running the script; `run.sh` warns when
@@ -84,10 +84,10 @@ so the rebuild is a matter of running the script; `run.sh` warns when
 - **Stripped binaries fragment the report.** Unsymbolized frames read as
   `python3.14+0x1136c5`, so two samples in the same function at different
   offsets become different rows. The fix is `.gnu_debuglink` (already parsed
-  by `orbit-object`) to pick up `/usr/lib/debug/...`.
+  by `perfr-object`) to pick up `/usr/lib/debug/...`.
 - **Threads started mid-capture are missed.** Sampling rings are opened once,
   from `/proc/<pid>/task` at capture start.
-- **No demangling.** `orbit-object` has `demangle_msvc`, and the Itanium path
+- **No demangling.** `perfr-object` has `demangle_msvc`, and the Itanium path
   lives in `rust/shims/Demangle`; neither is wired into `symbolize.rs`.
 
 ## Ordering

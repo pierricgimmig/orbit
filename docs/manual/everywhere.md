@@ -4,9 +4,9 @@ The same capture, in another colour scheme, on a phone, or loaded from a trace f
 
 ## Colour schemes
 
-More → **Color scheme**. The hover text is “Recolour the whole viewer — chrome, scopes and thread states”. The list, in order, is Orbit, Dracula, Nord, Gruvbox, Solarized, Solarized Light and Gruvbox Light. The choice is stored in the browser as `orbit_theme` and restored on the next load.
+More → **Color scheme**. The hover text is “Recolour the whole viewer — chrome, scopes and thread states”. The list, in order, is perfr, Dracula, Nord, Gruvbox, Solarized, Solarized Light and Gruvbox Light. The choice is stored in the browser as `perfr_theme` and restored on the next load.
 
-`?theme=` pins one when the page opens. The keys are `orbit`, `dracula`, `nord`, `gruvbox`, `solarized`, `solarized-light` and `gruvbox-light`.
+`?theme=` pins one when the page opens. The keys are `perfr`, `dracula`, `nord`, `gruvbox`, `solarized`, `solarized-light` and `gruvbox-light`.
 
 @clip 12-themes | Colour schemes | Switching the viewer colour scheme through Dracula, Solarized Light and Nord
 
@@ -33,10 +33,10 @@ Accepted files:
 
 Processes, threads, nested slices, counters and flows land on the same timeline. Home, or a double-click on the ruler, fits the content once events are in.
 
-Opening one of these traces during a live capture stops the capture. `begin_trace_load` calls stop before it clears the timeline. A saved `.orbit.zip` is the other path: the service will not open it while a capture is running, and answers `busy: stop the capture before opening one`.
+Opening one of these traces during a live capture stops the capture. `begin_trace_load` calls stop before it clears the timeline. A saved `.perfr.zip` is the other path: the service will not open it while a capture is running, and answers `busy: stop the capture before opening one`.
 
 The WebAssembly heap is capped at 2 GiB (`--max-memory=2147483648` in `build_wasm.sh`). A trace that does not fit in that heap cannot load in the browser viewer.
 
-@clip 14-chrome-trace-import | Chrome trace | Opening a Chrome Trace Event JSON file onto the Orbit timeline
+@clip 14-chrome-trace-import | Chrome trace | Opening a Chrome Trace Event JSON file onto the perfr timeline
 
 The drop overlay reads “Drop a Chrome (.json / .json.gz) or Perfetto (.pftrace) trace”. A file that is neither a capture nor a trace shows “Not a Chrome or Perfetto trace” plus the name.

@@ -1,8 +1,8 @@
-// Copyright (c) 2026 The Orbit Authors. All rights reserved.
+// Copyright (c) 2026 The perfr Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Dummy target for Orbit auto-profiling (PR #97). Deterministic, frame-paced
+// Dummy target for perfr auto-profiling (PR #97). Deterministic, frame-paced
 // "game loop" with a nested call tree and functions at very different rates.
 // Build: gcc -O0 -g -fno-omit-frame-pointer -fno-inline -o game_loop game_loop.c
 //

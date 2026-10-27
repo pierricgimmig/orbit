@@ -1,0 +1,20 @@
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "perfr-collector"
+version = "0.1.0"
+description = "The perf event loop: round-robin over the rings, timestamp-ordered output"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+libc = "0.2"
+perfr-perf-merge = { path = "../perfr-perf-merge" }
+perfr-perf-records = { path = "../perfr-perf-records" }
+perfr-perf-ring = { path = "../perfr-perf-ring" }
+perfr-tracing-state = { path = "../perfr-tracing-state" }
+perfr-wire = { path = "../perfr-wire" }

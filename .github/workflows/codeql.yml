@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         # Python: the e2e harness, the pip packages and the tools. The C++
-        # tree this used to scan is on the `cpp` branch.
+        # tree this used to scan is on the `cpp` branch of the Orbit repository.
         language: [ 'python' ]
         # Learn more about CodeQL language support at https://aka.ms/codeql-docs/language-support
 

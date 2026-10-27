@@ -1,0 +1,16 @@
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "perfr-wire"
+version = "0.1.0"
+description = "The pod capture wire format: one-byte tags, fixed little-endian fields"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# No dependencies: the whole point of the pod wire format is that it needs
+# no protobuf runtime, no code generator, no schema compiler.
+[dependencies]

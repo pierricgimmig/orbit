@@ -1,10 +1,10 @@
 <!--
-Copyright (c) 2026 The Orbit Authors. All rights reserved.
+Copyright (c) 2026 The perfr Authors. All rights reserved.
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
 
-# ORBIT — TODO
+# PERFR — TODO
 
 The project owner's list, kept verbatim under each heading. The `Status`
 lines are the port's read of each item as of 2026-09-04 and are updated as
@@ -33,7 +33,7 @@ it (fixed 2026-09-03: the drag hit sat on top of the chevron).
 
 Left-drag across the white vertical lines in the sample bar to select
 a bunch, then show a sampling report for the selection — matching
-C++ Orbit behavior.
+C++ perfr behavior.
 
 **Status: done.** Left-drag on a sample bar, shift adds ranges, and a
 right-drag that starts on any thread's track scopes the report to that
@@ -50,7 +50,7 @@ one import (pyarrow → pandas). Call stacks split into a samples table
 module, address) so frames aren't repeated per sample. Slice export
 keeps only in-window samples plus their referenced frames.
 
-**Status: done, with one deliberate deviation.** `.orbit.zip` is three
+**Status: done, with one deliberate deviation.** `.perfr.zip` is three
 Parquet tables (events, samples, frames) plus a manifest naming threads and
 processes, `DELTA_BINARY_PACKED` on the nanosecond columns and
 `RLE_DICTIONARY` on the rest. Not deflated: the encodings alone make the
@@ -69,19 +69,19 @@ pruned and re-serialized. With Parquet, row groups outside the range
 are skipped via footer stats — multi-GB capture slices in milliseconds.
 
 **Status: done.** Save slice exports the selected range from the running
-service. On disk, `orbit-service --slice in.orbit.zip out.orbit.zip t0 t1`
+service. On disk, `perfr --slice in.perfr.zip out.perfr.zip t0 t1`
 and `POST /api/capture/open {"path","t0","t1"}` cut a saved bundle by its
 Parquet row-group statistics: the tables are written in row groups of
 65,536 rows, the footer's min/max of the start and duration columns say
 which groups can overlap the window, and only those are decoded. 20M
 synthetic events: a 1% window reads 4 of 306 groups in 28 ms, against
-907 ms loading the file (`slice_bench` in orbit-capture). Bundles from
+907 ms loading the file (`slice_bench` in perfr-capture). Bundles from
 before the row-group sizing have one group and are read whole.
 
 ## 6. Blog redesign
 
 Redesign docs/blog/index.html and post pages. Light theme: near-white
-background, one accent (Orbit blue or sharper teal), generous
+background, one accent (perfr blue or sharper teal), generous
 whitespace. Google-adjacent but with a signature: monospace for code
 and metrics, thin left border on each post's key insight — reads like
 a lab notebook, not a marketing page. Content and metrics files
@@ -109,7 +109,7 @@ Windows done (2026-10-17).** The Mac service serves the viewer, discovers
 processes/threads and records manual instrumentation on Intel and Apple
 Silicon. See [building_macos.md](building_macos.md). Native CI covers both
 architectures. PDB parsing is done. The Windows service records the scheduler,
-thread states and samples from the NT Kernel Logger (`crates/orbit-etw`,
+thread states and samples from the NT Kernel Logger (`crates/perfr-etw`,
 raw advapi32 bindings rather than ferrisetw; the MOF layouts are decoded from
 bytes), Frida hooks over a named pipe, and manual scopes; see
 [building_windows.md](building_windows.md) and
@@ -125,7 +125,7 @@ for Intel/Apple Silicon/Rosetta layout compatibility.
 
 **Status: macOS implemented and cross-checked for both architectures; native CI
 added, runtime results pending. Windows implemented (2026-10-17):** a
-file-backed section per process under `%LOCALAPPDATA%\Orbit\scopes`, two views
+file-backed section per process under `%LOCALAPPDATA%\perfr\scopes`, two views
 (rings read-only, control page read-write), a `LockFileEx` producer lease, and
 rename-plus-delete-on-close for unlink-while-mapped. Tests pass natively.
 
@@ -143,7 +143,7 @@ every sample taken while that scope was running on the sample's own
 thread (a per-thread binary search into the instances, with a short walk
 back for recursion), through the same report and tree builders as a time
 selection. `/api/sampling/{report,tree}?scope=<name id>`. Verified on a
-sampled capture of OrbitTestRust: 1,254 of 7,035 samples over 209
+sampled capture of PerfrTestRust: 1,254 of 7,035 samples over 209
 instances of "frame".
 
 ## 10. Hash function names at intern time
@@ -161,7 +161,7 @@ lists; it is built on the first request, not at capture time. The
 interned `u32` id is the key; a 64-bit hash was not needed since the
 intern table already makes the id stable for the capture.
 
-## 11. Live Functions pane (parity with original Orbit)
+## 11. Live Functions pane (parity with original perfr)
 
 Real-time table during capture, one row per instrumented function or
 manual scope. Columns: type (D/MS/MA/H/F), name, count, total, avg,
@@ -180,9 +180,9 @@ instrumentation reports by function id.
 
 ## 12. Agent-native profiling interface
 
-CLI wrapper around the C ABI first: orbit-scope start/stop/link,
+CLI wrapper around the C ABI first: perfr-scope start/stop/link,
 agent shells out, no subprocess parsing. MCP server later as a thin
-layer over the same CLI. HTTP interface hosted by the Orbit service
+layer over the same CLI. HTTP interface hosted by the perfr service
 as an alternative: any agent POSTs start/stop, service forwards
 straight into the ring. Bind to localhost by default; token auth if
 ever exposed beyond that.
@@ -191,17 +191,17 @@ ever exposed beyond that.
   agent run. Track named after the agent at startup.
 - Nesting: wrapper's main thread is the root scope, each tool call
   opens a child scope under it. Agent's reasoning stamped as scope
-  name. orbit_link connects slow steps across the run.
+  name. perfr_link connects slow steps across the run.
 - Bootstrapping: service must be running before the agent attaches.
 
-**Status: CLI, HTTP, and MCP.** `orbit-scope start
+**Status: CLI, HTTP, and MCP.** `perfr-scope start
 <name> | stop | instant <name> | value <name> <n> | run [--name N] -- cmd`
-(`--track`, `--url`, or ORBIT_TRACK / ORBIT_URL) posts to the service's
+(`--track`, `--url`, or PERFR_TRACK / PERFR_URL) posts to the service's
 `POST /api/scope`; each track is a thread of an "agents" process in the
 viewer, scopes nest per track, timestamps are CLOCK_MONOTONIC from the
 caller so they line up with the capture. A `run` wraps a command in a
 scope with the command's exit code passed through, which is the wrapper
-process idea in its simplest form. `orbit-service mcp` is the MCP layer:
+process idea in its simplest form. `perfr mcp` is the MCP layer:
 stdio by default, streamable HTTP on loopback with `--http`. Twelve tools
 drive a live profile (list, attach, search, arm Frida hooks, start/stop,
 sampling report, call stacks, function timing). They do not edit source.
@@ -211,7 +211,7 @@ Not done: links (the viewer does not draw links yet), and token auth if
 the HTTP API is ever bound past localhost. Note: a capture start empties the
 ring, so agent scopes made before Record are gone once it starts.
 
-`POST /api/events` (orbit-live-server `ingest.rs`) is the batch form for a
+`POST /api/events` (perfr-live-server `ingest.rs`) is the batch form for a
 producer with structure of its own: it names processes and threads by pid
 and tid, sends finished spans, instants and values, and can stamp them on
 the wall clock. The `q` work queue uses it to show each task as a process
@@ -293,7 +293,7 @@ scope selected on the timeline outlines its bars.
 
 Save baselines; on each new capture flag functions that crossed a
 threshold (e.g. "this got 15% slower since last Tuesday"). Turns
-Orbit from a tool you open into one that watches for you.
+perfr from a tool you open into one that watches for you.
 
 **Status: not started; builds on 16.**
 
@@ -363,23 +363,23 @@ Make sure the python sample code to read a capture from disk still works
 with latest changes.
 
 **Status: done, checked on every e2e run.** The `python-reader` scenario
-of `tools/e2e/orbit_e2e.py` unzips the bundle the suite just exported and
-runs `open_capture.py` on it with pyarrow (`ORBIT_E2E_PYARROW_PYTHON` names
+of `tools/e2e/perfr_e2e.py` unzips the bundle the suite just exported and
+runs `open_capture.py` on it with pyarrow (`PERFR_E2E_PYARROW_PYTHON` names
 the interpreter that has it), then queries the events table for the agent
 track and value rows. 2026-09-04: 161,836 events read back.
 
 ## 24. E2E suite that measures, documents and screenshots
 
 Have a solid e2e testing suite that will gather perf data, will generate
-orbit manual listing and explaining all features and producing screenshots
+perfr manual listing and explaining all features and producing screenshots
 from the freshly compiled app. Maybe part of this will be an md file to
 feed to an agent to generate the manual content.
 
-**Status: done (2026-09-04).** `tools/e2e/orbit_e2e.py` now has 26
+**Status: done (2026-09-04).** `tools/e2e/perfr_e2e.py` now has 26
 scenarios: the original service checks plus `thread-focus`, `scope-report`,
 `live-tab`, `flame-tab`, `save-slice-open`, `python-reader`,
 `agent-scopes`, `service-lanes`, `clear` and `wire-and-perf`. They click by
-name through a new `window.__orbit_ui` readout (every pill, tab, menu item,
+name through a new `window.__perfr_ui` readout (every pill, tab, menu item,
 Live row and track row's rectangle by label), so no scenario knows a pixel
 position. Each run writes `docs/e2e/report.md` (verdicts, measured numbers,
 the viewer's phase totals, screenshot index) and 21 screenshots into
@@ -396,7 +396,7 @@ something I've always wanted. It will also host the dev blog.
 
 **Status: done (2026-09-04), first version.** `tools/site/build_site.py`
 builds a static directory: the viewer pack, one capture the front page
-opens with no service (`?capture=<url>` on a `.orbit.stream`, the new
+opens with no service (`?capture=<url>` on a `.perfr.stream`, the new
 `stream` export: the frames a connecting viewer receives, as a file), the
 manual rendered from `docs/manual`, the blog, the screenshots and the e2e
 report. `tools/site/serve.py` serves it on the LAN with the isolation
@@ -414,7 +414,7 @@ Capture sharing by pushing capture data to s3.
 
 ## 27. Service CPU and memory track
 
-Add orbit service cpu/mem usage track.
+Add perfr service cpu/mem usage track.
 
 **Status: done.** Once a second during a capture the loop reads
 `/proc/self/stat` and `/proc/self/statm` and writes `service cpu %` and
@@ -423,7 +423,7 @@ value lanes under the service's process (selfstat.rs).
 
 ## 28. Symbolization gaps seen in the e2e screenshots
 
-Bare addresses for the hottest frames, `OrbitTestRust+0x...` for the
+Bare addresses for the hottest frames, `PerfrTestRust+0x...` for the
 app's own functions.
 
 **Status: done (2026-09-04).** The `[vdso]` is a module (its image read
@@ -437,7 +437,7 @@ debug package.
 
 ## 29. Hook functions from the sampling report
 
-Like C++ Orbit: right-click a function in the report and hook it.
+Like C++ perfr: right-click a function in the report and hook it.
 
 **Status: done (2026-09-04).** Report rows and call-tree nodes carry the
 function index's id (the symbolizer computes it from the symbol's file
@@ -466,7 +466,7 @@ from the timeline's sampled frames.
 there is something that is introducing ghost scopes with dynamic instrumentation, it makes me think a lot of the workaround we had to do in c++ because of what appears like a bug in the kernel, duplicated end or start events that we work around by inspecting the instruction pointer. Can you find that fix in the c++ version, and reimplement in rust. Do this as a single commit, maybe add an option to toggle on/off the fix so we can see its effect.
 
   DONE 2026-09-05: the `(sp, ip, cpu)` filter of `UprobesUnwindingVisitor::OnUprobes`
-  is in `crates/orbit-service/src/uprobes.rs` (every uprobe sample now
+  is in `crates/perfr/src/uprobes.rs` (every uprobe sample now
   carries sp and ip), switchable per capture with the Dedupe pill in the HOOKS
   row (`uprobe_duplicate_filter` in the request), counted on the status line.
   Unit-tested rule by rule; the effect on a real target needs a privileged run
@@ -480,17 +480,17 @@ samples should only be visualized as the vertical white lines in the sample bar,
 
   DONE 2026-09-05 (d61a44bb8): sampled frames stay in the index but are not laid out; a tick's tooltip is its callstack, leaf first; a left drag on a thread's sample bar selects that thread's samples (already there, kept).
 
-figure out what the orbit-live-service is and remove if useless
+figure out what the perfr-live-service is and remove if useless
 
   DONE 2026-09-05 (79ca2a4ce): it was the live server timing its own handlers onto the capture ring under a synthetic pid, the pre-Self-pane dev profiler; removed with the viewer's dev injection, /api/self/*, --dev-self-profile and ?dev=0.
 
-orbit-service and orbit-live-viewer tracks should be collapsed by default, and be at the bottom of the capture. It  should be target process right after scheduling slices, then any process with manual instrumentation, ordered by number of events (decreasing), then the auto tracks (service, viewer)
+perfr and perfr-live-viewer tracks should be collapsed by default, and be at the bottom of the capture. It  should be target process right after scheduling slices, then any process with manual instrumentation, ordered by number of events (decreasing), then the auto tracks (service, viewer)
 
   DONE 2026-09-05 (02b656434): three tiers (target, instrumented by event count on a log scale, service and viewer folded), header drags stay within a tier.
 
 make sure py-spy still works
 
-  CHECKED 2026-09-05: third_party/py-spy-ffi builds and its new test attaches to a python3 child and reads `orbit_pyspy_probe` off its stack (`cd third_party/py-spy-ffi && cargo test --release`). The Bazel target //third_party/py-spy-ffi:py-spy-ffi builds again after the cross-workspace orbit-api dependency in orbit-live-server was replaced by an installed hook. Python sampling is C++-side only; the Rust service has no py-spy path.
+  CHECKED 2026-09-05: third_party/py-spy-ffi builds and its new test attaches to a python3 child and reads `perfr_pyspy_probe` off its stack (`cd third_party/py-spy-ffi && cargo test --release`). The Bazel target //third_party/py-spy-ffi:py-spy-ffi builds again after the cross-workspace perfr-api dependency in perfr-live-server was replaced by an installed hook. Python sampling is C++-side only; the Rust service has no py-spy path.
 
 more detailed instrumentation of rendering, this needs to be blazing fast, we need to find other optimization opportunities
 
@@ -504,16 +504,16 @@ we should be able to see the right pane event when we haven't captured anything 
 
 we need a solution to aggregate many machines' services to a single viewer, so there needs to be precise clock synchronization, also, we should have an easy way to either launch a service with the main viewer endpoint as param, or actually from the viewer itself, connect to a service running on a remote machine. Suggestions are welcome for the most streamlined ux. 
 
-  PLAN 2026-10-19: blog post 22. DONE 2026-10-20 (core): `orbit-service --join <hub>:44766` on a remote, `--connect host,...` or `POST /api/peers/connect` on the hub; the hub packs the machine index into the top byte of every pid and tid, remaps string ids, and moves each remote event onto its own clock with a min-RTT-filtered offset-and-rate fit over NTP-style probes on the link; remote processes list as `name @host`; Record fans out. Blog post 25, docs/manual/machines.md, tools/e2e/multi_machine_smoke.py, metrics/phase-18-multi-machine.txt. Not yet: ssh transport, token, Machines panel and the band in the viewer, report proxying, clocks table in the bundle.
+  PLAN 2026-10-19: blog post 22. DONE 2026-10-20 (core): `perfr --join <hub>:44766` on a remote, `--connect host,...` or `POST /api/peers/connect` on the hub; the hub packs the machine index into the top byte of every pid and tid, remaps string ids, and moves each remote event onto its own clock with a min-RTT-filtered offset-and-rate fit over NTP-style probes on the link; remote processes list as `name @host`; Record fans out. Blog post 25, docs/manual/machines.md, tools/e2e/multi_machine_smoke.py, metrics/phase-18-multi-machine.txt. Not yet: ssh transport, token, Machines panel and the band in the viewer, report proxying, clocks table in the bundle.
 
 make the record icon a 
 make a website that will be the official website, with landing page, manual, but also that will serve the presigned urls that a user can upload their data to. I have an s3 bucket, ask me for credentials once you get to the implementation/testing phase.
 
-stress test for dynamic instrumentation: OrbitTestRust takes a thread count and a call rate, an e2e scenario hooks its three functions and checks the capture call for call (counts, depths, containment, the healing equation), blog post of its own
+stress test for dynamic instrumentation: PerfrTestRust takes a thread count and a call rate, an e2e scenario hooks its three functions and checks the capture call for call (counts, depths, containment, the healing equation), blog post of its own
 
   DONE 2026-09-05: `dyn-instr-stress`, `tools/e2e/check_stress.py`, blog post 19 "Call for Call", metrics/phase-16-dynamic-instrumentation-stress.txt. First privileged runs 2026-09-05/06 through tools/sudo: 360,000 and 720,000 scopes in a second with nothing lost and nothing at the wrong depth; from 1.44 M scopes/s the per-CPU rings overflow (records lost by the kernel), which is the open item below. The kernel wants CAP_SYS_ADMIN for uprobes, not CAP_PERFMON; message and manual corrected.
 
-five viewer notes (2026-09-05): sampling misses threads created during the capture; expand/collapse all shift the report's title row; graphs zoomed out omit the points outside the window; the Self pane should open the viewer's rows and name its graphs, with a value readout where the cursor crosses every graph; a vertical cursor line across the tracks like C++ Orbit
+five viewer notes (2026-09-05): sampling misses threads created during the capture; expand/collapse all shift the report's title row; graphs zoomed out omit the points outside the window; the Self pane should open the viewer's rows and name its graphs, with a value readout where the cursor crosses every graph; a vertical cursor line across the tracks like C++ perfr
 
   DONE 2026-09-05: new threads are announced by PERF_RECORD_FORK on per-thread task rings and sampled from that pass (a 2 s /proc scan is the safety net, and logs if it finds anything); the tree pills sit on the filter row under the tabs; graphs include the sample before and after the window; every value name is its own lane, the Self pane's rows lead and open; the cursor line and per-graph readouts follow the pointer.
 
@@ -539,17 +539,17 @@ settings widget (2026-09-05): the capture/app settings moved out of the top stri
 
 A performant code viewer with syntax highlighting (Rust, C, C++), a
 disassembly view with highlighting, and a view where source and
-disassembly are interleaved, as Visual Studio does and as the C++ Orbit
+disassembly are interleaved, as Visual Studio does and as the C++ perfr
 app does (src/CodeViewer: the annotating source code dialog, the code
 report with per-line sample counts, Capstone disassembly). This is what
 makes the tool feel premium. For debugging the views, example Rust and
-C++ code from this repo and a disassembly of a function of an Orbit
+C++ code from this repo and a disassembly of a function of a perfr
 binary must be loadable on demand from the viewer.
 
 **Status: DONE (2026-09-05).** Service: `/api/code/disassembly?pid&function_id`
 (iced-x86, Intel syntax, targets named through the function index, one
-DWARF walk per function through `orbit_object::line_rows`),
-`/api/code/source?path` behind an allow-list of roots (`ORBIT_SOURCE_ROOTS`,
+DWARF walk per function through `perfr_object::line_rows`),
+`/api/code/source?path` behind an allow-list of roots (`PERFR_SOURCE_ROOTS`,
 cwd by default; only files a disassembly named, or under a root) and
 `/api/code/example` (the service's own `UprobeSession::drain_up_to`).
 Viewer: a Code tab with Source / Disassembly / Both (the C++
@@ -576,9 +576,9 @@ number and its `retprobe` config bit
 tracepoint ids (`/sys/kernel/tracing/events/*/*/id`, with the older
 `/sys/kernel/debug/tracing` as fallback), and
 `/proc/sys/kernel/perf_event_max_stack` — all in
-`crates/orbit-perf-ring/src/attr.rs`. What is still hard-coded is
+`crates/perfr-perf-ring/src/attr.rs`. What is still hard-coded is
 the shape of the tracepoint `RAW` payloads:
-`crates/orbit-perf-records/src/tracepoints.rs` carries the field
+`crates/perfr-perf-records/src/tracepoints.rs` carries the field
 offsets of `sched_switch`, `sched_wakeup`, `sched_process_fork`/`exit`
 and the `amdgpu`/`dma_fence` events by hand, ported offset for offset
 from the C++ `KernelTracepoints.h`. Those offsets are what actually move
@@ -586,9 +586,9 @@ between kernels (v5.14 already dropped `sched_wakeup`'s `success` field).
 
 **Update 2026-09-06:** the scheduler tracepoints now do this. At capture
 start the tracer reads each event's tracefs `format`
-(`orbit_perf_ring::attr::tracepoint_format`) and builds the field offsets
+(`perfr_perf_ring::attr::tracepoint_format`) and builds the field offsets
 from it (`SchedSwitchLayout`/`SchedWakeupLayout`/`TaskNewtaskLayout::from_format`
-in `orbit-perf-records/tracepoints.rs`), falling back to the compiled-in
+in `perfr-perf-records/tracepoints.rs`), falling back to the compiled-in
 layout -- and saying so in the tracepoint report -- when the file cannot
 be read or lacks a field. `parse_with(payload, &layout)` replaces the
 by-constant `parse`. Unit tests cover the parser, a moved field, a
@@ -682,14 +682,14 @@ add the option to go to 0 in the slider in the settings.
 
 **Status: done (2026-09-07).** `report_indent` defaults to 4 and the settings slider now runs 0..=32 (clamp lowered to 0). app.rs.
 
-### 38. Install Orbit from a curl command
+### 38. Install perfr from a curl command
 
-in the list of todos, we need to be able to install orbit from a curl
+in the list of todos, we need to be able to install perfr from a curl
 command, like the llm cli do these days, but let's wait until we have a
 proper website. you can start implementing the feature now even though we
 don't have a site actually.
 
-**Status: done (2026-09-07), pending a public URL.** `tools/install/install.sh` is a POSIX installer (OS/arch detect, optional SHA-256, ~/.local/bin, PATH hint), served at the site root by `build_site.py` and linked from the landing page. Default base URL is a placeholder until the site is live (item 25); overridable with ORBIT_INSTALL_BASE. Smoke-tested.
+**Status: done (2026-09-07), pending a public URL.** `tools/install/install.sh` is a POSIX installer (OS/arch detect, optional SHA-256, ~/.local/bin, PATH hint), served at the site root by `build_site.py` and linked from the landing page. Default base URL is a placeholder until the site is live (item 25); overridable with PERFR_INSTALL_BASE. Smoke-tested.
 
 ### 39. Hooked functions highlighted in the sampling report
 
@@ -697,13 +697,13 @@ any hooked function should be highlighted in blue in any sampling report
 
 **Status: done (2026-09-07).** Hooked functions read in blue in every report: flat (already), the top-down and bottom-up trees now colour a hooked name blue, and the flame graph outlines a hooked bar in blue. app.rs; e2e `report-tabs`.
 
-### 40. Histogram at the bottom of the Live view, C++ Orbit layout
+### 40. Histogram at the bottom of the Live view, C++ perfr layout
 
 the histogram should be at the bottom of the live view, don't change the
-layout when clicking as we have now, we should replicate what orbit cpp
+layout when clicking as we have now, we should replicate what perfr cpp
 does for the histogram
 
-**Status: done (2026-09-07).** The Live view owns its layout: the table scrolls above a fixed-height histogram panel pinned to the bottom, so selecting a function fills the panel and never reflows the table (C++ Orbit's layout). app.rs; e2e `live-tab`, screenshot 15.
+**Status: done (2026-09-07).** The Live view owns its layout: the table scrolls above a fixed-height histogram panel pinned to the bottom, so selecting a function fills the panel and never reflows the table (C++ perfr's layout). app.rs; e2e `live-tab`, screenshot 15.
 
 ### 41. Case-insensitive, multi-token filters
 
@@ -721,22 +721,22 @@ ctrl-left-click-and-drag
 
 ### 43. Colour schemes
 
-Let users switch Orbit's colour scheme. Extract all colours to a common
+Let users switch perfr's colour scheme. Extract all colours to a common
 place, offer 4-5 harmonious schemes based on terminal palettes (Dracula
 etc.), keep the current one exactly as is, and find scope colours that
 look good with each.
 
 **Status: done (2026-09-09).** Every colour -- chrome, timeline canvas and
 track washes, the scope-box palette, the thread-state bar, the selection
-highlights -- lives in one `Theme` table in `orbit_live_event::theme`, read
+highlights -- lives in one `Theme` table in `perfr_live_event::theme`, read
 through a thread-local active theme (the service never switches, so it draws
-exactly as before). Five schemes: **Orbit** (the original, byte-for-byte the
+exactly as before). Five schemes: **perfr** (the original, byte-for-byte the
 default) plus **Dracula**, **Nord**, **Gruvbox** and **Solarized**, whose
 scope palettes are each scheme's own harmonious accent set. Pick it in the
 More menu; `?theme=<key>` pins it for a link or screenshot; the choice is
 saved to `localStorage`. Switching rebuilds egui's visuals and drops the
 instance-colour caches so it takes effect at once. Screenshots 38-44; e2e
-`color-schemes` asserts each is active (`window.__orbit_sel.theme`).
+`color-schemes` asserts each is active (`window.__perfr_sel.theme`).
 
 Light schemes added 2026-09-09: **Solarized Light** and **Gruvbox Light**.
 A `Theme::light` flag flips the grid, playhead, sample bar and egui widget
@@ -744,26 +744,26 @@ base to their dark-on-light forms, and scope-box labels now pick black or
 white per box by luminance (`label_ink`) so a pale accent no longer washes
 the text out. Seven schemes in all.
 
-Wash harmony fix 2026-09-09: the non-default schemes kept Orbit's near-black
+Wash harmony fix 2026-09-09: the non-default schemes kept perfr's near-black
 process washes, which clashed with their own canvas (the capture view looked
-darker than the surrounding chrome). Now only Orbit ships an explicit wash
+darker than the surrounding chrome). Now only perfr ships an explicit wash
 table; every other scheme derives each process band as a faint tint of its
 own canvas toward one of its scope accents (`derive_wash`), so the timeline
 background is one family with the chrome in both dark and light schemes.
 
 ## 44. Python + native in one timeline (eBPF / USDT)
 
-Lean into Orbit's unique angle: the only profiler that does dynamic
+Lean into perfr's unique angle: the only profiler that does dynamic
 instrumentation on both sides of the Python boundary in one view. CPython's
 built-in USDT probes (`function__entry`/`function__return`) catch pure-Python
-functions out-of-process; Orbit's native instrumentation catches the C
+functions out-of-process; perfr's native instrumentation catches the C
 extension and CUDA. One capture, full stack: Python wrapper -> C extension ->
-GPU kernel. Select functions from a sampling report or edit the list in Orbit.
+GPU kernel. Select functions from a sampling report or edit the list in perfr.
 
 **Status: landing page + discovery built (2026-09-10); attach/capture planned.**
 The homepage features the angle with a diagram (`tools/site/index.html`), and
 `python_usdt.rs` discovers a Python image's USDT probes and decides
-USDT-vs-sampling (`orbit-service --python-probes <pid|path>`), unit-tested and
+USDT-vs-sampling (`perfr --python-probes <pid|path>`), unit-tested and
 run against the live `python3.14`. Design, the two attach paths (generated
 eBPF with in-kernel filtering, or the perf-uprobe bridge), tagging
 (`language=python`/`origin=python_function`), the CUDA merge, fallbacks, and

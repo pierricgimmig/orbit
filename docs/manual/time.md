@@ -36,7 +36,7 @@ The rectangle from Ctrl+drag or ⌘+drag is a different gesture. It gathers scop
 
 ## Code view
 
-Right-click a function and choose **Show disassembly and source**. The service disassembles it from the running binary and can interleave the source. The segmented control is **Source**, **Disassembly** and **Both**. **Copy** copies the whole listing. **Examples** loads a file when nothing is captured: a Rust file from this repository, a C++ file, or disassembly of a function in the running `orbit-service` with its source.
+Right-click a function and choose **Show disassembly and source**. The service disassembles it from the running binary and can interleave the source. The segmented control is **Source**, **Disassembly** and **Both**. **Copy** copies the whole listing. **Examples** loads a file when nothing is captured: a Rust file from this repository, a C++ file, or disassembly of a function in the running `perfr` with its source.
 
 @clip 10-code-view | Disassembly and source | Disassembly interleaved with source in the code view
 

@@ -1,56 +1,56 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 # One workspace: the capture service and everything it is built from, the
 # browser viewer and its server, the instrumentation API, the test program.
-# `cargo build -p orbit-service` compiles only that graph, so the viewer's
+# `cargo build -p perfr` compiles only that graph, so the viewer's
 # eframe/wgpu tree never enters a service build; `cargo test --workspace`
 # covers all of it. crates/README.md describes the crates.
 #
 # See docs/rust-port-plan.html for how the C++ service was ported, and
 # docs/blog/ for the running write-up of what each step cost. The C++ tree
-# itself lives on the `cpp` branch.
+# itself lives on the `cpp` branch of the Orbit repository.
 
 [workspace]
 resolver = "2"
 members = [
-    "crates/orbit-api",
-    "crates/orbit-capture",
-    "crates/orbit-collector",
-    "crates/orbit-etw",
-    "crates/orbit-frida-agent",
-    "crates/orbit-frida-helper",
-    "crates/orbit-frida-transport",
-    "crates/orbit-gpu-helper",
-    "crates/orbit-live-chrome",
-    "crates/orbit-live-event",
-    "crates/orbit-live-protocol",
-    "crates/orbit-live-render",
-    "crates/orbit-live-ring",
-    "crates/orbit-live-server",
-    "crates/orbit-live-viewer",
-    "crates/orbit-maps",
-    "crates/orbit-object",
-    "crates/orbit-perf-merge",
-    "crates/orbit-perf-records",
-    "crates/orbit-perf-ring",
-    "crates/orbit-pod-dump",
-    "crates/orbit-ptrace",
-    "crates/orbit-scope-ring",
-    "crates/orbit-service",
-    "crates/orbit-test-rust",
-    "crates/orbit-thread-states",
-    "crates/orbit-tracing-state",
-    "crates/orbit-trampoline",
-    "crates/orbit-unwind",
-    "crates/orbit-wire",
+    "crates/perfr-api",
+    "crates/perfr-capture",
+    "crates/perfr-collector",
+    "crates/perfr-etw",
+    "crates/perfr-frida-agent",
+    "crates/perfr-frida-helper",
+    "crates/perfr-frida-transport",
+    "crates/perfr-gpu-helper",
+    "crates/perfr-live-chrome",
+    "crates/perfr-live-event",
+    "crates/perfr-live-protocol",
+    "crates/perfr-live-render",
+    "crates/perfr-live-ring",
+    "crates/perfr-live-server",
+    "crates/perfr-live-viewer",
+    "crates/perfr-maps",
+    "crates/perfr-object",
+    "crates/perfr-perf-merge",
+    "crates/perfr-perf-records",
+    "crates/perfr-perf-ring",
+    "crates/perfr-pod-dump",
+    "crates/perfr-ptrace",
+    "crates/perfr-scope-ring",
+    "crates/perfr",
+    "crates/perfr-test-rust",
+    "crates/perfr-thread-states",
+    "crates/perfr-tracing-state",
+    "crates/perfr-trampoline",
+    "crates/perfr-unwind",
+    "crates/perfr-wire",
 ]
 
 [workspace.package]
 edition = "2021"
 license = "BSD-2-Clause"
-repository = "https://github.com/pierricgimmig/orbit"
+repository = "https://github.com/perfr/perfr"
 rust-version = "1.88"
 
 # Shared by the live-viewer crates (`clap.workspace = true` and friends).
@@ -84,7 +84,7 @@ debug = false
 lto = false
 debug = true
 
-# The wasm32 viewer pack (crates/orbit-live-viewer/build_wasm.sh). A plain
+# The wasm32 viewer pack (crates/perfr-live-viewer/build_wasm.sh). A plain
 # release build with no DWARF: the pack is shipped to browsers, where line
 # tables and thin LTO buy nothing and cost download size and build time.
 [profile.wasm]

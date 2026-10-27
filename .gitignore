@@ -27,32 +27,32 @@ tools/media-kit/node/node_modules/
 /dist/frida/
 
 # Prebuilt binaries staged into the pip packages by tools/release/build_wheels.sh
-/crates/orbit-api/python/orbit_api/liborbit_api.*
-/crates/orbit-api/python/orbit_api/orbit_api.dll
-/crates/orbit-service/python/orbit_profiler/orbit-service
-/crates/orbit-service/python/orbit_profiler/orbit-service.exe
-/crates/orbit-service/python/orbit_profiler/liborbit_api.*
-/crates/orbit-service/python/orbit_profiler/orbit_api.dll
-/crates/orbit-service/python/orbit_profiler/orbit.h
+/crates/perfr-api/python/perfr_api/libperfr_api.*
+/crates/perfr-api/python/perfr_api/perfr_api.dll
+/crates/perfr/python/perfr/perfr
+/crates/perfr/python/perfr/perfr.exe
+/crates/perfr/python/perfr/libperfr_api.*
+/crates/perfr/python/perfr/perfr_api.dll
+/crates/perfr/python/perfr/perfr.h
 /dist/wheels/
-/crates/orbit-api/python/build/
-/crates/orbit-api/python/dist/
-/crates/orbit-api/python/*.egg-info/
-/crates/orbit-service/python/build/
-/crates/orbit-service/python/dist/
-/crates/orbit-service/python/*.egg-info/
-integrations/unreal/OrbitProfiler/Intermediate/
-integrations/unreal/OrbitProfiler/Binaries/
+/crates/perfr-api/python/build/
+/crates/perfr-api/python/dist/
+/crates/perfr-api/python/*.egg-info/
+/crates/perfr/python/build/
+/crates/perfr/python/dist/
+/crates/perfr/python/*.egg-info/
+integrations/unreal/PerfrProfiler/Intermediate/
+integrations/unreal/PerfrProfiler/Binaries/
 
-# MSVC outputs of the test apps (tools/test-programs/OrbitTestC/build.ps1, tools/test-programs/OrbitTestCpp/build.ps1)
-tools/test-programs/OrbitTestC/*.exe
-tools/test-programs/OrbitTestC/*.obj
-tools/test-programs/OrbitTestC/*.pdb
-tools/test-programs/OrbitTestC/*.ilk
-tools/test-programs/OrbitTestCpp/*.exe
-tools/test-programs/OrbitTestCpp/*.obj
-tools/test-programs/OrbitTestCpp/*.pdb
-tools/test-programs/OrbitTestCpp/*.ilk
+# MSVC outputs of the test apps (tools/test-programs/PerfrTestC/build.ps1, tools/test-programs/PerfrTestCpp/build.ps1)
+tools/test-programs/PerfrTestC/*.exe
+tools/test-programs/PerfrTestC/*.obj
+tools/test-programs/PerfrTestC/*.pdb
+tools/test-programs/PerfrTestC/*.ilk
+tools/test-programs/PerfrTestCpp/*.exe
+tools/test-programs/PerfrTestCpp/*.obj
+tools/test-programs/PerfrTestCpp/*.pdb
+tools/test-programs/PerfrTestCpp/*.ilk
 
 # Packaged Windows service and SDK (tools/build/build-service-windows.ps1)
 /dist/windows/

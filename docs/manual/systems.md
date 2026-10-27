@@ -16,9 +16,9 @@ System-wide scheduling needs `perf_event_paranoid` at 0 or below, or root / `CAP
 
 ## The service, profiling itself
 
-`orbit-service` instruments its own capture loop. The value lanes it emits include `service cpu %`, `service rss MiB` and `events per pass`, plus ring fill (`perf switch rings fill %`, `scope rings fill %`, `viewer ring fill %`) and `scope records lost`. A vertical cursor reads them across the capture. The service’s own scopes (`capture pass`, `read samples`, `unwind`, and the rest) sit on its tracks with everything else.
+`perfr` instruments its own capture loop. The value lanes it emits include `service cpu %`, `service rss MiB` and `events per pass`, plus ring fill (`perf switch rings fill %`, `scope rings fill %`, `viewer ring fill %`) and `scope records lost`. A vertical cursor reads them across the capture. The service’s own scopes (`capture pass`, `read samples`, `unwind`, and the rest) sit on its tracks with everything else.
 
-@clip 09-service-health | Service self-profile | orbit-service profiling itself: CPU, RSS, events per pass and ring lanes
+@clip 09-service-health | Service self-profile | perfr profiling itself: CPU, RSS, events per pass and ring lanes
 
 ## The viewer’s Self pane
 

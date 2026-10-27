@@ -1,7 +1,7 @@
 # Windows agent brief
 
 > **Done (2026-10-17).** Every item below was built and run on Windows:
-> the scope ring (`shm_windows.rs`), the ETW backend (`orbit-etw`), the
+> the scope ring (`shm_windows.rs`), the ETW backend (`perfr-etw`), the
 > service's `windows.rs` loop, Frida over a named pipe, the static CRT
 > build and the packaging. The outcome and its numbers are in
 > `docs/blog/metrics/phase-17-windows.txt`, the status in
@@ -11,7 +11,7 @@
 > in a per-user directory instead of a `Local\` named section. The text
 > below is the brief as it was handed over, with paths updated where the
 > tree has moved since. The C++ Windows tracer it names as the oracle is
-> no longer on `main`; it is on the `cpp` branch, Bazel build and all.
+> no longer on `main`; it is on the `cpp` branch of the Orbit repository, Bazel build and all.
 
 You are starting cold on a Windows x86-64 machine, in a clone of this
 repository on branch `rust-port-object-utils`. Nothing from the Linux
@@ -45,7 +45,7 @@ wrong, and the write-ups say so.
 5. Prefer fewer dependencies. `ferrisetw` (pure Rust) for ETW is the one
    planned addition; do not reach for `windows-rs` wholesale when a
    `#[link(name = "kernel32")] extern "system"` block does the job -- that is
-   how `orbit-scope-ring::platform` already does it.
+   how `perfr-scope-ring::platform` already does it.
 
 ## Where the tree stands for Windows (verified 2026-09-03, from Linux)
 
@@ -54,14 +54,14 @@ wrong, and the write-ups say so.
 
 | crate | windows-msvc check |
 |---|---|
-| orbit-object (ELF/PE/COFF/PDB, msvc-demangler) | clean |
-| orbit-wire, orbit-perf-records, orbit-maps | clean |
-| orbit-thread-states, orbit-tracing-state | clean |
-| orbit-capture (Arrow/Parquet export) | clean |
-| orbit-live-event, -protocol, -render, -server | clean |
-| **orbit-scope-ring** | **26 errors, all in `shm.rs`**: `shm_open`, `shm_unlink`, `mmap`, `MAP_SHARED`, `MAP_FAILED`, `PROT_READ/WRITE`, `_SC_PAGESIZE` |
-| **orbit-api** (depends on scope-ring) | same 26 |
-| orbit-service | not attempted: it is Linux end to end (`/proc`, perf_event, uprobes, `libc`) with zero `cfg` gates -- see item 3 |
+| perfr-object (ELF/PE/COFF/PDB, msvc-demangler) | clean |
+| perfr-wire, perfr-perf-records, perfr-maps | clean |
+| perfr-thread-states, perfr-tracing-state | clean |
+| perfr-capture (Arrow/Parquet export) | clean |
+| perfr-live-event, -protocol, -render, -server | clean |
+| **perfr-scope-ring** | **26 errors, all in `shm.rs`**: `shm_open`, `shm_unlink`, `mmap`, `MAP_SHARED`, `MAP_FAILED`, `PROT_READ/WRITE`, `_SC_PAGESIZE` |
+| **perfr-api** (depends on scope-ring) | same 26 |
+| perfr | not attempted: it is Linux end to end (`/proc`, perf_event, uprobes, `libc`) with zero `cfg` gates -- see item 3 |
 
 "Check" means it type-checks against the Windows std; nothing has been
 linked or run. Your first act on the machine is to turn that table into
@@ -70,7 +70,7 @@ linked or run. Your first act on the machine is to turn that table into
 Toolchain: `rust-toolchain.toml` pins **1.88.0**; use `cargo +1.88.0`
 everywhere and do not bump it. Workspaces: `rust/` is one workspace (Bazel's
 crate_universe reads it -- do not add heavy deps to its members),
-`crates/orbit-service` and `crates/orbit-capture` are their own
+`crates/perfr` and `crates/perfr-capture` are their own
 workspaces built from their crate directories, `rust/live-viewer/` is the
 viewer's. The C++ tree builds with Bazel: `.bazelrc` has a `--config=windows`
 (C++20).
@@ -81,7 +81,7 @@ viewer's. The C++ tree builds with Bazel: `.bazelrc` has a `--config=windows`
 
 - Build and test every crate marked clean above, natively:
   `cargo +1.88.0 test -p <crate>` from `rust/`, from
-  `crates/orbit-capture`, and `-p orbit-live-*` from `rust/live-viewer`.
+  `crates/perfr-capture`, and `-p perfr-live-*` from `rust/live-viewer`.
   Record pass counts in a new `docs/blog/metrics/phase-10-windows-ground.txt`
   with the machine (Windows version, CPU, thread count) at the top, the way
   every metrics file starts.
@@ -96,7 +96,7 @@ viewer's. The C++ tree builds with Bazel: `.bazelrc` has a `--config=windows`
 
 ### 1. The scope ring on Windows (roadmap item 7)
 
-The manual-instrumentation producer. `orbit-scope-ring` is ~8 files; the
+The manual-instrumentation producer. `perfr-scope-ring` is ~8 files; the
 only non-portable one is `shm.rs` (~200 lines, POSIX `shm_open`/`mmap`).
 `platform.rs` already has the Windows arms (`QueryPerformanceCounter`,
 `GetCurrentThreadId`) -- written blind, so test them first.
@@ -104,7 +104,7 @@ only non-portable one is `shm.rs` (~200 lines, POSIX `shm_open`/`mmap`).
 - Write `shm_windows.rs` as a `#[cfg(windows)]` sibling behind the same
   `ScopeRingWriter` / `ScopeRingReader` API, on
   `CreateFileMappingW` / `MapViewOfFile` / `OpenFileMappingW` in the
-  `Local\` namespace (`Local\orbit-scopes-<pid>` for `/dev/shm/orbit-scopes-<pid>`).
+  `Local\` namespace (`Local\perfr-scopes-<pid>` for `/dev/shm/perfr-scopes-<pid>`).
   The Linux layout is one segment: a control page (header: magic, version=2,
   ring_count, slots_per_ring, event_size, pid, `capturing` reader count,
   api_version, then a table of reader-lease pids) plus the rings. The reader
@@ -127,12 +127,12 @@ only non-portable one is `shm.rs` (~200 lines, POSIX `shm_open`/`mmap`).
   `GetExitCodeProcess` is the equivalent. Do not reintroduce a timeout.
 - Acceptance: the crate's existing tests pass on Windows unchanged (they are
   API-level: write, drain, text continuation, dead-producer sweep) plus
-  `orbit-api`'s. Then the four test apps: `OrbitTestRust` (in
-  `crates/orbit-test-rust`), and `tools/test-programs/OrbitTestC`, `tools/test-programs/OrbitTestCpp`,
-  `tools/test-programs/OrbitTestPython` -- their `build.sh` scripts link
-  `target/release/liborbit_api.a`; write `build.ps1` / `build.bat`
-  equivalents against `orbit_api.lib`, and point `tools/test-programs/OrbitTestPython/orbit.py`
-  at `orbit_api.dll` (it looks for `liborbit_api.so` today). Every app runs the
+  `perfr-api`'s. Then the four test apps: `PerfrTestRust` (in
+  `crates/perfr-test-rust`), and `tools/test-programs/PerfrTestC`, `tools/test-programs/PerfrTestCpp`,
+  `tools/test-programs/PerfrTestPython` -- their `build.sh` scripts link
+  `target/release/libperfr_api.a`; write `build.ps1` / `build.bat`
+  equivalents against `perfr_api.lib`, and point `tools/test-programs/PerfrTestPython/perfr.py`
+  at `perfr_api.dll` (it looks for `libperfr_api.so` today). Every app runs the
   same scenario; the acceptance is a capture of each one that shows its
   frames, its three physics workers, the async job with a link, and the long
   (spilled) name -- the same four things the Linux screenshots show.
@@ -143,7 +143,7 @@ only non-portable one is `shm.rs` (~200 lines, POSIX `shm_open`/`mmap`).
 ### 2. Scheduling capture via ETW (roadmap item 6)
 
 The Linux service reads context switches from perf rings and feeds
-`orbit-tracing-state::ContextSwitchManager` and `orbit-thread-states`
+`perfr-tracing-state::ContextSwitchManager` and `perfr-thread-states`
 (both already check clean on Windows and are OS-agnostic state machines).
 The Windows backend feeds the same two from ETW.
 
@@ -168,19 +168,19 @@ The Windows backend feeds the same two from ETW.
   an unstated number is not.
 - ETW sessions need admin (the kernel logger). Say so in the metrics file the
   same way the Linux files say `CAP_PERFMON`.
-- Then the service: `orbit-service` does not build on Windows at all. Do not
+- Then the service: `perfr` does not build on Windows at all. Do not
   try to gate it file by file. Stand up a Windows service shell that reuses
-  the OS-agnostic pieces (orbit-live-server for the UI and ring, orbit-capture
-  for export, orbit-object for symbols, the two state machines) and plugs in
+  the OS-agnostic pieces (perfr-live-server for the UI and ring, perfr-capture
+  for export, perfr-object for symbols, the two state machines) and plugs in
   the ETW `SchedulingSource` and the Windows scope-ring reader. The Linux
   `serve.rs` is the template for the capture loop shape (the self-
   instrumentation scopes -- `capture pass`, `read context switches`,
-  `push to viewer` -- should keep their names so the viewer's Orbit-service
+  `push to viewer` -- should keep their names so the viewer's perfr-service
   track reads the same). Sampling (PerfInfo + StackWalk) is a second step
   after scheduling; the Linux unwinder does not apply, and symbolizing with
-  `orbit-object`'s PDB reader is where the "PDB pure-Rust done" work pays off.
+  `perfr-object`'s PDB reader is where the "PDB pure-Rust done" work pays off.
 - Acceptance: the live viewer shows a Windows capture with scheduler core
-  lanes, per-thread state bars, and the Orbit-service track, from a process
+  lanes, per-thread state bars, and the perfr-service track, from a process
   running the four test apps; and the differential file has its counts.
 
 ### 3. Static binary on Windows
@@ -193,15 +193,15 @@ document explains why "static" means this on Windows and not musl.
 ## Verification tools you have
 
 - The viewer's **Self** pill opens its self-profile pane, which publishes
-  `window.__orbit_self` (per-phase totals, `events`, `layout_gen`,
+  `window.__perfr_self` (per-phase totals, `events`, `layout_gen`,
   `lane_gen`) for a headless harness. `tools/e2e/cdp.py` is a stdlib-only
   Chrome DevTools client (`Chrome`: `goto`, `eval`, `screenshot`, and
   `call("Input.dispatchMouseEvent", ...)` for clicks and drags). It launches
   `google-chrome`; on Windows pass `binary=` to `chrome.exe`.
-- **Save** downloads the capture as Arrow; `crates/orbit-capture/python/`
+- **Save** downloads the capture as Arrow; `crates/perfr-capture/python/`
   opens it in pandas (`pip install pyarrow`). That is how the Linux sessions
   read the service's own scope timings back out of a capture.
-- `orbit-service --serve <port>` plus `POST /api/demo/start` fills the ring
+- `perfr --serve <port>` plus `POST /api/demo/start` fills the ring
   without a real capture, for viewer work. (Note: running the demo turns on
   the dev self-profile for later pages on that server; use a fresh server for
   static-view measurements.)

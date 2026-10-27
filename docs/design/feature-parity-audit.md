@@ -1,9 +1,9 @@
-# Feature parity with the C++ Orbit — audit, 2026-09-01
+# Feature parity with the C++ perfr — audit, 2026-09-01
 
 Where the Rust port stands against the C++ profiler it is replacing. The
 feature list is not from memory: the capture-side rows are the fields of
 `CaptureOptions` in `src/GrpcProtos/capture.proto`, and the UI rows are the
-`DataView` and `Track` classes that exist in `src/DataViews` and `src/OrbitGl`.
+`DataView` and `Track` classes that exist in `src/DataViews` and `src/PerfrGl`.
 
 Legend: **done** works and is verified; **partial** works with a stated
 limitation; **none** is not started. "Verified" throughout means an automated
@@ -29,10 +29,10 @@ Every field of `CaptureOptions`, in the proto's own order.
 | `trace_thread_state` | **partial** | `sched_switch` / `sched_wakeup` / `task_newtask` are traced and drive the ported `ThreadStateManager`, so all ten states are reported. Unverified against a live kernel: tracepoints need CAP_PERFMON and this machine has none, so the payload offsets are only checked against the C++ layout, not against real records. Falls back to the RUNNING-only projection when tracepoints cannot be opened |
 | `trace_gpu_driver` | **none** | The amdgpu tracepoint path is not traced. NVML telemetry *is* collected, which is a different feature that C++ also has |
 | `instrumented_tracepoint` | **none** | Arbitrary kernel tracepoints |
-| `enable_introspection` | **none** | Orbit profiling itself. The viewer self-profiles, which is unrelated |
+| `enable_introspection` | **none** | perfr profiling itself. The viewer self-profiles, which is unrelated |
 | `max_local_marker_depth_per_command_buffer` | **none** | Vulkan debug markers |
 | `collect_memory_info` / `memory_sampling_period_ns` | **none** | No cgroup, system or process memory tracking |
-| `api_functions` / `enable_api` | **none** | Manual instrumentation. `kind::API_SCOPE` exists in the viewer and dynamic instrumentation renders into it, but nothing receives the Orbit API's own events |
+| `api_functions` / `enable_api` | **none** | Manual instrumentation. `kind::API_SCOPE` exists in the viewer and dynamic instrumentation renders into it, but nothing receives the perfr API's own events |
 | `thread_state_change_callstack_collection` | **none** | Callstacks at thread-state changes |
 
 Roughly: **2 done, 6 partial, 9 none** of 17.
@@ -72,8 +72,8 @@ Roughly: **2 done, 6 partial, 9 none** of 17.
 
 | Capability | Rust | Note |
 |---|---|---|
-| ELF `.symtab` / `.dynsym` | **done** | `orbit-object`, differentially tested against C++ on 4,719 binaries |
-| PDB / COFF | **done** as a library | `orbit-object` reads them; the service never does |
+| ELF `.symtab` / `.dynsym` | **done** | `perfr-object`, differentially tested against C++ on 4,719 binaries |
+| PDB / COFF | **done** as a library | `perfr-object` reads them; the service never does |
 | `.gnu_debuglink` | **partial** | Parsed by the library; the service does not follow it, so split-debug binaries resolve to `module+0x…` |
 | Demangling | **none** in the service | C++ names show as `_Z…` in reports and the timeline |
 | Disassembly view | **none** | The library decodes instructions for trampolines; there is no UI |
@@ -82,17 +82,17 @@ Roughly: **2 done, 6 partial, 9 none** of 17.
 
 ## 5. Capture files — a deliberate non-goal
 
-C++ writes and reads `.orbit` files through `src/CaptureFile`. The Rust
-service writes the pod wire format in `orbit-wire` instead — one tag byte and
-fixed little-endian fields — and does not read or write `.orbit`.
+C++ writes and reads `.perfr` files through `src/CaptureFile`. The Rust
+service writes the pod wire format in `perfr-wire` instead — one tag byte and
+fixed little-endian fields — and does not read or write `.perfr`.
 
 **This is a decision, not a gap.** Legacy capture files are explicitly out of
 scope, so `src/CaptureFile` has no counterpart to port and none is planned.
-The pod format is not a partial replacement for `.orbit`; it is what replaces
+The pod format is not a partial replacement for `.perfr`; it is what replaces
 it.
 
 What the port does still owe here is its own round trip: the service writes
-pod files and `orbit-pod-dump` reads them, but the viewer cannot open one, so
+pod files and `perfr-pod-dump` reads them, but the viewer cannot open one, so
 a capture is live-only. That is a real gap and it is about the *new* format,
 not the old one. (The Open button loads Chrome Trace Event JSON, which is an
 import path for other tools' data and unrelated to either.)
@@ -123,10 +123,10 @@ capture path, the unwinder, the ELF reader and the report views are done and
 verified against the C++ where a differential was possible. What it is not
 yet is a *general* profiler. The three gaps that matter most, in order:
 
-1. **Manual instrumentation (`enable_api`).** This is how most Orbit users
+1. **Manual instrumentation (`enable_api`).** This is how most perfr users
    actually get their spans, and nothing receives those events.
 2. **Dynamic instrumentation that demonstrably works.** Uprobes are written
-   but unproven, and the user-space trampolines — Orbit's default and much
+   but unproven, and the user-space trampolines — perfr's default and much
    cheaper method — are never installed into a live process.
 3. **Thread states beyond RUNNING** — *written, unverified.* The tracepoints,
    the payload parsing and the ported state machine are wired together, and
@@ -138,5 +138,5 @@ yet is a *general* profiler. The three gaps that matter most, in order:
 After those: memory tracking, frame tracks, and opening a saved pod capture in
 the viewer, which today can only show a live one. Demangling is small and
 disproportionately visible — every C++ symbol in every report is currently
-unreadable. Reading legacy `.orbit` files is not on this list and will not be:
+unreadable. Reading legacy `.perfr` files is not on this list and will not be:
 see section 5.

@@ -2,11 +2,11 @@
 
 - time: 2026-09-20T23:24:27Z
 - project: `/home/pierric/git/stockfish`
-- config: `/tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/stockfish.toml`
+- config: `/tmp/claude-1000/-home-pierric-git-perfr/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/stockfish.toml`
 - metric: **nps** mean 1441316.5 ± 2974.335724157581 (4×)
 - fingerprint: 1659671
 - correctness: True
-- profile backend: orbit-http
+- profile backend: perfr-http
 
 | % self | symbol |
 | ---: | --- |

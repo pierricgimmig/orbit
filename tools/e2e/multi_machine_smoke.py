@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -74,7 +74,7 @@ def read_line_within(child, seconds):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--service', required=True)
-    parser.add_argument('--target', required=True, help='OrbitTestRust (any instrumented target works)')
+    parser.add_argument('--target', required=True, help='PerfrTestRust (any instrumented target works)')
     parser.add_argument('--seconds', type=float, default=2.0)
     parser.add_argument('--band-us', type=float, default=1000.0,
                         help='the alignment error allowed for spans crossing the link on one box')
@@ -87,17 +87,17 @@ def main():
     remote = requester(f'http://127.0.0.1:{remote_port}')
 
     # On Windows a service finds instrumented processes under
-    # %LOCALAPPDATA%\Orbit\scopes. Give the remote and its target a directory
+    # %LOCALAPPDATA%\perfr\scopes. Give the remote and its target a directory
     # of their own, so the hub can only see the target through the link; on
     # Linux and macOS every service on the box shares the segments, and the
     # presence check below holds either way.
     remote_env = dict(os.environ)
-    scratch = tempfile.mkdtemp(prefix='orbit-remote-')
+    scratch = tempfile.mkdtemp(prefix='perfr-remote-')
     if sys.platform == 'win32':
         remote_env['LOCALAPPDATA'] = scratch
-    api_lib = next((p for p in (Path(service_path).with_name(n) for n in ('orbit_api.dll', 'liborbit_api.so', 'liborbit_api.dylib')) if p.is_file()), None)
+    api_lib = next((p for p in (Path(service_path).with_name(n) for n in ('perfr_api.dll', 'libperfr_api.so', 'libperfr_api.dylib')) if p.is_file()), None)
     if api_lib:
-        remote_env['ORBIT_API_LIB'] = str(api_lib)
+        remote_env['PERFR_API_LIB'] = str(api_lib)
 
     with tempfile.TemporaryFile(mode='w+') as hub_log, tempfile.TemporaryFile(mode='w+') as remote_log:
         hub_proc = subprocess.Popen([service_path, '--host', '127.0.0.1', '--serve', str(hub_port)], stdout=hub_log, stderr=hub_log)

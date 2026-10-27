@@ -1,5 +1,5 @@
 // Harness: headful Chrome on an Xvfb display, a synthetic cursor overlay, eased mouse helpers,
-// label lookup through the viewer's window.__orbit_ui, and lossless ffmpeg x11grab recording.
+// label lookup through the viewer's window.__perfr_ui, and lossless ffmpeg x11grab recording.
 import pkg from "playwright-core"; import fs from "fs"; import { spawn, execFileSync } from "child_process";
 const { chromium } = pkg;
 
@@ -60,10 +60,10 @@ export async function launch(opts) {
   const H = {
     W, H: HH, DPR, PW, PH, sleep, log: LOG, get page() { return page; }, get pos() { return pos; },
     // --- selectors: the viewer is an egui canvas, so there is no DOM to query. The viewer publishes
-    // window.__orbit_ui = [[label, x, y, w, h], ...] for every pill / tab / menu item / row it painted
-    // this frame, and window.__orbit_sel (JSON state). These are the only stable hooks.
+    // window.__perfr_ui = [[label, x, y, w, h], ...] for every pill / tab / menu item / row it painted
+    // this frame, and window.__perfr_sel (JSON state). These are the only stable hooks.
     // A label can appear more than once (e.g. tree:run_frame in several call paths): keep the first one that is on screen.
-    async rects() { const t = await page.evaluate(() => window.__orbit_ui || "[]"); const m = {};
+    async rects() { const t = await page.evaluate(() => window.__perfr_ui || "[]"); const m = {};
       const on = (r) => r && r[1] >= 0 && r[1] + r[3] <= HH && r[0] >= 0 && r[0] + r[2] <= W;
       for (const [l, x, y, w, h] of JSON.parse(t)) { const r = [x, y, w, h]; if (!m[l] || (!on(m[l]) && on(r))) m[l] = r; } return m; },
     // Timeline scopes carry no label: their y is derived from the thread's sample bar (layout constants of
@@ -79,7 +79,7 @@ export async function launch(opts) {
       const t0 = Date.now(); for (;;) { const r = await H.find(label, { prefix, re }); if (r) return r; if (Date.now() - t0 > timeout) throw new Error(`label not found: ${re || label}`); await sleep(200); }
     },
     async center(label, o = {}) { const r = await H.waitFor(label, o); return [r[0] + r[2] / 2, r[1] + r[3] / 2]; },
-    async sel() { return JSON.parse(await page.evaluate(() => window.__orbit_sel || "null")); },
+    async sel() { return JSON.parse(await page.evaluate(() => window.__perfr_sel || "null")); },
     async waitSel(pred, timeout = 20000) { const t0 = Date.now(); for (;;) { const s = await H.sel(); if (s && pred(s)) return s; if (Date.now() - t0 > timeout) throw new Error("waitSel timeout"); await sleep(250); } },
     // Is a pill "on"? Pills have no state readout, so sample the pill's pixels: a filled (on) pill is
     // painted with the accent colour, an off pill is the dark input colour. Returns mean luminance 0..255.

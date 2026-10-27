@@ -1,4 +1,4 @@
-<!-- Copyright (c) 2026 The Orbit Authors. All rights reserved.
+<!-- Copyright (c) 2026 The perfr Authors. All rights reserved.
      Use of this source code is governed by a BSD-style license that can be
      found in the LICENSE file. -->
 
@@ -13,14 +13,14 @@ worker pool needs. Standard library only.
 
 ```
 python3 tools/site/build_site.py                       # captures Box3D for the front page
-python3 tools/site/build_site.py --bundle my.orbit.zip # or a saved capture
-python3 tools/site/build_site.py --stream my.orbit.stream
+python3 tools/site/build_site.py --bundle my.perfr.zip # or a saved capture
+python3 tools/site/build_site.py --stream my.perfr.stream
 python3 tools/site/serve.py --dir site --port 8081     # http://<lan address>:8081/
 ```
 
 ## The embedded capture
 
-The viewer can open a `.orbit.stream` file instead of connecting to a
+The viewer can open a `.perfr.stream` file instead of connecting to a
 service: `viewer/index.html?capture=<url>`. The file is exactly the frames a
 connecting viewer receives (`GET /api/capture/export?format=stream`): the
 Hello, every interned name, thread and process names, the status, the
@@ -37,14 +37,14 @@ Open, Clear, Save, the process row, Modules, and hooking.
 
 ## Shared captures
 
-The same viewer opens S3 captures shared from OrbitService. Configure the
+The same viewer opens S3 captures shared from PerfrService. Configure the
 bucket and website viewer URL using [the sharing setup](../sharing/README.md).
 Share links include a complete archive download alongside the browser stream.
 
 ## Hosting
 
 The output is plain files. Links and asset URLs are relative, so the same
-tree works at a domain root and under a project-site prefix (`/orbit/` on
+tree works at a domain root and under a project-site prefix (`/perfr/` on
 GitHub Pages). Nothing is baked as `/manual/...` or `/viewer/...`, and there
 is no `CNAME`: a custom domain can be pointed at Pages later without a
 rebuild.
@@ -59,7 +59,7 @@ name an icon get a relative `favicon.png` link; without one, the browser
 requests `/favicon.ico` from the host root and 404s on a project site.
 
 `.github/workflows/pages.yml` builds the viewer pack, then this script with
-the saved stream `docs/blog/captures/ghosts-on.orbit.stream` (CI has no
+the saved stream `docs/blog/captures/ghosts-on.perfr.stream` (CI has no
 process to capture), and deploys the `site/` tree to Pages.
 
 `site/` is ignored by git; the inputs are.
@@ -74,8 +74,8 @@ not edited by hand.
 
 ```bash
 cd tools/media-kit
-./generate.sh --ref <git-ref> --out /tmp/orbit-media   # service + VM + scenes
-python3 publish_site_media.py --from /tmp/orbit-media  # MP4 + JPEG posters
+./generate.sh --ref <git-ref> --out /tmp/perfr-media   # service + VM + scenes
+python3 publish_site_media.py --from /tmp/perfr-media  # MP4 + JPEG posters
 ```
 
 `publish_site_media.py` writes into `tools/site/media/` (H.264, no audio, max
@@ -85,21 +85,21 @@ Do not point `generate.sh --out` at `tools/site/media`. Then rebuild
 this site as usual. The kit's own README is `tools/media-kit/README.md`.
 
 
-## Served by orbit-service (dev only)
+## Served by perfr (dev only)
 
-`orbit-service` serves a built site at `/site`, straight from disk -- a
+`perfr` serves a built site at `/site`, straight from disk -- a
 dev convenience while there is no public site, so nothing is baked into
 the binary. Build the site for the service and run the service from the
 repo root:
 
 ```
 python3 tools/site/build_site.py --service
-orbit-service --serve 44766     # run from the repo root, where ./site is
+perfr --serve 44766     # run from the repo root, where ./site is
 ```
 
 `--service` builds a site that carries no viewer copy of its own: its
 embeds point at the service's viewer at `/`, and the capture files under
 `site/` are the only large payload. The service finds `./site` in the
-working directory, or `ORBIT_SITE_DIR` if set. The viewer's More menu has
+working directory, or `PERFR_SITE_DIR` if set. The viewer's More menu has
 a "Website & docs" link to `/site`. Nothing is added to the binary, and
 `/site` shows a short note when no site is found.

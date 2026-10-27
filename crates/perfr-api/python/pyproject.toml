@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "perfr-api"
+version = "0.1.0"
+description = "perfr manual instrumentation for Python: scopes, instants, links and values on a timeline a running perfr draws"
+readme = "README.md"
+license = "BSD-2-Clause"
+requires-python = ">=3.8"
+authors = [{ name = "The perfr Authors" }]
+keywords = ["profiling", "tracing", "instrumentation", "perfr"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Debuggers",
+  "Topic :: System :: Monitoring",
+]
+
+[project.urls]
+Homepage = "https://github.com/perfr/perfr"
+Source = "https://github.com/perfr/perfr/tree/main/crates/perfr-api/python"
+
+[tool.setuptools]
+packages = ["perfr_api"]
+
+# The prebuilt producer library ships inside the wheel. It is dropped into the
+# package by tools/release/build_wheels.sh before the wheel is built; a plain
+# `pip install .` from a checkout has no library and installs a pure no-op
+# package, which is the right behaviour for a source install.
+[tool.setuptools.package-data]
+perfr_api = ["libperfr_api.so", "libperfr_api.dylib", "perfr_api.dll"]

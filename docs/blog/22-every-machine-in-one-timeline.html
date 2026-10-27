@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
-<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<script>try{var t=localStorage.getItem("perfr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 <meta charset="utf-8">
 <title>Every Machine in One Timeline — Orbit</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -658,12 +658,12 @@
 body{font-family:var(--body);}
 h1,h2,h3,h4,h5,h6{font-family:var(--display);}
 code,pre,kbd,samp,tt{font-family:var(--mono);}
-.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+.perfr-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
   display:inline-flex;align-items:center;gap:.4rem;
   font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
   color:var(--muted);background:var(--surface);border:1px solid var(--line);
   border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
-.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+.perfr-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
 </style>
 <style>
 .diagram { overflow-x:auto; padding:16px 8px; background:var(--surface); border:1px solid var(--line); border-radius:10px; }
@@ -931,13 +931,13 @@ kbd.ui { font-family:var(--mono); font-size:.85em; background:var(--surface-2); 
 <p>Answer those and phase 0 starts the same day; it is a script and a frame, and its output decides how much of the clock section survives contact with the network.</p>
 </article>
 <footer><div class="footer-inner">Post 22 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="21-the-first-few-bytes.html">&larr; Post 21</a><br>Tree read at: <a href="https://github.com/pierricgimmig/orbit/tree/54816e58b">54816e58b</a> &middot; Status: proposal, nothing implemented</div></footer>
-<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<button class="perfr-theme-toggle" id="perfr-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
 <script>
 (function(){
-  var b=document.getElementById("orbit-theme-toggle");
+  var b=document.getElementById("perfr-theme-toggle");
   function cur(){return document.documentElement.getAttribute("data-theme")||"light";}
   function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}
-  lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});
+  lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("perfr-theme",n);}catch(e){}lab();});
 })();
 </script>
 </body></html>

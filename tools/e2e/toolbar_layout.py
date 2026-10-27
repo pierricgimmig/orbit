@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -49,13 +49,13 @@ with sync_playwright() as playwright:
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(args.url + '?trace=/toolbar-fixture.json')
-    page.wait_for_function('window.__orbit_ui')
+    page.wait_for_function('window.__perfr_ui')
     def rows():
-        return json.loads(page.evaluate('window.__orbit_ui'))
+        return json.loads(page.evaluate('window.__perfr_ui'))
     def state():
-        return json.loads(page.evaluate('window.__orbit_sel'))
+        return json.loads(page.evaluate('window.__perfr_sel'))
     def rect(label):
-        page.wait_for_function("label => JSON.parse(window.__orbit_ui).some(r => r[0] === label)", arg=label)
+        page.wait_for_function("label => JSON.parse(window.__perfr_ui).some(r => r[0] === label)", arg=label)
         return next(r for r in rows() if r[0] == label)
     def click(label):
         _, x, y, w, h = rect(label)
@@ -76,7 +76,7 @@ with sync_playwright() as playwright:
     visible = [r for r in rows() if r[0].startswith('visible-process:')]
     assert 20 <= len(visible) <= 21, visible
     assert all(r[2] >= 0 and r[2] + r[4] <= 800 for r in visible), visible
-    page.screenshot(path='/tmp/orbit-process-menu.png')
+    page.screenshot(path='/tmp/perfr-process-menu.png')
     assert rect('active-process:43')
     page.keyboard.press('ArrowDown')
     page.wait_for_timeout(150)
@@ -171,14 +171,14 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(700)
     assert state()['tab'] == 'Selection' and state()['report_open'], state()
     assert state()['rect'], state()
-    page.screenshot(path='/tmp/orbit-toolbar-selection.png')
+    page.screenshot(path='/tmp/perfr-toolbar-selection.png')
     click('selection:copy')
     click('selection:clear')
     assert not state()['rect'] and state()['report_open'], state()
     click('Inspector')
-    page.screenshot(path='/tmp/orbit-toolbar-inspector.png')
+    page.screenshot(path='/tmp/perfr-toolbar-inspector.png')
     page.keyboard.press('F2')
-    page.wait_for_function('window.__orbit_self')
+    page.wait_for_function('window.__perfr_self')
     page.keyboard.press('F2')
     page.wait_for_timeout(300)
     assert not errors, errors

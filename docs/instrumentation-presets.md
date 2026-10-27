@@ -15,7 +15,7 @@ like the Functions tab's Hooked column.
 
 The files are suitable for version control and sharing. They contain module
 **filenames** and exact function names (including overload signatures), never
-installation directories, process IDs, addresses, or Orbit's runtime function IDs.
+installation directories, process IDs, addresses, or perfr's runtime function IDs.
 The Rust service resolves them against the selected process's complete symbol
 index, independently of the Functions tab's result limit.
 
@@ -33,7 +33,7 @@ Moving an installation does not invalidate a preset. Renaming modules, changing
 symbol names, or switching to a build without the same symbols can leave entries
 unresolved. Library filenames may differ between operating systems. Presets do
 not use fuzzy matching or silently substitute another overload. If several
-addresses have the same module/name pair, Orbit reports it as ambiguous and
+addresses have the same module/name pair, perfr reports it as ambiguous and
 skips it. The results list matched, added, missing and ambiguous entries; expand
 **Details** to inspect them or copy the full unresolved list.
 

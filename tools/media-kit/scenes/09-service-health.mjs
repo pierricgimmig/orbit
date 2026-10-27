@@ -1,4 +1,4 @@
-// The service profiles itself: orbit-service's own thread scopes and lanes (perf ring fill %, scope ring fill,
+// The service profiles itself: perfr's own thread scopes and lanes (perf ring fill %, scope ring fill,
 // records lost, viewer ring fill, events per pass, service cpu %, service rss MiB), read with the cursor line.
 import { reportOpen, api, zoomTo } from "./_common.mjs";
 const expanded = async (H, svc) => (await H.labels()).some((l) => l.startsWith(`row:thread:${svc}:`));

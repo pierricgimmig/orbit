@@ -20,14 +20,14 @@ macOS sampling/scheduling remain roadmap work.
 **Windows x86-64 (2026-10-17, on a Windows 11 box; CI on `windows-2022`).**
 Everything the brief listed, built and run on the OS:
 
-- The producer: `orbit-scope-ring/src/shm_windows.rs`, a file-backed section
-  per process under `%LOCALAPPDATA%\Orbit\scopes` (the macOS pattern, so
+- The producer: `perfr-scope-ring/src/shm_windows.rs`, a file-backed section
+  per process under `%LOCALAPPDATA%\perfr\scopes` (the macOS pattern, so
   discovery is a directory listing); rings mapped read-only and the control
   page read-write as two views of one section; the producer lease a
   `LockFileEx` byte-range lock; unlink-while-mapped done by renaming out of
   the namespace plus `FILE_FLAG_DELETE_ON_CLOSE`, because NTFS will not
   delete a mapped file. The crate's tests pass unchanged plus Windows ones.
-- The scheduler and sampling: `crates/orbit-etw`, the NT Kernel Logger
+- The scheduler and sampling: `crates/perfr-etw`, the NT Kernel Logger
   through hand-declared advapi32 bindings (not ferrisetw: the classic kernel
   events are decoded from their fixed MOF layouts, after the C++ tracer lost
   every `CSwitch` through TDH on a newer Windows, `52787b085`). Context
@@ -36,7 +36,7 @@ Everything the brief listed, built and run on the OS:
   feed. Stack walks become samples with the kernel half dropped and a
   deferred user half merged. The session needs an elevated token; the
   capture degrades to scopes and hooks without one and says so.
-- The service: `orbit-service/src/windows.rs`, the capture loop with the
+- The service: `perfr/src/windows.rs`, the capture loop with the
   Linux loop's scope names; processes and threads from
   `NtQuerySystemInformation`, modules from Toolhelp, symbols from PDBs,
   export tables and exception tables, MSVC demangling.
@@ -58,7 +58,7 @@ not a test pass. The atomics were already chosen for ARM (release stores are
 `stlr`), and the risk on real hardware is the perf_event and `/proc` layers,
 which are Linux-generic not arch-specific.
 
-**Symbol and debug-info reading is already cross-platform.** `orbit-object`
+**Symbol and debug-info reading is already cross-platform.** `perfr-object`
 uses `object`, `gimli`, `pdb` and `msvc-demangler` -- all pure Rust, all
 parse-in-place, no DIA and no LLVM. PDB reading (`load_pdb_symbols`,
 `pdb_info`) and MSVC demangling exist and are exercised by the differential
@@ -67,7 +67,7 @@ essentially already there; the `pdb` crate is the willglynn one the brief
 names. No feature gate is needed because it is pure Rust that builds
 everywhere.
 
-**The producer's OS surface is abstracted.** `orbit-scope-ring::platform` is
+**The producer's OS surface is abstracted.** `perfr-scope-ring::platform` is
 the entire non-portable surface of the manual-instrumentation producer: a
 monotonic clock and a thread id. Linux is runtime-tested; macOS compile-checks
 and uses `CLOCK_MONOTONIC` plus `pthread_threadid_np`. The
@@ -142,12 +142,12 @@ Linux-only.
 
 ## Backend switch
 
-The Linux port's `ORBIT_BACKEND` env var (`cpp` / `rust` / `both`) selects the
+The Linux port's `PERFR_BACKEND` env var (`cpp` / `rust` / `both`) selects the
 capture backend and, in `both`, runs both and fails on disagreement. The
 cross-platform version keeps that seam: `SchedulingSource` and the symbol
 readers are already behind trait boundaries, so the OS backend is chosen at
 `cfg` time and the differential harness runs per-OS in that OS's CI. The
-differential oracle is the C++ Orbit, which itself only runs on Linux and
+differential oracle is the C++ perfr, which itself only runs on Linux and
 Windows -- so the macOS differential has no oracle and must be validated
 against `kdebug`'s own `trace` output instead, which is a weaker check and
 should be stated as such.

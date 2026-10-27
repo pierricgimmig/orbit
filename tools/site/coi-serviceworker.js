@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The Orbit Authors. All rights reserved.
+// Copyright (c) 2026 The perfr Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,7 +22,7 @@
 //
 // If registration fails, or the browser ignores the headers, the script
 // stops after one reload. The viewer then stays on its sequential lane walk.
-// A page that is already isolated (orbit-service, tools/site/serve.py) does
+// A page that is already isolated (perfr, tools/site/serve.py) does
 // not register a worker.
 
 if (typeof window === "undefined") {
@@ -97,7 +97,7 @@ if (typeof window === "undefined") {
   }
 } else {
   (function () {
-    const KEY = "orbit-coi-reloads";
+    const KEY = "perfr-coi-reloads";
     let storage;
     try {
       storage = window.sessionStorage;

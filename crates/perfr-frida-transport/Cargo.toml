@@ -1,0 +1,18 @@
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "perfr-frida-transport"
+version = "0.1.0"
+description = "Capture lease and counters shared between the service, the helper and the agent"
+edition = "2021"
+license = "BSD-2-Clause"
+
+[dependencies]
+libc = "0.2"
+serde_json = "1"
+perfr-scope-ring = { path = "../perfr-scope-ring" }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,422 @@
+// Copyright (c) 2026 The perfr Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+use perfr_live_event::{kind, LiveEvent, LIVE_EVENT_SIZE};
+use perfr_live_protocol::{decode_all, LiveFrame, VERSION};
+use perfr_live_ring::read_spill_file;
+
+use crate::{LiveService, ServerConfig};
+
+fn small_cfg() -> ServerConfig {
+    ServerConfig {
+        ring_buffer_bytes: (LIVE_EVENT_SIZE * 1024) as u64,
+        ..ServerConfig::default()
+    }
+}
+
+fn ev(i: u64) -> LiveEvent {
+    LiveEvent {
+        start_ns: i * 10,
+        duration_ns: 4,
+        tid: 1,
+        pid: 1,
+        kind: kind::API_SCOPE,
+        depth: 0,
+        extra: 0,
+        _pad: 0,
+        name_id: i as u32,
+    }
+}
+
+#[test]
+fn snapshot_frames_are_decodable_hello_status_and_events() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.intern_string("main");
+    svc.push_events(&[ev(1), ev(2), ev(3)]);
+    let mut bytes = Vec::new();
+    for frame in svc.hello_and_snapshot_frames() {
+        bytes.extend_from_slice(&frame);
+    }
+    let frames = decode_all(&bytes).unwrap();
+    assert!(matches!(
+        frames[0],
+        LiveFrame::Hello {
+            version: VERSION,
+            ..
+        }
+    ));
+    assert!(frames
+        .iter()
+        .any(|f| matches!(f, LiveFrame::InternedString { text, .. } if text == "main")));
+    let events: Vec<_> = frames
+        .iter()
+        .filter_map(|f| match f {
+            LiveFrame::EventBatch { events } => Some(events.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[2].name_id, 3);
+}
+
+#[test]
+fn paired_api_scopes_become_duration_events_on_the_stream() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    let name = svc.intern_string("scope");
+    svc.ingest_scope_start(1, 9, 100, 0, name);
+    svc.ingest_scope_stop(1, 9, 180);
+    let (_, snap) = svc.ring().snapshot();
+    assert_eq!(snap.len(), 1);
+    assert_eq!(snap[0].duration_ns, 80);
+    assert_eq!(snap[0].kind, kind::API_SCOPE);
+}
+
+#[test]
+fn spill_from_service_ring_does_not_corrupt_live_snapshot() {
+    let dir = std::env::temp_dir().join(format!("perfr-live-svc-spill-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut cfg = ServerConfig::default();
+    cfg.ring_buffer_bytes = (perfr_live_event::LIVE_EVENT_SIZE * 4) as u64;
+    cfg.spill_path = Some(dir.clone());
+    let svc = LiveService::new(cfg).unwrap();
+    for i in 0..10 {
+        svc.push_event(ev(i));
+    }
+    svc.ring().flush_spill().unwrap();
+    let (_, live) = svc.ring().snapshot();
+    assert_eq!(live.len(), 4);
+    assert_eq!(live[0].name_id, 6);
+    let spilled = read_spill_file(&svc.ring().spill_path().unwrap()).unwrap();
+    assert_eq!(spilled.len(), 6);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn timeline_uses_instanced_lod_for_wide_perfr_colored_scopes() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.push_events(&[LiveEvent {
+        start_ns: 0,
+        duration_ns: 50_000_000,
+        tid: 100,
+        pid: 1,
+        kind: kind::API_SCOPE,
+        depth: 1,
+        extra: 0,
+        _pad: 0,
+        name_id: 1,
+    }]);
+    let index = svc.build_index();
+    assert_eq!(
+        perfr_live_render::choose_lod(
+            &index,
+            0,
+            50_000_000,
+            200,
+            perfr_live_render::INSTANCE_MIN_PX
+        ),
+        perfr_live_render::TimelineLod::Instanced
+    );
+    assert_eq!(
+        index.lanes().next().unwrap().1.events()[0].color_rgba(),
+        perfr_live_event::named_scope_color(&1u32.to_le_bytes(), 1)
+    );
+}
+
+#[test]
+fn frame_body_is_16_byte_header_plus_exact_rgba() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.push_events(&[ev(1), ev(2)]);
+    let raster = svc.rasterize_frame(Some(0), Some(40), 32);
+    let body = crate::http::encode_raster_body(&raster);
+    let width = u32::from_le_bytes(body[0..4].try_into().unwrap()) as usize;
+    let lanes = u32::from_le_bytes(body[4..8].try_into().unwrap()) as usize;
+    assert_eq!(width, raster.width);
+    assert_eq!(lanes, raster.lanes.len());
+    assert_eq!(body.len(), 16 + width * lanes * 4);
+    assert_eq!(&body[16..], raster.to_rgba8());
+}
+
+#[test]
+fn demo_thread_names_are_interned_for_the_rail() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.intern_id(100, "Main");
+    svc.intern_id(101, "Worker-1");
+    let intern = svc.hello_and_snapshot_frames();
+    let mut bytes = Vec::new();
+    for frame in intern {
+        bytes.extend_from_slice(&frame);
+    }
+    let frames = decode_all(&bytes).unwrap();
+    let texts: Vec<_> = frames
+        .iter()
+        .filter_map(|f| match f {
+            LiveFrame::InternedString { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(texts.contains(&"Main"));
+    assert!(texts.contains(&"Worker-1"));
+}
+
+#[test]
+fn demo_scope_names_are_interned_as_words() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    crate::demo::intern_demo_names(&svc);
+    let intern = svc.intern.lock();
+    assert_eq!(intern.get(100), Some("Main"));
+    assert_eq!(intern.get(10), Some("Async"));
+    assert_eq!(intern.get(crate::demo::DEMO_SCOPE_BASE), Some("Tick"));
+    assert_eq!(intern.get(crate::demo::DEMO_SCOPE_BASE + 1), Some("Simulate"));
+    assert_eq!(intern.get(crate::demo::DEMO_ASYNC_BASE), Some("GpuSubmit"));
+    assert_eq!(intern.get(crate::demo::DEMO_ASYNC_BASE + 3), Some("Encode"));
+    assert_eq!(intern.get(600), Some("values"));
+    assert_eq!(intern.get(5_100), Some("sine"));
+    assert_eq!(intern.get(5_101), Some("cosine"));
+    assert_eq!(
+        intern.get(crate::demo::scope_name_id(0, 0, 0)),
+        Some("Tick")
+    );
+}
+
+#[test]
+fn demo_stop_clears_status_flag_and_allows_restart() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let svc = LiveService::new(small_cfg()).unwrap();
+        crate::demo::start(&svc, 1_000).unwrap();
+        assert!(svc.demo.load(std::sync::atomic::Ordering::Relaxed));
+        crate::demo::stop(&svc);
+        assert!(
+            !svc.demo.load(std::sync::atomic::Ordering::Relaxed),
+            "stop must clear status.demo immediately"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        assert!(!svc.demo.load(std::sync::atomic::Ordering::Relaxed));
+        crate::demo::start(&svc, 1_000).expect("stop must release the producer");
+        crate::demo::stop(&svc);
+    });
+}
+
+#[test]
+fn demo_emits_three_processes_not_self_pids() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    crate::demo::intern_demo_names(&svc);
+    let json = crate::demo::process_list_json();
+    let list: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+    let pids: Vec<u64> = list
+        .iter()
+        .map(|v| v["pid"].as_u64().expect("pid"))
+        .collect();
+    assert!(json.contains("perfr-demo"));
+    assert!(json.contains("perfr-render"));
+    assert!(json.contains("perfr-audio"));
+    assert!(pids.contains(&1));
+    assert!(pids.contains(&10));
+    assert!(pids.contains(&11));
+    assert!(pids.contains(&20));
+    assert!(pids.contains(&21));
+    assert!(!pids.contains(&2), "must not reuse reserved viewer pid");
+    assert!(!pids.contains(&3), "must not reuse reserved service pid");
+}
+
+#[test]
+fn capture_start_json_includes_sampling_and_hooks() {
+    let body = crate::http::StartBody {
+        pid: 42,
+        enable_api: true,
+        context_switches: true,
+        thread_states: true,
+        sampling: true,
+        samples_per_second: 1000.0,
+        unwinding: "dwarf".into(),
+        dynamic_instrumentation_method: "user_space".into(),
+        instrumented_functions: vec![crate::http::InstrumentedFnRef { function_id: 7 }],
+        show_all_processes: false,
+        uprobe_duplicate_filter: true,
+        max_hook_calls_per_s: None,
+        auto_profile: false,
+    };
+    let json = body.to_json();
+    assert!(json.contains("\"pid\":42"));
+    assert!(json.contains("\"show_all_processes\":false"));
+    assert!(json.contains("\"samples_per_second\":1000"));
+    assert!(json.contains("\"unwinding\":\"dwarf\""));
+    assert!(json.contains("\"function_id\":7"));
+    assert!(!json.contains("elf"));
+}
+
+#[test]
+fn status_reports_hooks_false_without_control_hooks() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    assert!(!svc.has_hooks());
+}
+
+#[test]
+fn capture_stop_without_hooks_stops_demo() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let svc = LiveService::new(small_cfg()).unwrap();
+        crate::demo::start(&svc, 50_000).unwrap();
+        assert!(svc.demo.load(std::sync::atomic::Ordering::Relaxed));
+        crate::demo::stop(&svc);
+        svc.mark_capture_finished();
+        assert!(!svc.demo.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!svc.capturing.load(std::sync::atomic::Ordering::Relaxed));
+    });
+}
+
+#[test]
+fn sample_stack_ingest_paints_named_function_calls() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    let root = svc.intern_string("main");
+    let leaf = svc.intern_string("foo::Bar");
+    let evs = svc
+        .pairer
+        .lock()
+        .sample_stack(9, 11, 1_000, 1_000_000, &[root, leaf]);
+    svc.push_events(&evs);
+    let snap = svc.ring().snapshot().1;
+    assert_eq!(snap.len(), 2);
+    assert_eq!(snap[0].kind, kind::FUNCTION_CALL);
+    assert_eq!(snap[0].name_id, root);
+    assert_eq!(snap[0].depth, 0);
+    assert_eq!(snap[1].name_id, leaf);
+    assert_eq!(snap[1].depth, 1);
+    assert_eq!(snap[0].duration_ns, 1_000_000);
+}
+
+#[test]
+fn function_call_ingest_uses_interned_pretty_name() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    let name_id = svc.intern_string("HookMe");
+    let ev = svc
+        .pairer
+        .lock()
+        .function_call(1, 2, name_id, 40, 140, 0);
+    svc.push_event(ev);
+    let snap = svc.ring().snapshot().1;
+    assert_eq!(snap[0].name_id, name_id);
+    assert_eq!(svc.intern.lock().get(snap[0].name_id), Some("HookMe"));
+}
+
+#[test]
+fn thread_and_process_names_are_replayed_to_a_late_subscriber() {
+    use perfr_live_protocol::{decode_frame, LiveFrame};
+    let svc = crate::LiveService::new(crate::ServerConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        ring_buffer_bytes: 1 << 20,
+        spill_path: None,
+        wire: crate::WireFormat::default(),
+    })
+    .unwrap();
+    svc.set_thread_name(7, 70, "Worker-1");
+    svc.set_process_name(7, "game");
+    let mut seen_thread = false;
+    let mut seen_process = false;
+    for bytes in svc.hello_and_snapshot_frames() {
+        let (frame, _) = decode_frame(&bytes).unwrap();
+        match frame {
+            LiveFrame::ThreadName { pid, tid, name } => {
+                assert_eq!((pid, tid, name.as_str()), (7, 70, "Worker-1"));
+                seen_thread = true;
+            }
+            LiveFrame::ProcessName { pid, name } => {
+                assert_eq!((pid, name.as_str()), (7, "game"));
+                seen_process = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(seen_thread && seen_process);
+    let (threads, processes) = svc.capture_names();
+    assert_eq!(threads, vec![((7, 70), "Worker-1".to_string())]);
+    assert_eq!(processes, vec![(7, "game".to_string())]);
+    svc.clear_names();
+    assert!(svc.capture_names().0.is_empty());
+}
+
+#[test]
+fn nothing_from_before_the_capture_start_reaches_the_ring() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    // The handler's provisional start, then the loop's real one.
+    svc.mark_capture_started(7, 0);
+    assert_eq!(svc.capture_start_ns(), 0);
+    svc.mark_capture_started(7, 1_000);
+    assert_eq!(svc.capture_start_ns(), 1_000);
+    // A later provisional 0 (a second Record) does not forget the clock.
+    svc.mark_capture_started(7, 0);
+    assert_eq!(svc.capture_start_ns(), 1_000);
+    svc.push_event(ev(50)); // start 500: before
+    svc.push_events(&[ev(90), ev(100), ev(200)]); // 900 before, 1000 and 2000 in
+    assert_eq!(svc.stats().events_live, 2);
+    assert_eq!(svc.dropped_before_start(), 2);
+    assert_eq!(svc.stats().oldest_start_ns, 1_000);
+    // A scope opened before the capture and closed inside it is not paired.
+    svc.ingest_scope_start(7, 1, 900, 0, 3);
+    svc.ingest_scope_stop(7, 1, 1_500);
+    assert_eq!(svc.stats().events_live, 2, "the straddling scope was refused");
+    assert_eq!(svc.dropped_before_start(), 3);
+    svc.ingest_scope_start(7, 1, 1_100, 0, 3);
+    svc.ingest_scope_stop(7, 1, 1_500);
+    assert_eq!(svc.stats().events_live, 3, "a scope inside the capture lands");
+    // Clear forgets the clock; a capture with no known start guards nothing.
+    svc.clear_capture().unwrap();
+    assert_eq!(svc.capture_start_ns(), 0);
+    svc.push_event(ev(50));
+    assert_eq!(svc.stats().events_live, 1);
+    assert_eq!(svc.dropped_before_start(), 0);
+}
+
+#[test]
+fn a_provisional_start_after_the_real_one_is_not_broadcast() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    let mut rx = svc.subscribe();
+    let started = |rx: &mut tokio::sync::broadcast::Receiver<Vec<u8>>| {
+        let mut starts = Vec::new();
+        while let Ok(bytes) = rx.try_recv() {
+            for frame in decode_all(&bytes).unwrap() {
+                if let LiveFrame::CaptureStarted { start_ns, .. } = frame {
+                    starts.push(start_ns);
+                }
+            }
+        }
+        starts
+    };
+    // The usual order: the handler's 0, then the loop's clock. Both reach
+    // the viewers, which take the second as the capture's origin.
+    svc.mark_capture_started(7, 0);
+    svc.mark_capture_started(7, 1_000);
+    assert_eq!(started(&mut rx), vec![0, 1_000]);
+    // The race lost: the loop marked first. The handler's 0 would have
+    // told every viewer to start over at origin 0; it is swallowed.
+    svc.mark_capture_finished();
+    svc.mark_capture_started(7, 2_000);
+    svc.push_events(&[ev(300)]);
+    svc.mark_capture_started(7, 0);
+    assert_eq!(started(&mut rx), vec![2_000]);
+    assert_eq!(svc.capture_start_ns(), 2_000);
+    assert_eq!(svc.live_end_ns(), 3_004, "the live edge was not reset by the late 0");
+    assert!(svc.is_capturing());
+}
+
+#[test]
+fn stream_slice_keeps_events_crossing_both_edges_and_normalizes_bounds() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    let mut crossing = ev(1); crossing.duration_ns = 100;
+    svc.push_events(&[ev(0), crossing, ev(5), ev(20)]);
+    let frames = decode_all(&svc.capture_stream(Some((60, 50)))).unwrap();
+    let events: Vec<_> = frames.iter().filter_map(|f| match f {
+        LiveFrame::EventBatch { events } => Some(events.clone()), _ => None,
+    }).flatten().collect();
+    assert_eq!(events, vec![crossing, ev(5)]);
+    assert!(matches!(frames.last(), Some(LiveFrame::CaptureFinished)));
+}
