@@ -1,0 +1,797 @@
+<!--
+Copyright (c) 2026 The Orbit Authors. All rights reserved.
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("perfr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>A New Name</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+
+<style>
+  figure { margin: 0.5rem 0; background: var(--surface); border: 1px solid var(--line); padding: 1.35rem 1.35rem 1rem; }
+  figcaption { font-family: var(--display); font-size: 0.8rem; line-height: 1.45; color: var(--muted); margin-top: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+  .embed { background: #0b0c0e; border: 1px solid var(--line); }
+  .embed iframe { display: block; width: 100%; height: 640px; border: 0; }
+  .embed-head { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 0.7rem; }
+  .embed-head.off { color: var(--accent-deep); } .embed-head.on { color: var(--hold); }
+  @media (max-width: 720px) { .embed iframe { height: 460px; } }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.perfr-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.perfr-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+
+<style>
+  .diagram { overflow-x:auto; padding:16px 8px; background:var(--surface); border:1px solid var(--line); border-radius:10px; }
+  .diagram svg { display:block; width:100%; min-width:700px; height:auto; }
+  .diagram rect { fill:var(--ground); stroke:var(--line); stroke-width:1.5; }
+  .diagram rect.accent { fill:var(--accent-wash); stroke:var(--accent); }
+  .diagram rect.soft { fill:var(--surface-2); stroke:var(--line-strong); }
+  .diagram rect.warn { fill:var(--warn-wash); stroke:var(--warn); }
+  .diagram rect.hold { fill:var(--hold-wash); stroke:var(--hold); }
+  .diagram rect.bar { fill:var(--accent); stroke:none; }
+  .diagram rect.bar.dim { fill:var(--line-strong); }
+  .diagram rect.bar.hold { fill:var(--hold); stroke:none; }
+  .diagram circle.dot { fill:var(--accent); stroke:none; }
+  .diagram circle.dim { fill:var(--line-strong); stroke:none; }
+  .diagram text { fill:var(--ink); font:16px Roboto,sans-serif; text-anchor:middle; }
+  .diagram text.small { font-size:13px; fill:var(--ink-soft); }
+  .diagram text.label { font-size:12px; letter-spacing:1px; fill:var(--muted); }
+  .diagram text.mono { font-family:'Roboto Mono',monospace; font-size:14px; }
+  .diagram text.left { text-anchor:start; }
+  .diagram text.right { text-anchor:end; }
+  .diagram path.arrow { fill:none; stroke:var(--accent); stroke-width:2; marker-end:url(#ah); }
+  .diagram path.arrow.both { marker-start:url(#ah); }
+  .diagram path.arrow.hold { stroke:var(--hold); marker-end:url(#ah-hold); }
+  .diagram path.line { fill:none; stroke:var(--line-strong); stroke-width:2; }
+  .diagram path.dash { fill:none; stroke:var(--muted); stroke-width:1.5; stroke-dasharray:5 5; }
+  .diagram path.fit { fill:none; stroke:var(--accent); stroke-width:2.5; }
+  .diagram marker path { fill:var(--accent); stroke:none; }
+  .diagram marker.hold path { fill:var(--hold); }
+  .callout { background:var(--accent-wash); border:1px solid var(--accent); border-radius:10px; padding:1rem 1.25rem; font-size:.98rem; }
+  .callout.hold { background:var(--hold-wash); border-color:var(--hold); }
+  .table-wrap { overflow-x:auto; border:1px solid var(--line); background:var(--surface); }
+  .table-wrap table { border-collapse:collapse; width:100%; font-size:.93rem; }
+  .table-wrap th, .table-wrap td { text-align:left; padding:.55rem .8rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  .table-wrap th { font-family:var(--display); font-size:.74rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+  .doc > .wide { grid-column: wide; }
+  .wide { max-width:100%; margin-left:0; margin-right:0; }
+  @media(max-width:760px) { .diagram::after { content:"Scroll horizontally to see the full diagram \2192"; display:block; padding-top:12px; color:var(--muted); font-size:12px; } }
+</style>
+</head><body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 27</p>
+    <h1>A New Name</h1>
+    <p class="dek">Orbit is the name of a C++ profiler that Google published in 2020. The program in this repository shares an author with it and almost nothing else: not a line of the service, not the viewer, not the build. Before it goes out as an open-source project it gets its own name, <b>perfr</b>, and this post is the record of what that took and what it deliberately left alone.</p>
+    <p class="byline">On the <code>perfr</code> branch, on top of PR #118. Counts are from the rename script's own report and <code>git status</code> after it ran.</p>
+    <div class="stats">
+      <div class="stat"><b>4,400</b><span>lines changed in 387 files by one script</span></div>
+      <div class="stat"><b>311</b><span>paths moved, 31 of them crate directories</span></div>
+      <div class="stat"><b>1</b><span>file the script missed, for a reason worth a section</span></div>
+      <div class="stat"><b>0</b><span>mentions of the old name left outside the history</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p>Renaming a project is mostly search and replace, and the interesting part is everything that is not. The name was in 372 files: crate names, binary names, two pip packages, eighty-five environment variables and macros, thirty-one C functions, seventeen MCP tools, a shared-memory segment prefix, a Windows pipe name, a settings directory, a log directory, two capture-file suffixes, and 294 copyright lines. It was also in twenty-six blog posts, four essays and every link to <code>github.com/google/orbit</code>, where it has to stay, because those are about the past and the past was called Orbit.</p>
+
+  <h2 id="names">What things are called now</h2>
+
+  <p><code>perfr</code> is lowercase everywhere it can be, including at the start of a sentence; <code>Perfr</code> exists only inside identifiers that need PascalCase. The service binary is plain <code>perfr</code>, not <code>perfr-service</code>: the thing you install and run is the project, so it carries the project's name.</p>
+
+  <div class="table-wrap wide"><table>
+<thead><tr><th>Was</th><th>Is</th></tr></thead>
+<tbody>
+<tr><td><code>orbit-service</code> (binary, crate, pip package <code>orbit-profiler</code>)</td><td><code>perfr</code>, all three</td></tr>
+<tr><td><code>orbit-*</code> crates, <code>orbit_*::</code> in code</td><td><code>perfr-*</code>, <code>perfr_*::</code></td></tr>
+<tr><td><code>orbit.h</code>, <code>orbit_scope()</code>, <code>ORBIT_SCOPE</code>, <code>liborbit_api.so</code>, pip <code>orbit-api</code></td><td><code>perfr.h</code>, <code>perfr_scope()</code>, <code>PERFR_SCOPE</code>, <code>libperfr_api.so</code>, pip <code>perfr-api</code></td></tr>
+<tr><td><code>ORBIT_*</code> environment variables</td><td><code>PERFR_*</code>, no aliases: nothing had been released</td></tr>
+<tr><td><code>~/.config/orbit/settings.json</code>, <code>~/.orbitprofiler/logs</code></td><td><code>~/.config/perfr/settings.json</code>, <code>~/.perfr/logs</code></td></tr>
+<tr><td><code>orbit-scopes-&lt;pid&gt;</code> segments, <code>orbit-core-*</code> pipes</td><td><code>perfr-scopes-&lt;pid&gt;</code>, <code>perfr-core-*</code></td></tr>
+<tr><td>Captures written as <code>.orbit.zip</code> and <code>.orbit.stream</code></td><td>Written as <code>.perfr.zip</code> and <code>.perfr.stream</code>; the old files still open</td></tr>
+<tr><td>MCP server <code>orbit</code>, tools <code>orbit_*</code></td><td><code>perfr</code>, <code>perfr_*</code></td></tr>
+<tr><td><code>OrbitTestRust</code>, <code>OrbitTestC</code>, <code>OrbitTestCpp</code>, <code>OrbitTestPython</code></td><td><code>PerfrTest</code>&hellip;</td></tr>
+<tr><td>Unreal plugin <code>OrbitProfiler</code>, <code>FOrbitProfilerModule</code></td><td><code>PerfrProfiler</code>, <code>FPerfrProfilerModule</code></td></tr>
+<tr><td>Release tags <code>orbit-vX.Y.Z</code>, repository <code>pierricgimmig/orbit</code></td><td><code>perfr-vX.Y.Z</code>, <code>perfr/perfr</code></td></tr>
+<tr><td>"The Orbit Authors" in 294 headers</td><td>"The perfr Authors"; <code>LICENSE</code> keeps the 2020 Orbit notice for the ported parts</td></tr>
+</tbody></table></div>
+
+  <p>The capture suffix is the one place where compatibility came for free. The readers never looked at the file name: a bundle is recognised by its manifest, a stream by its first bytes. So an <code>.orbit.zip</code> saved last month opens in a viewer that only ever writes <code>.perfr.zip</code>, and no code was written to make that true.</p>
+
+  <h2 id="script">One script, three rules, two protections</h2>
+
+  <p>The pass is a hundred lines of Python over <code>git ls-files</code>. It applies ordered rules: the specific ones first (<code>orbit-service</code> becomes <code>perfr</code>, not <code>perfr-service</code>; <code>pierricgimmig/orbit</code> becomes <code>perfr/perfr</code>; <code>.orbitprofiler</code> becomes <code>.perfr</code>), then the three case rules, <code>ORBIT</code>, <code>Orbit</code>, <code>orbit</code>. The capitalised rule is the only one with judgement in it: <code>Orbit</code> touching another identifier character on either side (<code>OrbitTestRust</code>, <code>FOrbitProfilerModule</code>) is a type name and becomes <code>Perfr</code>; <code>Orbit</code> standing alone is prose and becomes <code>perfr</code>. The same function then renames the paths, so <code>crates/orbit-service/python/orbit_profiler/</code> lands at <code>crates/perfr/python/perfr/</code> in one <code>git mv</code> per file.</p>
+
+  <p>Two things are protected from the rules before they run. The string <code>google/orbit</code>, because it is someone else's repository and the link would break. And the files that are history: the blog, the four essays at the top of <code>docs/</code>, the rename plan itself, and the license texts under <code>tools/frida/licenses/</code>. The script changed nothing in them, and this post is the only one that knows the new name.</p>
+
+  <p>The hand pass afterwards was shorter than feared: eleven places where "an orbit" had become "an perfr"; a test asserting that the glob <code>orbit</code> does not match <code>orbit-service</code>, which after renaming asserted that <code>perfr</code> does not match <code>perfr</code>; a mangled symbol in a doc comment whose length prefix (<code>_ZN12orbit_service</code>) had to become <code>_ZN5perfr</code>; the README sentence that now read "perfr is a re-implementation of perfr"; the site footers' "Original perfr" links; and six mentions of a domain the project never owned, which became "a custom domain".</p>
+
+  <h2 id="nul">The file the script skipped</h2>
+
+  <p>After the pass, <code>cargo check</code> failed in exactly one file, <code>crates/perfr/src/names.rs</code>, on eleven unresolved imports: it still said <code>use orbit_capture::</code>. The script had decided it was binary. Its binary test was the usual one, a NUL byte in the first eight kilobytes, and <code>names.rs</code> has one: a test builds a thread name with an embedded <code>\0</code> to check that the interner stops at it, and the byte is in the source, not escaped. <code>grep</code> had made the same call weeks earlier, which is why that file was the single "non-text" entry under <code>src/</code> in the layout survey of post 26, and nobody had asked why.</p>
+
+  <p>The fix was to convert that one file explicitly; the lesson is the same as in post 21, that the first few bytes of a file are a guess, and a tool that acts on the guess should say which files it guessed about. The script now prints its skip list.</p>
+
+  <h2 id="kept">What did not change</h2>
+
+  <p>The twenty-six posts before this one keep every word, including <code>orbit-service</code> in their command lines and "Orbit" in their titles, because they describe what was run at the time. Their links to pull requests still point at the old repository. The LICENSE still carries "Copyright 2020 The Orbit Authors" below the new notice: the BSD license on the C++ profiler asks that its copyright line survive in derived work, and the service's logic was ported from it function by function, so it does. And the Unreal plugin, the viewer's wordmark and the favicon show the new name in the old typeface and the old artwork; a logo is a design question, not a rename.</p>
+
+<div class="callout"><p><b>The short version.</b> Orbit was Google's name for a C++ profiler. This is a different program by the same author, so it is now <b>perfr</b>: lowercase, service binary <code>perfr</code>, crates <code>perfr-*</code>, API <code>perfr.h</code>, pip <code>perfr</code> and <code>perfr-api</code>, repository <code>perfr/perfr</code>. One script did 4,400 lines and 311 moves; a hand pass did the sentences a script cannot read; old captures open unchanged; the posts before this one stay as written.</p></div>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 27 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="26-where-everything-lives.html">&larr; Post 26</a><br>
+    The plan: <code>docs/design/perfr-rename-plan.md</code> &middot; The branch: <code>perfr</code>
+  </div>
+</footer>
+
+<button class="perfr-theme-toggle" id="perfr-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("perfr-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("perfr-theme",n);}catch(e){}lab();});})();</script>
+</body>
+</html>
