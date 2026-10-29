@@ -11,7 +11,7 @@
 //! **without their parameter lists**: the crate's one known wrong answer
 //! (blog post 02: it drops a `char* const&` parameter) is in parameter
 //! rendering, and a track label or a search row is better off with
-//! `Stockfish::Search::Worker::iterative_deepening` than with the full
+//! `Render::Scene::Camera::update_projection` than with the full
 //! signature anyway. A GCC clone suffix (`.constprop.0`, `.cold`, `.isra.0`)
 //! is kept the way `c++filt` shows it: ` [clone .constprop.0]`. ISPC kernels
 //! (Unreal ships many: animation, Chaos, Niagara) use ISPC's own scheme --
@@ -271,22 +271,22 @@ mod tests {
     #[test]
     fn itanium_names_are_demangled_without_parameters() {
         assert_eq!(
-            pretty("_ZN9Stockfish6Search6Worker19iterative_deepeningEv"),
-            "Stockfish::Search::Worker::iterative_deepening"
+            pretty("_ZN6Render5Scene6Camera17update_projectionEv"),
+            "Render::Scene::Camera::update_projection"
         );
-        assert_eq!(pretty("_ZN9Stockfish6Engine2goERNS_6Search10LimitsTypeE"), "Stockfish::Engine::go");
+        assert_eq!(pretty("_ZN6Render6Engine3runERNS_5Scene9FrameArgsE"), "Render::Engine::run");
         assert_eq!(pretty("_ZN3app6module8functionEv"), "app::module::function");
     }
 
     #[test]
     fn templates_anonymous_namespaces_and_clones() {
         assert_eq!(
-            pretty("_ZN9Stockfish6Search6Worker6searchILNS_8NodeTypeE2EEEiRNS_8PositionEPNS0_5StackEiiib.constprop.0"),
-            "Stockfish::Search::Worker::search<(Stockfish::NodeType)2> [clone .constprop.0]"
+            pretty("_ZN6Render5Scene6Camera4cullILNS_8NodeTypeE2EEEiRNS_8PositionEPNS0_5StackEiiib.constprop.0"),
+            "Render::Scene::Camera::cull<(Render::NodeType)2> [clone .constprop.0]"
         );
         assert_eq!(
-            pretty("_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L14apply_combinedENS_5ColorERKNS1_18FeatureTransformerE"),
-            "Stockfish::Eval::NNUE::(anonymous namespace)::apply_combined"
+            pretty("_ZN6Render3GPU7Shaders12_GLOBAL__N_1L14apply_combinedENS_5ColorERKNS1_18FeatureTransformerE"),
+            "Render::GPU::Shaders::(anonymous namespace)::apply_combined"
         );
     }
 

@@ -632,7 +632,7 @@ mod tests {
 
 /// A Rust or C++ symbol made readable (`demangle.rs`): the Functions view,
 /// the hook scope names and the disassembly read names, and neither
-/// `_ZN5perfr7uprobes..` nor `_ZN9Stockfish6Search6Worker..Ev` is
+/// `_ZN5perfr7uprobes..` nor `_ZN6Render5Scene6Camera..Ev` is
 /// one. The same rule the symbolizer applies to sampled frames.
 fn pretty_name(mangled: &str) -> String {
     crate::demangle::pretty(mangled)
