@@ -1732,9 +1732,13 @@ fn capture_loop(
             }
         }
         let _switches = orbit_api::scope("read context switches");
+        // Reuse one buffer. `read_record` allocated a Vec per switch; at
+        // workstation rates that is the same fragmentation the sample path
+        // already stopped. The harness microbench is alloc vs this reuse.
+        let mut switch_record = Vec::new();
         for ring in switch_rings.iter_mut() {
-            while let Ok(Some(record)) = ring.read_record() {
-                let Some(on_thread) = push_switch_record(&record, &mut switches, &mut batch) else {
+            while ring.read_record_into(&mut switch_record).unwrap_or(false) {
+                let Some(on_thread) = push_switch_record(&switch_record, &mut switches, &mut batch) else {
                     continue;
                 };
                 // The per-thread projection is the half that creates rows, so
