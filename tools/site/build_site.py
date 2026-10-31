@@ -393,8 +393,10 @@ def build(out, stream_path, bundle, name, port, service=False):
     media_src = os.path.join(HERE, "media")
     if os.path.isdir(media_src):
         shutil.copytree(media_src, os.path.join(out, "media"), dirs_exist_ok=True)
-    # The curl installer, served at the site root: `curl .../install.sh | sh`.
-    shutil.copy(os.path.join(REPO, "tools/install/install.sh"), os.path.join(out, "install.sh"))
+    # The installers, served at the site root: `curl -fsSL https://perfr.dev/install.sh | sh`
+    # and `irm https://perfr.dev/install.ps1 | iex`.
+    for script in ("install.sh", "install.ps1"):
+        shutil.copy(os.path.join(REPO, "tools/install", script), os.path.join(out, script))
     # The front-page capture.
     captures = os.path.join(out, "captures")
     os.makedirs(captures, exist_ok=True)

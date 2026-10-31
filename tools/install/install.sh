@@ -5,7 +5,7 @@
 #
 # perfr installer:
 #
-#     curl -fsSL https://raw.githubusercontent.com/perfr/perfr/main/tools/install/install.sh | sh
+#     curl -fsSL https://perfr.dev/install.sh | sh
 #
 # It downloads the Rust perfr release for this machine. Linux
 # x86-64 and macOS (one universal binary, Intel and Apple silicon) are
@@ -13,8 +13,9 @@
 # SHA-256 and installs the Frida files the service looks for in the same
 # directory. No compiler and no package manager.
 #
-# Download host. This one line is the switch to a custom domain later:
-# point it at a prefix that serves the same file names
+# Download host for the release archives (the script itself is served at
+# https://perfr.dev/install.sh). To serve the archives from perfr.dev too,
+# point this at a prefix that serves the same file names
 # (perfr-linux-x86_64.tar.gz, perfr-macos-universal.tar.gz, and the
 # matching .sha256 files).
 DEFAULT_BASE="https://github.com/perfr/perfr/releases/latest/download"
@@ -49,7 +50,7 @@ case "$os" in
     Linux)  os=linux ;;
     Darwin) os=macos ;;
     MINGW* | MSYS* | CYGWIN*)
-        die "this is a POSIX shell on Windows. Use the PowerShell installer: irm https://raw.githubusercontent.com/perfr/perfr/main/tools/install/install.ps1 | iex" ;;
+        die "this is a POSIX shell on Windows. Use the PowerShell installer: irm https://perfr.dev/install.ps1 | iex" ;;
     *) die "unsupported OS '$os'. Linux and macOS use this script; Windows uses tools/install/install.ps1." ;;
 esac
 case "$arch" in
@@ -103,7 +104,7 @@ Build from source:
   macOS:         tools/build/build-service-macos.sh
 
 Or set PERFR_INSTALL_BASE to a URL prefix that already serves the files.
-To use a custom domain later, change DEFAULT_BASE at the top of this script."
+To serve the archives from perfr.dev, change DEFAULT_BASE at the top of this script."
 fi
 
 # --- checksum is required ----------------------------------------------------

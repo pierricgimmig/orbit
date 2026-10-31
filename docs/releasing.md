@@ -108,10 +108,12 @@ the tag if you do not want that publish attempt.
 
 ## Installer host
 
-[`tools/install/install.sh`](../tools/install/install.sh) downloads
-`/releases/latest/download/`. The only line to change when
-a custom domain serves the same file names is `DEFAULT_BASE` at the top
-of that script. `PERFR_INSTALL_BASE` overrides it for one run.
+The installers are fetched from `https://perfr.dev/install.sh` and
+`https://perfr.dev/install.ps1`; `tools/site/build_site.py` copies them to
+the site root. [`tools/install/install.sh`](../tools/install/install.sh)
+downloads the archives from GitHub's `/releases/latest/download/`. The only
+line to change if perfr.dev serves the same file names is `DEFAULT_BASE` at
+the top of that script. `PERFR_INSTALL_BASE` overrides it for one run.
 
 Until a stable `perfr-v*` release exists, the script exits with an error that
 says so and points at a source build. It does not install a C++ nightly.

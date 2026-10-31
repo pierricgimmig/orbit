@@ -11,7 +11,8 @@ Plan, 2026-10-25. Executed 2026-10-27 on the `perfr` branch, on top of PR
 departed from the table below: the license stays BSD-2-Clause for now (the
 MIT OR Apache-2.0 switch is a separate decision), the API ABI number stays
 at 1 because every exported symbol changed name and nothing was released,
-and the installer and manual say "a custom domain" instead of naming one.
+and the one-line installers are fetched from https://perfr.dev/install.sh and
+/install.ps1, the website host (served from a checkout on the owner's VPS).
 
 ## Size
 

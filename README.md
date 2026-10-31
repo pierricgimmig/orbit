@@ -24,7 +24,7 @@ each system records is in the table below.
 ## Quick start
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/perfr/perfr/main/tools/install/install.sh | sh
+curl -fsSL https://perfr.dev/install.sh | sh
 perfr
 # http://127.0.0.1:44766/
 ```
@@ -37,7 +37,7 @@ build and are not what this installs.
 Windows, in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/perfr/perfr/main/tools/install/install.ps1 | iex
+irm https://perfr.dev/install.ps1 | iex
 perfr
 # http://127.0.0.1:44766/
 ```

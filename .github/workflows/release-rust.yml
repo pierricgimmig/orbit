@@ -236,11 +236,11 @@ jobs:
               "Checksums: `SHA256SUMS` and the per-archive `.sha256` files.\n\n"
               "Install (fails with a clear message until a non-prerelease `perfr-v*` tag exists):\n\n"
               "```\n"
-              "curl -fsSL https://raw.githubusercontent.com/perfr/perfr/main/tools/install/install.sh | sh\n"
+              "curl -fsSL https://perfr.dev/install.sh | sh\n"
               "```\n\n"
               "Windows (PowerShell):\n\n"
               "```\n"
-              "irm https://raw.githubusercontent.com/perfr/perfr/main/tools/install/install.ps1 | iex\n"
+              "irm https://perfr.dev/install.ps1 | iex\n"
               "```\n\n"
               "This is not a legacy C++ nightly (`nightly-*` / `v1.*`).\n"
           )

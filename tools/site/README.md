@@ -45,9 +45,10 @@ Share links include a complete archive download alongside the browser stream.
 
 The output is plain files. Links and asset URLs are relative, so the same
 tree works at a domain root and under a project-site prefix (`/perfr/` on
-GitHub Pages). Nothing is baked as `/manual/...` or `/viewer/...`, and there
-is no `CNAME`: a custom domain can be pointed at Pages later without a
-rebuild.
+GitHub Pages). Nothing is baked as `/manual/...` or `/viewer/...`. The site is served at
+https://perfr.dev from a checkout on the owner's VPS. `install.sh` and
+`install.ps1` are copied to the site root, which is what the one-line
+installers in the README fetch.
 
 The viewer's worker pool needs `Cross-Origin-Opener-Policy: same-origin`
 and `Cross-Origin-Embedder-Policy: require-corp`. `serve.py` sends them.

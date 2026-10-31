@@ -15,7 +15,7 @@ The [home page](../index.html) opens a saved capture in the viewer. Attach, the 
 ## Install
 
 ```
-curl -fsSL https://raw.githubusercontent.com/perfr/perfr/main/tools/install/install.sh | sh
+curl -fsSL https://perfr.dev/install.sh | sh
 ```
 
 The script downloads a GitHub Release tagged `perfr-vX.Y.Z` and puts `perfr` in `~/.local/bin` (`PERFR_INSTALL_DIR` to choose another directory), with `libperfr_frida_agent` and `perfr-frida-helper` beside it so function hooks work, and `libperfr_api` when the archive includes it. Until a stable `perfr-v*` release exists, the script stops and says how to build from source. `PERFR_INSTALL_BASE` overrides the download prefix; `DEFAULT_BASE` in the script is the one line to point at a custom domain later.
@@ -25,7 +25,7 @@ The published binaries are a static Linux x86-64 build, one universal macOS bina
 On Windows the installer is a PowerShell script that downloads the zip, checks its SHA-256 and unpacks it into `%LOCALAPPDATA%\Programs\perfr`:
 
 ```powershell
-irm https://raw.githubusercontent.com/perfr/perfr/main/tools/install/install.ps1 | iex
+irm https://perfr.dev/install.ps1 | iex
 ```
 
 ## Run the service and open the viewer

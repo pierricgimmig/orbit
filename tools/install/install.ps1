@@ -8,7 +8,7 @@
 # %LOCALAPPDATA%\Programs\perfr (perfr.exe with the Frida files,
 # perfr_api.dll and perfr.h beside it), and says how to put it on PATH.
 #
-#   irm https://raw.githubusercontent.com/perfr/perfr/main/tools/install/install.ps1 | iex
+#   irm https://perfr.dev/install.ps1 | iex
 #
 # Environment overrides, as for install.sh: PERFR_INSTALL_BASE (the URL the
 # assets are under), PERFR_VERSION (a tag such as perfr-v0.1.0; default

@@ -53,7 +53,7 @@ managed-policy creation permissions. The upload identity below does not.
 ### Create the bucket
 
 Deploy the private bucket (replace the example origin and region).
-For the main website use `WebsiteOrigin=https://perfr.github.io`; if the
+For the main website use `WebsiteOrigin=https://perfr.dev`; if the
 viewer is hosted on another origin, use that exact origin without a path:
 
 
