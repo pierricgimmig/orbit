@@ -289,7 +289,7 @@ Orbit live-bench ({mode}, {scale} on {host} host cores)
   switches:    {target:.0}/s target, {got:.0}/s achieved ({cores} sim cores, {threads} sim threads)
   events:      {pushed:.0}/s pushed, {viewed:.0}/s reached the viewer
   samples:     {synth:.0}/s synthetic, {real} real kernel samples ({rings} sample rings)
-  latency:     p50 {p50} us   p99 {p99} us   max {max} us   ({trend}, slope {slope:.0} us/s)
+  latency:     p50 {p50} us   p99 {p99} us   max {max} us   ({trend}; p50 slope {p50slope:.0} us/s, p99 slope {slope:.0} us/s)
   drops:       ingress {over}   broadcast lagged {lag}   ring {ring}   viewer shed {shed}
   queues:      ingress max {idepth}/{icap}   viewer queue max {vq} B   ring fill max {fill:.1}%
   stages:      parse {parse:.0} ns/ev  ring {ringns:.0}  encode {enc:.0} ({ebp:.1} B/ev)  decode {dec:.0}  insert {ins:.0}  collect {col:.0} us/frame
@@ -313,6 +313,7 @@ Orbit live-bench ({mode}, {scale} on {host} host cores)
         p99 = report.latency_us.p99_us,
         max = report.latency_us.max_us,
         trend = trend,
+        p50slope = report.latency_trend.p50_slope_us_per_s,
         slope = report.latency_trend.p99_slope_us_per_s,
         over = report.drops.ingress_overruns,
         lag = report.drops.broadcast_frames_lagged,

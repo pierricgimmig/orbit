@@ -2914,6 +2914,12 @@ impl OrbitLiveApp {
                 newest_end_ns,
                 ring_bytes,
             } => {
+                // The ring has already forgotten anything older than this.
+                // The follow view used to keep every event for the life of
+                // the capture, so frame time and RSS climbed for minutes.
+                if capturing && self.follow && oldest_start_ns > 1 && !self.file_trace_active() {
+                    self.index.drop_older_than(oldest_start_ns);
+                }
                 self.apply_status(StatusJson {
                     log_path: None,
                     capturing,

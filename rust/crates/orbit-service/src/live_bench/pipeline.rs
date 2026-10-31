@@ -489,6 +489,13 @@ fn spawn_ui(
                 insert_ns += tins.elapsed().as_nanos() as u64;
             }
             if index.event_count() > 0 {
+                // Same rule as the page: once the ring has lapped, events
+                // older than its tail are gone. Dropping them here is what
+                // keeps collect time from tracking the length of the capture.
+                let oldest = svc.stats().oldest_start_ns;
+                if oldest > 1 {
+                    index.drop_older_than(oldest);
+                }
                 let keys: Vec<_> = index.lanes().map(|(k, _)| k).collect();
                 let layout = stacked_layout(&keys, 0.0);
                 let edge = index.time_bounds().map(|(_, b)| b).unwrap_or(0);
@@ -715,7 +722,11 @@ fn finish_report(
     let p99_slope = slope(&xs, &p99s);
     let p50_slope = slope(&xs, &p50s);
     let thresholds = Thresholds::ci();
-    let accumulating = p99_slope > thresholds.max_p99_slope_us_per_s;
+    // The median is the backlog signal: when the viewer falls behind, p50
+    // climbs for the rest of the run (measured at +13 ms/s before the index
+    // was bounded). A one-frame prune hitch shows up in max and can tilt
+    // p99's slope on a short run without the typical event getting later.
+    let accumulating = p50_slope > thresholds.max_p99_slope_us_per_s;
     let cpu_max = windows.iter().map(|w| w.cpu_pct).fold(0.0f64, f64::max);
     let rss_max = windows.iter().map(|w| w.rss_mib).fold(0.0f64, f64::max);
     let fill_max = windows.iter().map(|w| w.ring_fill_pct).fold(0.0f64, f64::max);
