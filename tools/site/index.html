@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="en">
 <head>
-<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<script>try{var t=localStorage.getItem("perfr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 <meta charset="utf-8">
-<title>Orbit — profile a running program</title>
+<title>perfr — profile a running program</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Profile a running program with no code change. The Rust service runs on Linux, macOS and Windows. The viewer is a web page, on any device.">
-<meta property="og:title" content="Orbit">
+<meta property="og:title" content="perfr">
 <meta property="og:description" content="From the whole run to a single context switch. A Rust profiler; the viewer is a web page.">
 <meta property="og:image" content="media/00-hero.jpg">
 <link rel="icon" type="image/png" href="favicon.png">
@@ -18,11 +18,11 @@
 <body>
 <a class="skip" href="#viewer">Skip to the live viewer</a>
 <nav class="site" aria-label="Site">
-  <a class="brand" href="index.html"><img src="logo.png" alt="Orbit"></a>
+  <a class="brand" href="index.html"><img src="logo.png" alt="perfr"></a>
   <a href="features.html">Features</a>
   <a href="manual/index.html">Manual</a>
   <a class="nav-more" href="blog/index.html">Blog</a>
-  <a class="nav-more" href="https://github.com/pierricgimmig/orbit" rel="noopener noreferrer">GitHub</a>
+  <a class="nav-more" href="https://github.com/perfr/perfr" rel="noopener noreferrer">GitHub</a>
   <span class="spacer"></span>
   <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
   <a class="cta" href="#start">Get started</a>
@@ -30,13 +30,13 @@
 <main class="wide" id="main">
   <header class="hero compact">
     <h1>From the whole run to a single context switch.</h1>
-    <p class="lede">Orbit attaches to a program that is already running, with no code change. The service runs on Linux, macOS and Windows. The viewer is a web page, so any browser on any device can open it.</p>
+    <p class="lede">perfr attaches to a program that is already running, with no code change. The service runs on Linux, macOS and Windows. The viewer is a web page, so any browser on any device can open it.</p>
     <p class="lineage">A Rust re-implementation by the original author of <a href="https://github.com/google/orbit" rel="noopener noreferrer">Orbit</a>.</p>
   </header>
 
   <section class="demo" id="viewer">
     <div class="embed">
-      <iframe src="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler" title="Orbit live viewer with a saved capture" allow="fullscreen"></iframe>
+      <iframe src="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler" title="perfr live viewer with a saved capture" allow="fullscreen"></iframe>
     </div>
     <p class="caption">
       <span>Drag to pan · wheel over the ruler to zoom · click a thread · right-click a scope · Home to fit</span>
@@ -159,7 +159,7 @@
           <circle cx="12" cy="28" r="1.3" fill="currentColor" stroke="none"></circle>
         </svg>
         <div>
-          <p class="kicker">orbit-service</p>
+          <p class="kicker">perfr</p>
           <h3>The capture agent, on that machine</h3>
           <p>It attaches to a process that is already running and serves the viewer on the same port.</p>
         </div>
@@ -202,10 +202,10 @@
       <li>
         <p class="kicker">Target process</p>
         <h3>Already running</h3>
-        <p>A native binary. Orbit does not rebuild it and does not relaunch it.</p>
+        <p>A native binary. perfr does not rebuild it and does not relaunch it.</p>
       </li>
       <li>
-        <p class="kicker">orbit-service</p>
+        <p class="kicker">perfr</p>
         <h3>What this machine records</h3>
         <p>On Linux: call stacks at 1&nbsp;kHz, the scheduler, and dynamic instrumentation with no code change. Auto-profiling picks what to hook and keeps the cost under a budget. It needs root or <code>CAP_SYS_ADMIN</code>. On Windows: the same call stacks, scheduler and thread states from the kernel logger, which needs an elevated prompt; Frida hooks and manual scopes without one. On macOS: manual scopes and Frida function hooks. Sampling, the scheduler, and auto-profiling are not in that build.</p>
       </li>
@@ -218,7 +218,7 @@
 
     <div class="platform" id="platforms">
       <h3>What the service records</h3>
-      <p class="platform-lead">Status of <code>orbit-service</code> on main. The viewer itself runs in any browser.</p>
+      <p class="platform-lead">Status of <code>perfr</code> on main. The viewer itself runs in any browser.</p>
       <div class="platform-wrap">
         <table class="platform-table">
           <caption>Supported means it runs and is tested on that operating system. Partial means some of it works, with a limit named below. Not yet means this service does not do it.</caption>
@@ -307,14 +307,14 @@
       <div class="card">
         <h3>Run it</h3>
         <pre><code># install (Linux x86-64 or macOS)
-curl -fsSL https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.sh | sh
+curl -fsSL https://perfr.dev/install.sh | sh
 
 # install (Windows x64, PowerShell)
-irm https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.ps1 | iex
+irm https://perfr.dev/install.ps1 | iex
 
-orbit-service
+perfr
 # http://127.0.0.1:44766/</code></pre>
-        <p>The scripts download a GitHub Release tagged <code>orbit-v*</code>. Linux x86-64, macOS (one universal binary, Intel and Apple silicon) and Windows x86-64 are all in that release. Until a stable release exists the script stops and says so. <code>orbitprofiler.dev</code> is not the host. Function hooks ship beside the binary and do not need root. On macOS, attaching needs a task port.</p>
+        <p>The scripts download a GitHub Release tagged <code>perfr-v*</code>. Linux x86-64, macOS (one universal binary, Intel and Apple silicon) and Windows x86-64 are all in that release. Until a stable release exists the script stops and says so. Function hooks ship beside the binary and do not need root. On macOS, attaching needs a task port.</p>
         <p>On Linux, sampling works at <code>perf_event_paranoid</code> 2 or below, and the scheduler needs 0 or below. Root, <code>CAP_PERFMON</code> or <code>CAP_SYS_ADMIN</code> bypass the sysctl. Auto-profiling needs root or <code>CAP_SYS_ADMIN</code>. On Windows, sampling, the scheduler and thread states need a prompt opened with <em>Run as administrator</em>. Those are not in the macOS build.</p>
         <a class="more" href="manual/index.html#quick-start">Quick start in the manual</a>
       </div>
@@ -335,14 +335,14 @@ orbit-service
     </header>
   </section>
 
-  <p class="keys">Site built {{date}} at commit {{commit}}. Recordings are of the live viewer at <code>da8aa05c</code>, profiling <code>game_loop</code>. The embedded capture is a <code>.orbit.stream</code>.</p>
+  <p class="keys">Site built {{date}} at commit {{commit}}. Recordings are of the live viewer at <code>da8aa05c</code>, profiling <code>game_loop</code>. The embedded capture is a <code>.perfr.stream</code>.</p>
 </main>
 <footer class="site">
-  <span>Orbit</span>
+  <span>perfr</span>
   <a href="https://github.com/google/orbit" rel="noopener noreferrer">Original Orbit</a>
   <a href="features.html">Features</a>
   <a href="manual/index.html">Manual</a>
-  <a href="https://github.com/pierricgimmig/orbit" rel="noopener noreferrer">GitHub</a>
+  <a href="https://github.com/perfr/perfr" rel="noopener noreferrer">GitHub</a>
   <a href="blog/index.html">Blog</a>
   <a href="e2e/report.html">Test report</a>
 </footer>
@@ -357,7 +357,7 @@ orbit-service
   b.addEventListener("click", function () {
     var n = cur() === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", n);
-    try { localStorage.setItem("orbit-theme", n); } catch (e) {}
+    try { localStorage.setItem("perfr-theme", n); } catch (e) {}
     lab();
   });
 })();

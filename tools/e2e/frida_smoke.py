@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Attach to a running target; verify counts, nesting, manual coexistence and restart.
@@ -34,16 +34,16 @@ def read_line_within(child, seconds):
 
 
 def helper_children(service_pid):
-    """The pids of orbit-frida-helper processes the service spawned."""
+    """The pids of perfr-frida-helper processes the service spawned."""
     if sys.platform == 'win32':
         script = (f"Get-CimInstance Win32_Process -Filter 'ParentProcessId={service_pid}' | "
-                  "Where-Object { $_.Name -like 'orbit-frida-helper*' } | ForEach-Object { $_.ProcessId }")
+                  "Where-Object { $_.Name -like 'perfr-frida-helper*' } | ForEach-Object { $_.ProcessId }")
         out = subprocess.check_output(['powershell', '-NoProfile', '-Command', script], text=True)
         return [int(line) for line in out.split() if line.strip().isdecimal()]
     processes = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,args='], text=True)
     return [int(fields[0]) for row in processes.splitlines()
             if len(fields := row.split(None, 2)) == 3
-            and int(fields[1]) == service_pid and 'orbit-frida-helper' in fields[2]]
+            and int(fields[1]) == service_pid and 'perfr-frida-helper' in fields[2]]
 
 
 def kill_hard(pid):
@@ -82,7 +82,7 @@ def main():
             data = response.read()
             return json.loads(data) if data.startswith((b'{', b'[')) else data
     with tempfile.TemporaryFile(mode='w+') as log:
-        env = dict(os.environ, ORBIT_FRIDA_AGENT=str(Path(args.agent).resolve()) + ('.missing' if args.missing_agent else ''), ORBIT_FRIDA_HELPER=str(Path(args.helper).resolve()) + ('.missing' if args.missing_helper else ''))
+        env = dict(os.environ, PERFR_FRIDA_AGENT=str(Path(args.agent).resolve()) + ('.missing' if args.missing_agent else ''), PERFR_FRIDA_HELPER=str(Path(args.helper).resolve()) + ('.missing' if args.missing_helper else ''))
         service = subprocess.Popen([args.service, '--host', '127.0.0.1', '--serve', str(port)], env=env, stdout=log, stderr=log)
         target = subprocess.Popen([args.target], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
         try:
@@ -108,8 +108,8 @@ def main():
                 assert state['status'] != 'error', state
                 assert time.monotonic() < deadline, state
                 time.sleep(.1)
-            found = request(f'/api/functions/search?pid={pid}&q=orbit_frida_test_&limit=20')['functions']
-            wanted = {'orbit_frida_test_outer': (30, 0), 'orbit_frida_test_middle': (60, 1), 'orbit_frida_test_inner': (180, 2)}
+            found = request(f'/api/functions/search?pid={pid}&q=perfr_frida_test_&limit=20')['functions']
+            wanted = {'perfr_frida_test_outer': (30, 0), 'perfr_frida_test_middle': (60, 1), 'perfr_frida_test_inner': (180, 2)}
             # A PDB names a C function with its (empty) argument list, as a
             # demangled C++ name would; the bare name is what is compared.
             bare = lambda name: name.lstrip('_').split('(')[0]
@@ -130,7 +130,7 @@ def main():
                 return
             pending_return = False
             if args.inflight or args.controller_death:
-                blocked = next(f for f in found if bare(f['name']) == 'orbit_frida_test_blocked')
+                blocked = next(f for f in found if bare(f['name']) == 'perfr_frida_test_blocked')
                 request('/api/capture/start', {'pid':pid, 'instrumented_functions':[{'function_id':blocked['function_id']}]})
                 target.stdin.write('hold\n'); target.stdin.flush()
                 assert read_line_within(target, 10) == 'entered', 'blocked hook did not enter'
@@ -210,7 +210,7 @@ def main():
                                r['start_ns'] + r['duration_ns'] <= arm['start_ns'] + arm['duration_ns']
                                for r in installs), 'remote timestamps do not align with service setup'
 
-                assert not any(r['pid'] == pid and bare(r['name']) == 'orbit_frida_test_blocked' for r in rows), 'late return leaked into next capture'
+                assert not any(r['pid'] == pid and bare(r['name']) == 'perfr_frida_test_blocked' for r in rows), 'late return leaked into next capture'
                 for name, (count, depth) in wanted.items():
                     events = [r for r in rows if r['pid'] == pid and r['kind'] == 1 and bare(r['name']) == name]
                     assert len(events) == count, (iteration, name, len(events), status['instrumentation'])

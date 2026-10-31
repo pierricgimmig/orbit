@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -10,8 +10,8 @@ produced by ``./generate.sh --out <dir>``. Writes H.264 MP4 (no audio, max
 width 1280, CRF 26, faststart) and JPEG posters into ``tools/site/media/``.
 GIFs, WebM, raw captures and stills are not copied.
 
-    ./generate.sh --ref <git-ref> --out /tmp/orbit-media
-    python3 publish_site_media.py --from /tmp/orbit-media
+    ./generate.sh --ref <git-ref> --out /tmp/perfr-media
+    python3 publish_site_media.py --from /tmp/perfr-media
 
 Then rebuild the site (``python3 tools/site/build_site.py``). Point ``--from``
 at the kit output, not at ``tools/site/media``: publishing again from the

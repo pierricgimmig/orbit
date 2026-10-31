@@ -1,4 +1,4 @@
-// Helpers shared by scenes. Everything is found through window.__orbit_ui labels where the viewer
+// Helpers shared by scenes. Everything is found through window.__perfr_ui labels where the viewer
 // provides one; positions derived from layout constants are marked FRAGILE (see README).
 export const VIEWER = () => `http://127.0.0.1:${process.env.VIEWER_PORT || 44900}`;
 export async function api(path, body) {

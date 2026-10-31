@@ -6,7 +6,7 @@ found in the LICENSE file.
 <!doctype html>
 <html lang="en">
 <head>
-<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<script>try{var t=localStorage.getItem("perfr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 <meta charset="utf-8">
 <title>The Windows Backend</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -674,12 +674,12 @@ found in the LICENSE file.
 body{font-family:var(--body);}
 h1,h2,h3,h4,h5,h6{font-family:var(--display);}
 code,pre,kbd,samp,tt{font-family:var(--mono);}
-.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+.perfr-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
   display:inline-flex;align-items:center;gap:.4rem;
   font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
   color:var(--muted);background:var(--surface);border:1px solid var(--line);
   border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
-.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+.perfr-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
 </style>
 </head><body>
 <header class="masthead">
@@ -739,7 +739,7 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
   </div>
 </footer>
 
-<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
-<script>(function(){var b=document.getElementById("orbit-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
+<button class="perfr-theme-toggle" id="perfr-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("perfr-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("perfr-theme",n);}catch(e){}lab();});})();</script>
 </body>
 </html>

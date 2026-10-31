@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
-# Builds the Orbit capture service as a fully static, self-contained musl
+# Builds the perfr capture service as a fully static, self-contained musl
 # executable -- no shared libraries, runs on any x86-64 Linux with no
 # runtime dependencies. The crates are pure Rust plus libc, so rustc's
 # self-contained musl target links statically with no system musl toolchain.
@@ -15,9 +15,9 @@ command -v cargo >/dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
 
 TARGET=x86_64-unknown-linux-musl
 # rust-toolchain.toml pins the target, so rustup fetches std automatically.
-cargo build --release --target "$TARGET" -p orbit-service
+cargo build --release --target "$TARGET" -p perfr
 
-BIN="target/$TARGET/release/orbit-service"
+BIN="target/$TARGET/release/perfr"
 echo
 echo "Built: $BIN"
 file "$BIN"
@@ -29,9 +29,9 @@ echo "size: $(du -h "$BIN" | cut -f1)"
 tools/frida/build.sh "$PWD/$(dirname "$BIN")" --agent-only
 
 # The manual-instrumentation library and its header ship beside the service:
-# orbit.h and the Python package load liborbit_api from the directory that
-# holds orbit-service. Built for glibc, not musl, because it is loaded into
+# perfr.h and the Python package load libperfr_api from the directory that
+# holds perfr. Built for glibc, not musl, because it is loaded into
 # ordinary applications, not into the static service.
-cargo build --release -p orbit-api
-cp target/release/liborbit_api.so crates/orbit-api/include/orbit.h "$(dirname "$BIN")/"
-echo "api:  $(dirname "$BIN")/liborbit_api.so + orbit.h"
+cargo build --release -p perfr-api
+cp target/release/libperfr_api.so crates/perfr-api/include/perfr.h "$(dirname "$BIN")/"
+echo "api:  $(dirname "$BIN")/libperfr_api.so + perfr.h"

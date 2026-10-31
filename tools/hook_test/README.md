@@ -6,7 +6,7 @@ the target — is caught function by function, across a list of processes you
 choose.
 
 This is the groundwork for auto-instrumenting a big app (say an Unreal game)
-from its sampling report: before Orbit picks functions for a user, we need to
+from its sampling report: before perfr picks functions for a user, we need to
 know hooking each one is safe and actually produces events.
 
 ## Run
@@ -20,7 +20,7 @@ python3 tools/hook_test/hook_harness.py --sudo --config my_targets.toml
 `--sudo` runs the service through the passwordless wrapper
 (`tools/sudo/install.sh`), because uprobes need `CAP_SYS_ADMIN`; without it the
 run reports the arming refusal and stops. The service binary is
-`target/release/orbit-service` (build it first).
+`target/release/perfr` (build it first).
 
 Output: a per-function scorecard on the console and in
 `docs/hook-test/report.md` (+ `.json`):
@@ -38,9 +38,9 @@ Edit `tools/hook_test/targets.toml` — one `[[target]]` block each:
 ```toml
 [[target]]
 name   = "workload"                 # label for the report
-out    = "/tmp/orbit-hook-workload" # what `build` produces; rebuilt only if missing
-build  = "cc -O2 -g -o /tmp/orbit-hook-workload tools/hook_test/workload.c -lpthread -lm"
-argv   = ["/tmp/orbit-hook-workload"]
+out    = "/tmp/perfr-hook-workload" # what `build` produces; rebuilt only if missing
+build  = "cc -O2 -g -o /tmp/perfr-hook-workload tools/hook_test/workload.c -lpthread -lm"
+argv   = ["/tmp/perfr-hook-workload"]
 select = "report"                   # report | search:<query> | list:a,b,c
 top    = 8                          # how many functions (report/search)
 seconds = 3                         # capture seconds per function

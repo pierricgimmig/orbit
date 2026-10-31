@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright (c) 2022 The Orbit Authors. All rights reserved.
+# Copyright (c) 2022 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -20,7 +20,7 @@ while read file; do
     continue
   fi
 
-  if ! grep -E 'Copyright \(c\) [0-9]{4} The Orbit Authors\. All rights reserved\.' "$file" > /dev/null; then
+  if ! grep -E 'Copyright \(c\) [0-9]{4} The perfr Authors\. All rights reserved\.' "$file" > /dev/null; then
     echo "$file"
     echo "$file" >> "${GITHUB_WORKSPACE}/missing_license_headers.txt"
   fi

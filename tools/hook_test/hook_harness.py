@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Rock-solid-hooking harness: instrument one function at a time and check the
@@ -33,7 +33,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "tools/e2e"))
-import orbit_e2e as e2e  # noqa: E402  (path set above)
+import perfr_e2e as e2e  # noqa: E402  (path set above)
 
 try:
     import tomllib  # Python 3.11+

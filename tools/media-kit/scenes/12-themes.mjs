@@ -1,4 +1,4 @@
-// Colour schemes: More > Color scheme recolours chrome, scopes and thread states (Orbit, Dracula, Nord,
+// Colour schemes: More > Color scheme recolours chrome, scopes and thread states (perfr, Dracula, Nord,
 // Gruvbox, Solarized, Solarized Light, Gruvbox Light).
 import { reportOpen, threadIds, zoomTo } from "./_common.mjs";
 export async function prep(H, ctx) {
@@ -16,6 +16,6 @@ export default async function (H, ctx) {
   ctx.mark("hero_in");
   for (const k of [1, 5, 2]) { await pick(H, k, 700); await H.glide(H.W * 0.45, H.H * 0.3, 500); await H.sleep(1500); }   // Dracula, Solarized Light, Nord
   ctx.mark("hero_out");
-  await pick(H, 0, 700); await H.sleep(1000);     // back to Orbit
+  await pick(H, 0, 700); await H.sleep(1000);     // back to perfr
 }
 export async function after(H) { await H.key("Escape"); }

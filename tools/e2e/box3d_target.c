@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The Orbit Authors. All rights reserved.
+// Copyright (c) 2026 The perfr Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -57,7 +57,7 @@ static void on_signal(int signum) {
 // noinline: these exist to be found by the profiler. At -O2 a one-line
 // static function is inlined away, and a function that is not in the binary
 // cannot be sampled, searched for, or hooked.
-__attribute__((noinline)) static void orbit_e2e_build_world(b3WorldId world, int boxes_per_side) {
+__attribute__((noinline)) static void perfr_e2e_build_world(b3WorldId world, int boxes_per_side) {
   b3BodyDef ground_def = b3DefaultBodyDef();
   b3ShapeDef shape_def = b3DefaultShapeDef();
   b3BodyId ground = b3CreateBody(world, &ground_def);
@@ -80,7 +80,7 @@ __attribute__((noinline)) static void orbit_e2e_build_world(b3WorldId world, int
   }
 }
 
-__attribute__((noinline)) static void orbit_e2e_step_world(b3WorldId world) {
+__attribute__((noinline)) static void perfr_e2e_step_world(b3WorldId world) {
   b3World_Step(world, 1.0f / 60.0f, 4);
 }
 
@@ -89,7 +89,7 @@ typedef struct {
   int boxes_per_side;
 } WorkerArgs;
 
-static void* orbit_e2e_worker(void* raw) {
+static void* perfr_e2e_worker(void* raw) {
   WorkerArgs* args = raw;
   char name[16];
   snprintf(name, sizeof(name), "physics-%d", args->index);
@@ -98,17 +98,17 @@ static void* orbit_e2e_worker(void* raw) {
   b3WorldDef world_def = b3DefaultWorldDef();
   world_def.workerCount = 1;  // No task callbacks: this thread is the worker.
   b3WorldId world = create_world_locked(&world_def);
-  orbit_e2e_build_world(world, args->boxes_per_side);
+  perfr_e2e_build_world(world, args->boxes_per_side);
 
   long long steps = 0;
   while (atomic_load(&g_running)) {
-    orbit_e2e_step_world(world);
+    perfr_e2e_step_world(world);
     // Restart once the stack has settled, so the workload never goes quiet
     // and a capture taken at any moment looks the same.
     if (++steps % 900 == 0) {
       destroy_world_locked(world);
       world = create_world_locked(&world_def);
-      orbit_e2e_build_world(world, args->boxes_per_side);
+      perfr_e2e_build_world(world, args->boxes_per_side);
     }
   }
   destroy_world_locked(world);
@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
   signal(SIGINT, on_signal);
 
   // The harness reads this to know which pid to profile.
-  printf("orbit-e2e-target pid=%d threads=%d\n", (int)getpid(), threads);
+  printf("perfr-e2e-target pid=%d threads=%d\n", (int)getpid(), threads);
   fflush(stdout);
 
   pthread_t* ids = calloc((size_t)threads, sizeof(pthread_t));
@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
   for (int i = 0; i < threads; ++i) {
     args[i].index = i;
     args[i].boxes_per_side = boxes_per_side;
-    pthread_create(&ids[i], NULL, orbit_e2e_worker, &args[i]);
+    pthread_create(&ids[i], NULL, perfr_e2e_worker, &args[i]);
   }
   for (int i = 0; i < threads; ++i) {
     pthread_join(ids[i], NULL);

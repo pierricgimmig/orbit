@@ -1,0 +1,29 @@
+[package]
+name = "perfr-live-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "HTTP + WebSocket server that serves the live WASM viewer and streams packed events"
+
+[dependencies]
+perfr-live-event = { path = "../perfr-live-event" }
+perfr-live-protocol = { path = "../perfr-live-protocol" }
+perfr-live-render = { path = "../perfr-live-render" }
+perfr-live-ring = { path = "../perfr-live-ring" }
+axum = { version = "0.7", features = ["ws"] }
+futures-util = "0.3"
+libc = "0.2"
+rand = "0.8"
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal", "fs", "io-util"] }
+tower-http = { version = "0.5.2", features = ["cors"] }
+# The WebSocket client for linking machines (peers.rs); axum's ws feature
+# already brings this exact crate into the tree for the server side.
+tokio-tungstenite = "0.24"
+log = "0.4"
+
+[[bin]]
+name = "perfr-live-service"
+path = "src/main.rs"

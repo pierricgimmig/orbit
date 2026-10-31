@@ -1,19 +1,20 @@
 <!--
-Copyright (c) 2026 The Orbit Authors. All rights reserved.
+Copyright (c) 2026 The perfr Authors. All rights reserved.
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
 
-# Orbit Profiler
+# perfr
 
 Profile a running program with no code change. The Rust service runs on Linux,
 macOS and Windows. The viewer is a web page, so any browser on any device can
 open it.
 
-Orbit is a Rust re-implementation of [Orbit](https://github.com/google/orbit)
-by its original author. The capture service (`orbit-service`) and the browser
-viewer are the Rust work. The original C++ application is not in this tree
-any more; it lives on the `cpp` branch, which was `main` before the port.
+perfr, formerly Orbit, is a Rust re-implementation of
+[Orbit](https://github.com/google/orbit) by its original author. The capture
+service (`perfr`) and the browser viewer are the Rust work. The original C++
+application is not in this tree; its history is on the `cpp` branch of the
+Orbit repository.
 
 Both systems attach to a process that is already running. Both can hook
 functions with Frida, and both take manual scopes from Rust, C, C++, and
@@ -23,57 +24,57 @@ each system records is in the table below.
 ## Quick start
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.sh | sh
-orbit-service
+curl -fsSL https://perfr.dev/install.sh | sh
+perfr
 # http://127.0.0.1:44766/
 ```
 
 The installer downloads the GitHub Release for this machine, Linux x86-64 or
-macOS universal, tagged `orbit-vX.Y.Z`. Until that tag exists, the script
+macOS universal, tagged `perfr-vX.Y.Z`. Until that tag exists, the script
 stops and says so. The `v1.*` and `nightly-*` releases are the legacy C++
 build and are not what this installs.
 
 Windows, in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.ps1 | iex
-orbit-service
+irm https://perfr.dev/install.ps1 | iex
+perfr
 # http://127.0.0.1:44766/
 ```
 
-The same release carries `orbit-windows-x86_64.zip`. Start `orbit-service`
+The same release carries `perfr-windows-x86_64.zip`. Start `perfr`
 from a prompt opened with *Run as administrator* to record the scheduler,
 thread states and call stacks (the kernel logger is administrators-only);
 manual scopes and function hooks need no privilege.
 
-`pip install orbit-profiler` is the same service in a wheel, including the
+`pip install perfr` is the same service in a wheel, including the
 Frida files. Wheels are built on the same tags and are not on PyPI yet.
 
 Privileges, capture files, and the manual API:
 [docs/manual/index.md](docs/manual/index.md).
 
-Function hooks need `liborbit_frida_agent` and `orbit-frida-helper` in the
-same directory as `orbit-service` (or `ORBIT_FRIDA_AGENT` /
-`ORBIT_FRIDA_HELPER`); on Windows the files are `orbit_frida_agent.dll` and
-`orbit-frida-helper.exe`. The release archive and the installer put them
+Function hooks need `libperfr_frida_agent` and `perfr-frida-helper` in the
+same directory as `perfr` (or `PERFR_FRIDA_AGENT` /
+`PERFR_FRIDA_HELPER`); on Windows the files are `perfr_frida_agent.dll` and
+`perfr-frida-helper.exe`. The release archive and the installer put them
 there. Without them, starting a capture with hooks fails the Frida setup; it
 does not switch engines on its own. On Linux the kernel engine is a separate
 choice and needs root or `CAP_SYS_ADMIN`. It is not in the macOS or Windows
 builds.
 
-With no arguments, `orbit-service` listens on `127.0.0.1:44766`.
+With no arguments, `perfr` listens on `127.0.0.1:44766`.
 
 ## Drive it from an agent
 
-`orbit-service mcp` is a Model Context Protocol server. It lists processes, attaches, searches functions, arms Frida hooks, starts and stops captures, and reads sampling hotspots, call stacks, and per-function timing. It does not edit source. The service has to be running first. The HTTP API has no authentication; keep it on `127.0.0.1`.
+`perfr mcp` is a Model Context Protocol server. It lists processes, attaches, searches functions, arms Frida hooks, starts and stops captures, and reads sampling hotspots, call stacks, and per-function timing. It does not edit source. The service has to be running first. The HTTP API has no authentication; keep it on `127.0.0.1`.
 
 Claude Code (`~/.claude.json` or `.mcp.json`):
 
 ```json
 {
   "mcpServers": {
-    "orbit": {
-      "command": "orbit-service",
+    "perfr": {
+      "command": "perfr",
       "args": ["mcp", "--url", "http://127.0.0.1:44766"]
     }
   }
@@ -85,8 +86,8 @@ Cursor (`.cursor/mcp.json`):
 ```json
 {
   "mcpServers": {
-    "orbit": {
-      "command": "orbit-service",
+    "perfr": {
+      "command": "perfr",
       "args": ["mcp", "--url", "http://127.0.0.1:44766"]
     }
   }
@@ -96,13 +97,13 @@ Cursor (`.cursor/mcp.json`):
 Streamable HTTP, loopback only:
 
 ```sh
-orbit-service mcp --http 127.0.0.1:44767 --url http://127.0.0.1:44766
+perfr mcp --http 127.0.0.1:44767 --url http://127.0.0.1:44766
 ```
 
 ```json
 {
   "mcpServers": {
-    "orbit": { "url": "http://127.0.0.1:44767/mcp" }
+    "perfr": { "url": "http://127.0.0.1:44767/mcp" }
   }
 }
 ```
@@ -131,6 +132,19 @@ limits.
 
 ## Build from source
 
+For development on any platform, one script builds the service, the Frida
+helper and agent beside it, and serves the viewer:
+
+```sh
+./run.sh                 # http://127.0.0.1:44766/
+./run.sh --sudo          # system-wide scheduling
+./run.sh --http-port N   # another port
+```
+
+It needs a Rust toolchain and nothing else; `rust-toolchain.toml` pins the
+version. The viewer pack is committed, so the front end builds only when you
+change it (`crates/perfr-live-viewer/build_wasm.sh`).
+
 Linux x86-64, static binary, with the Frida files beside it:
 
 ```sh
@@ -154,7 +168,7 @@ Windows (PowerShell, Visual Studio 2022 with the C++ workload):
 
 See [docs/building_windows.md](docs/building_windows.md).
 
-A release is a tag `orbit-vX.Y.Z` (not `v1.*`, which is the C++ line). Pushing
+A release is a tag `perfr-vX.Y.Z` (not `v1.*`, which is the C++ line). Pushing
 that tag runs the Rust release workflow. Details:
 [docs/releasing.md](docs/releasing.md).
 

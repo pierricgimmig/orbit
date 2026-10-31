@@ -1,0 +1,391 @@
+// Copyright (c) 2026 The perfr Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//! macOS process discovery and manual capture. No task port, root, or private
+//! tracing interfaces are needed. The HTTP server and capture format are shared
+//! with Linux; kernel sampling and dynamic hooks remain separate future work.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use crate::hook_journal::ArmedHook;
+use crate::report::SampleStore;
+use crate::scopes::ScopeSource;
+use crate::visible::VisibleProcesses;
+use perfr_live_server::{LiveService, ServerConfig};
+
+fn pid_list() -> std::io::Result<Vec<u32>> {
+    // proc_listallpids returns a PID count, unlike proc_pidinfo's byte count.
+    // Allow headroom and retry when a concurrently growing list fills it.
+    let estimate = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+    if estimate < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut capacity = (estimate as usize + 128).max(256);
+    for _ in 0..4 {
+        let mut pids = vec![0i32; capacity];
+        let count =
+            unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), (pids.len() * 4) as i32) };
+        if count < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if (count as usize) < capacity {
+            pids.truncate(count as usize);
+            return Ok(pids
+                .into_iter()
+                .filter(|p| *p > 0)
+                .map(|p| p as u32)
+                .collect());
+        }
+        capacity *= 2;
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::WouldBlock,
+        "process list kept growing; retry",
+    ))
+}
+
+fn text(bytes: &[libc::c_char]) -> Option<String> {
+    let end = bytes.iter().position(|&c| c == 0).unwrap_or(bytes.len());
+    let raw: Vec<u8> = bytes[..end].iter().map(|&c| c as u8).collect();
+    (!raw.is_empty()).then(|| String::from_utf8_lossy(&raw).into_owned())
+}
+
+pub fn process_comm(pid: u32) -> Option<String> {
+    let pid = i32::try_from(pid).ok()?;
+    let mut name = [0; 1024];
+    let n = unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
+    (n > 0).then(|| text(&name)).flatten()
+}
+
+fn process_path(pid: u32) -> String {
+    let mut path = [0; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let n = unsafe { libc::proc_pidpath(pid as i32, path.as_mut_ptr().cast(), path.len() as u32) };
+    if n > 0 {
+        text(&path).unwrap_or_default()
+    } else {
+        String::new()
+    }
+}
+
+/// Nanoseconds per mach_absolute_time tick. 1:1 on Intel; on Apple silicon the
+/// timebase is 125/3, so a raw tick count read as nanoseconds would be
+/// forty-odd times too small. Bound here rather than through `libc`, whose
+/// binding is deprecated in favour of a crate this one has no other use for.
+fn timebase_ns_per_tick() -> f64 {
+    #[repr(C)]
+    struct MachTimebaseInfo {
+        numer: u32,
+        denom: u32,
+    }
+    unsafe extern "C" {
+        fn mach_timebase_info(info: *mut MachTimebaseInfo) -> libc::c_int;
+    }
+    static RATIO: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RATIO.get_or_init(|| {
+        let mut tb = MachTimebaseInfo { numer: 0, denom: 0 };
+        // SAFETY: the call only writes the struct it is handed.
+        if unsafe { mach_timebase_info(&mut tb) } == 0 && tb.denom != 0 {
+            f64::from(tb.numer) / f64::from(tb.denom)
+        } else {
+            1.0
+        }
+    })
+}
+
+/// Cumulative user + system CPU time of a process in seconds, from the task
+/// info libproc exposes. `pti_total_user`/`pti_total_system` are in
+/// mach_absolute_time units, so they go through the timebase.
+fn process_cpu_secs(pid: u32) -> Option<f64> {
+    let pid = i32::try_from(pid).ok()?;
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as i32;
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTASKINFO,
+            0,
+            (&mut info as *mut libc::proc_taskinfo).cast(),
+            size,
+        )
+    };
+    if n != size {
+        return None;
+    }
+    let ticks = info.pti_total_user.saturating_add(info.pti_total_system);
+    Some(ticks as f64 * timebase_ns_per_tick() / 1e9)
+}
+
+/// Every visible process with its cumulative CPU time, for the shared
+/// sampler in `procs.rs` that turns successive snapshots into percentages.
+pub(crate) fn process_snapshot() -> Result<Vec<crate::procs::ProcSnap>, String> {
+    let pids = pid_list().map_err(|e| e.to_string())?;
+    Ok(pids
+        .into_iter()
+        .filter_map(|pid| {
+            Some(crate::procs::ProcSnap {
+                pid,
+                name: process_comm(pid)?,
+                path: process_path(pid),
+                cpu_secs: process_cpu_secs(pid).unwrap_or(0.0),
+            })
+        })
+        .collect())
+}
+
+pub fn read_parent_map() -> Vec<(u32, u32)> {
+    pid_list()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|pid| {
+            let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+            let size = std::mem::size_of_val(&info) as i32;
+            let n = unsafe {
+                libc::proc_pidinfo(
+                    pid as i32,
+                    libc::PROC_PIDTBSDINFO,
+                    0,
+                    (&mut info as *mut libc::proc_bsdinfo).cast(),
+                    size,
+                )
+            };
+            (n == size).then_some((pid, info.pbi_ppid))
+        })
+        .collect()
+}
+
+fn native_thread_ids(pid: u32) -> Vec<u64> {
+    let Ok(pid) = i32::try_from(pid) else {
+        return Vec::new();
+    };
+    // XNU proc_info_private.h: selector 28 returns unique kernel thread IDs.
+    // Selector 6 returns pthread handles, which do not match our wire IDs.
+    const PROC_PIDLISTTHREADIDS: i32 = 28;
+    let mut capacity = 64;
+    while capacity <= 65536 {
+        let mut tids = vec![0u64; capacity];
+        let size = (tids.len() * 8) as i32;
+        let n = unsafe {
+            libc::proc_pidinfo(pid, PROC_PIDLISTTHREADIDS, 0, tids.as_mut_ptr().cast(), size)
+        };
+        if n <= 0 {
+            return Vec::new();
+        }
+        if n < size {
+            tids.truncate(n as usize / 8);
+            return tids;
+        }
+        capacity *= 2;
+    }
+    Vec::new()
+}
+
+pub fn thread_ids(pid: u32) -> Vec<u32> {
+    // Match the existing ScopeEvent wire format, while retaining full kernel
+    // IDs for libproc lookups below.
+    native_thread_ids(pid)
+        .into_iter()
+        .map(|tid| tid as u32)
+        .collect()
+}
+
+pub fn thread_comm(pid: u32, tid: u32) -> Option<String> {
+    // The common case needs one lookup. Resolve the full kernel ID only if
+    // the host has advanced past the wire format's 32-bit thread namespace.
+    native_thread_comm(pid, u64::from(tid)).or_else(|| {
+        let native_tid = native_thread_ids(pid)
+            .into_iter()
+            .find(|&id| id > u32::MAX as u64 && id as u32 == tid)?;
+        native_thread_comm(pid, native_tid)
+    })
+}
+
+fn native_thread_comm(pid: u32, tid: u64) -> Option<String> {
+    const PROC_PIDTHREADID64INFO: i32 = 15; // SDK proc_info.h; libc omits this selector.
+    let pid = i32::try_from(pid).ok()?;
+    let mut info: libc::proc_threadinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as i32;
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            PROC_PIDTHREADID64INFO,
+            tid,
+            (&mut info as *mut libc::proc_threadinfo).cast(),
+            size,
+        )
+    };
+    if n != size {
+        return None;
+    }
+    Some(text(&info.pth_name).unwrap_or_else(|| format!("thread {tid}")))
+}
+
+/// Manual scopes use the same CLOCK_MONOTONIC epoch in producer and service.
+#[allow(clippy::too_many_arguments)]
+pub fn capture_loop(
+    service: Arc<LiveService>,
+    running: Arc<AtomicBool>,
+    target_pid: i32,
+    _store: Arc<SampleStore>,
+    gpu_helper: Option<String>,
+    _hooks: Vec<ArmedHook>,
+    show_all_processes: bool,
+    _duplicate_filter: bool,
+    _max_hook_calls_per_s: u64,
+    mut frida: Option<crate::frida::FridaSession>,
+    mut scopes: ScopeSource,
+    capture_start_ns: u64,
+    _symbols: Arc<std::sync::Mutex<crate::serve::SymbolState>>,
+) {
+    if gpu_helper.is_some() {
+        log::warn!("GPU helper capture is not supported on macOS");
+    }
+    service.set_instrumentation_status(if frida.is_some() { "Frida: functions armed" } else { "macOS: manual instrumentation; CPU sampling and scheduling are not yet available" });
+    service.mark_capture_started(target_pid.max(0) as u32, capture_start_ns);
+    let mut visible = VisibleProcesses::new(target_pid, show_all_processes);
+    visible.add_instrumented(std::process::id());
+    let mut names = crate::names::NameSync::default();
+    let mut stats = crate::selfstat::SelfStat::default();
+    let mut last_names = Instant::now() - Duration::from_secs(1);
+    let interval = Duration::from_millis(
+        std::env::var("PERFR_DRAIN_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(5)
+            .clamp(1, 100),
+    );
+    let mut batch = Vec::with_capacity(256);
+    while running.load(Ordering::Acquire) {
+        {
+            let _pass = perfr_api::scope("capture pass");
+            batch.clear();
+            let now = crate::now_monotonic_ns();
+            visible.maybe_refresh();
+            scopes.poll(&mut visible, now, &mut batch);
+            if let Some(session) = frida.as_mut() {
+                session.poll();
+                service.set_instrumentation_status(session.status(scopes.events_lost, &scopes.auto_unhooked));
+            }
+            if last_names.elapsed() >= Duration::from_secs(1) {
+                names.refresh(
+                    &visible.pids(),
+                    |p, n| service.set_process_name(p, n),
+                    |p, t, n| service.set_thread_name(p, t, n),
+                );
+                if let Some((cpu, rss)) = stats.sample() {
+                    perfr_api::value("service cpu %", cpu);
+                    perfr_api::value("service rss MiB", rss);
+                }
+                perfr_api::value(
+                    "scope rings fill %",
+                    f64::from(scopes.fill_fraction()) * 100.0,
+                );
+                last_names = Instant::now();
+            }
+            service.push_events(&batch);
+            service.note_live_end(now);
+        }
+        std::thread::sleep(interval);
+    }
+    batch.clear();
+    if let Some(session) = frida.as_mut() {
+        session.stop();
+        session.poll();
+        service.set_instrumentation_status(session.status(scopes.events_lost, &scopes.auto_unhooked));
+    }
+    scopes.poll(&mut visible, crate::now_monotonic_ns(), &mut batch);
+    scopes.finish(crate::now_monotonic_ns(), &mut batch);
+    names.refresh(
+        &visible.pids(),
+        |p, n| service.set_process_name(p, n),
+        |p, t, n| service.set_thread_name(p, t, n),
+    );
+    service.push_events(&batch);
+    log::info!(
+        "manual capture finished: {} segments, {} events, {} lost records",
+        scopes.segment_count(),
+        scopes.events_pushed,
+        scopes.events_lost
+    );
+    service.mark_capture_finished();
+}
+
+pub(super) fn capture_file(args: crate::Args) -> Result<(), String> {
+    if args.gpu_helper.is_some() || args.out_arrow.is_some() {
+        return Err(
+            "macOS file capture supports --pid, --duration-ms and --out <capture.perfr.zip>".into(),
+        );
+    }
+    let output = args.out.unwrap_or_else(|| "capture.perfr.zip".into());
+    if !output.ends_with(".perfr.zip") {
+        return Err("macOS --out must name a .perfr.zip capture bundle".into());
+    }
+    let service = LiveService::new(ServerConfig {
+        ring_buffer_bytes: 64 << 20,
+        ..Default::default()
+    })?;
+    perfr_api::init().map_err(|e| format!("manual API initialization failed: {e}"))?;
+    let running = Arc::new(AtomicBool::new(true));
+    let stop = running.clone();
+    let timer = std::thread::spawn(move || {
+        std::thread::sleep(args.duration);
+        stop.store(false, Ordering::Release);
+    });
+    let store = Arc::new(SampleStore::new());
+    let pid = args.pid.unwrap_or(0);
+    let capture_start_ns = crate::now_monotonic_ns();
+    let mut scopes = ScopeSource::new(service.clone());
+    scopes.begin_self_capture();
+    let _capture = perfr_api::start("capture");
+    capture_loop(
+        service.clone(),
+        running,
+        pid,
+        store.clone(),
+        None,
+        Vec::new(),
+        true,
+        true,
+        0,
+        None,
+        scopes,
+        capture_start_ns,
+        Arc::new(std::sync::Mutex::new(crate::serve::SymbolState::default())),
+    );
+    let _ = timer.join();
+    let (_, events) = service.ring().snapshot();
+    let (threads, processes) = service.capture_names();
+    let bundle = crate::names::capture_bundle(
+        &events,
+        &service.intern.lock(),
+        &store,
+        &threads,
+        &processes,
+        pid.max(0) as u32,
+    );
+    std::fs::write(&output, bundle.to_zip().map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    log::info!(
+        "wrote {} manual events to {output}",
+        events.len()
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn discovers_own_process_and_thread() {
+        let pid = std::process::id();
+        assert!(pid_list().unwrap().contains(&pid));
+        assert!(process_comm(pid).is_some());
+        assert!(!process_path(pid).is_empty());
+        let tid = perfr_scope_ring::platform::thread_id() as u32;
+        assert!(thread_ids(pid).contains(&tid));
+        assert!(thread_comm(pid, tid).is_some());
+        assert!(read_parent_map().iter().any(|&(p, _)| p == pid));
+    }
+}

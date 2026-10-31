@@ -1,10 +1,10 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 # Publishes tools/site to GitHub Pages (Source: GitHub Actions).
 # The tree uses relative URLs, so it works at /<repo>/ and at a domain root.
-# configure-pages' base_path is intentionally unused: baking /orbit/ in
+# configure-pages' base_path is intentionally unused: baking /perfr/ in
 # would break a later custom domain. No CNAME is written.
 
 name: pages
@@ -14,8 +14,9 @@ on:
     paths:
       - 'tools/site/**'
       - 'tools/install/install.sh'
+      - 'tools/install/install.ps1'
       - 'docs/**'
-      - 'crates/orbit-live-*/**'
+      - 'crates/perfr-live-*/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -61,7 +62,7 @@ jobs:
       # Nightly + build-std + wasm-bindgen, into viewer-dist/. The stable
       # wasm32 compile in live-viewer.yml does not produce this pack.
       - name: Build viewer pack
-        run: crates/orbit-live-viewer/build_wasm.sh
+        run: crates/perfr-live-viewer/build_wasm.sh
 
       # No live Box3D capture in CI. The saved stream is the front-page
       # capture and one of the blog clips.

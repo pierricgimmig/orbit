@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Browser regression for portable, composable instrumentation presets.
@@ -19,7 +19,7 @@ def preset(name, names):
     return dict(version=1, name=name, functions=[dict(module='Game.so', name=n) for n in names])
 
 def upload(name, data):
-    return dict(name=name + '.orbit-preset.json', mimeType='application/json',
+    return dict(name=name + '.perfr-preset.json', mimeType='application/json',
                 buffer=json.dumps(data).encode())
 
 with sync_playwright() as pw:
@@ -54,18 +54,18 @@ with sync_playwright() as pw:
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(args.url)
-    page.wait_for_function('window.__orbit_ui')
+    page.wait_for_function('window.__perfr_ui')
     def rows():
-        return json.loads(page.evaluate('window.__orbit_ui'))
+        return json.loads(page.evaluate('window.__perfr_ui'))
     def state():
-        return json.loads(page.evaluate('window.__orbit_sel'))
+        return json.loads(page.evaluate('window.__perfr_sel'))
     def click(label):
-        page.wait_for_function("s => JSON.parse(window.__orbit_ui).some(r => r[0] === s)", arg=label)
+        page.wait_for_function("s => JSON.parse(window.__perfr_ui).some(r => r[0] === s)", arg=label)
         _,x,y,w,h = next(r for r in rows() if r[0] == label)
         page.mouse.click(x+w/2,y+h/2)
         page.wait_for_timeout(200)
     def hooks(expected):
-        page.wait_for_function("ids => JSON.stringify(JSON.parse(window.__orbit_sel).hooks.slice().sort()) === JSON.stringify(ids.slice().sort())", arg=expected)
+        page.wait_for_function("ids => JSON.stringify(JSON.parse(window.__perfr_sel).hooks.slice().sort()) === JSON.stringify(ids.slice().sort())", arg=expected)
     def load(files):
         with page.expect_file_chooser() as chooser:
             click('preset:load')
@@ -94,7 +94,7 @@ with sync_playwright() as pw:
     # Invalid imports leave the existing selection and loaded presets intact.
     load([upload('bad',dict(version=99,name='bad',functions=[]))])
     hooks([4201,4202,4203])
-    page.wait_for_function("JSON.parse(window.__orbit_ui).some(r => r[0] === 'preset:error')")
+    page.wait_for_function("JSON.parse(window.__perfr_ui).some(r => r[0] === 'preset:error')")
     # A response for the old process arriving last must not add its addresses.
     hold_next = True
     click('preset:apply')
@@ -108,7 +108,7 @@ with sync_playwright() as pw:
     hooks([4301,4302,4303])
     load([upload('exported',saved)])
     hooks([4301,4302,4303])
-    page.screenshot(path='/tmp/orbit-presets.png')
+    page.screenshot(path='/tmp/perfr-presets.png')
     assert not errors, errors
     print('PASS: multi-file presets, export, additive/idempotent resolution, missing/ambiguous symbols, invalid input, and process switching')
     browser.close()

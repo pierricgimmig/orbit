@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The Orbit Authors. All rights reserved.
+// Copyright (c) 2026 The perfr Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 #ifdef _WIN32
@@ -56,44 +56,44 @@ static void gate_signal(void) { pthread_cond_signal(&gate_condition); }
 static void short_sleep(void) { struct timespec t = {0, 100000}; nanosleep(&t, NULL); }
 #define test_getpid() ((int) getpid())
 #endif
-#ifdef ORBIT_NO_API
+#ifdef PERFR_NO_API
 #include <stdint.h>
-#define orbit_init() 0
-#define orbit_shutdown() ((void)0)
-#define orbit_start(...) 0
-#define orbit_start_async(...) 0
-#define orbit_stop(...) ((void)0)
-#define orbit_instant(...) ((void)0)
+#define perfr_init() 0
+#define perfr_shutdown() ((void)0)
+#define perfr_start(...) 0
+#define perfr_start_async(...) 0
+#define perfr_stop(...) ((void)0)
+#define perfr_instant(...) ((void)0)
 #else
-#include "orbit.h"
+#include "perfr.h"
 #endif
 
-NOINLINE void orbit_frida_test_inner(void) {
-  uint64_t manual = orbit_start("manual inner", 12);
+NOINLINE void perfr_frida_test_inner(void) {
+  uint64_t manual = perfr_start("manual inner", 12);
   short_sleep();
-  orbit_stop(manual);
+  perfr_stop(manual);
 }
-NOINLINE void orbit_frida_test_middle(void) {
-  uint64_t manual = orbit_start("manual middle", 13);
-  for (int i = 0; i < 3; ++i) orbit_frida_test_inner();
-  orbit_stop(manual);
+NOINLINE void perfr_frida_test_middle(void) {
+  uint64_t manual = perfr_start("manual middle", 13);
+  for (int i = 0; i < 3; ++i) perfr_frida_test_inner();
+  perfr_stop(manual);
 }
-NOINLINE void orbit_frida_test_outer(void) {
-  uint64_t manual = orbit_start("manual outer", 12);
-  for (int i = 0; i < 2; ++i) orbit_frida_test_middle();
-  orbit_stop(manual);
+NOINLINE void perfr_frida_test_outer(void) {
+  uint64_t manual = perfr_start("manual outer", 12);
+  for (int i = 0; i < 2; ++i) perfr_frida_test_middle();
+  perfr_stop(manual);
 }
 static TEST_THREAD_RETURN worker(void *unused) {
   (void)unused;
-  uint64_t manual = orbit_start("manual worker", 13);
-  uint64_t async = orbit_start_async("async worker", 12);
-  for (int i = 0; i < 10; ++i) orbit_frida_test_outer();
-  orbit_stop(async);
-  orbit_stop(manual);
+  uint64_t manual = perfr_start("manual worker", 13);
+  uint64_t async = perfr_start_async("async worker", 12);
+  for (int i = 0; i < 10; ++i) perfr_frida_test_outer();
+  perfr_stop(async);
+  perfr_stop(manual);
   return TEST_THREAD_DONE;
 }
 static int released = 0;
-NOINLINE void orbit_frida_test_blocked(void) {
+NOINLINE void perfr_frida_test_blocked(void) {
   gate_lock();
   puts("entered"); fflush(stdout);
   while (!released) gate_wait();
@@ -101,7 +101,7 @@ NOINLINE void orbit_frida_test_blocked(void) {
 }
 static TEST_THREAD_RETURN blocked_worker(void *unused) {
   (void)unused;
-  orbit_frida_test_blocked();
+  perfr_frida_test_blocked();
   return TEST_THREAD_DONE;
 }
 int main(void) {
@@ -111,7 +111,7 @@ int main(void) {
   // means the kernel has no Yama, so there is nothing to opt into.
   if (prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0) != 0 && errno != EINVAL) return 2;
 #endif
-  if (orbit_init() != 0) return 3;
+  if (perfr_init() != 0) return 3;
   printf("%d\n", test_getpid()); fflush(stdout);
   char command[32];
   test_thread blocked;
@@ -130,10 +130,10 @@ int main(void) {
       puts("released"); fflush(stdout);
       continue;
     }
-    uint64_t manual = orbit_start("manual alongside Frida", 22);
+    uint64_t manual = perfr_start("manual alongside Frida", 22);
 #ifndef _WIN32
     pid_t child = fork();
-    if (child == 0) { orbit_frida_test_outer(); _exit(0); }
+    if (child == 0) { perfr_frida_test_outer(); _exit(0); }
     if (child < 0) return 4;
     int status;
     if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) return 5;
@@ -141,9 +141,9 @@ int main(void) {
     test_thread threads[3];
     for (int i = 0; i < 3; ++i) test_thread_create(&threads[i], worker, NULL);
     for (int i = 0; i < 3; ++i) test_thread_join(threads[i]);
-    orbit_stop(manual);
+    perfr_stop(manual);
     puts("done"); fflush(stdout);
   }
-  orbit_shutdown();
+  perfr_shutdown();
   return 0;
 }

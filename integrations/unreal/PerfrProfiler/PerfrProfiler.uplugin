@@ -1,0 +1,22 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "perfr",
+	"Description": "Sends Unreal's named events, stat scopes and frame boundaries to a running perfr, and gives game modules the perfr manual-instrumentation API (perfr.h).",
+	"Category": "Developer Tools",
+	"CreatedBy": "The perfr Authors",
+	"CreatedByURL": "https://github.com/perfr/perfr",
+	"DocsURL": "https://github.com/perfr/perfr/blob/main/integrations/unreal/README.md",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "PerfrProfiler",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Linux", "Win64", "Mac" ]
+		}
+	]
+}

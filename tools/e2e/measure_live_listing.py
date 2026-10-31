@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -9,7 +9,7 @@ window moving (Follow on: every lane is re-listed every frame). TODO item 21.
 
 Runs the same harness the e2e suite uses -- headless Chrome, a fresh service
 on its own port, the Box3D target -- opens the Self pane and reads
-`window.__orbit_self` after a few seconds of capture in each mode. Prints a
+`window.__perfr_self` after a few seconds of capture in each mode. Prints a
 table; nothing is asserted.
 
     python3 tools/e2e/measure_live_listing.py [--seconds 8]
@@ -23,7 +23,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from orbit_e2e import Chrome, Run, Service, Target, build_target, DEFAULT_BOX3D  # noqa: E402
+from perfr_e2e import Chrome, Run, Service, Target, build_target, DEFAULT_BOX3D  # noqa: E402
 
 
 def phase(phases, name):
@@ -51,14 +51,14 @@ def main():
     parser.add_argument("--box3d", default=DEFAULT_BOX3D)
     parser.add_argument("--seconds", type=float, default=8.0)
     args = parser.parse_args()
-    target_bin = "/tmp/orbit-e2e-box3d-target"
+    target_bin = "/tmp/perfr-e2e-box3d-target"
     build_target(args.box3d, target_bin)
     target = service = chrome = None
     try:
         target = Target([target_bin, "--threads", "3"])
         service = Service(args.port)
         chrome = Chrome(port=args.port + 5000)
-        run = Run(service, target, chrome, "/tmp/orbit-e2e-measure")
+        run = Run(service, target, chrome, "/tmp/perfr-e2e-measure")
         run.open_viewer("?collapse=scheduler")
         run.click("Self")
         run.wait_for(lambda: run.self_phases() or None, "the self readout", timeout=20)

@@ -1,6 +1,6 @@
-/* Orbit shared look: clean, light by default, dark on demand. Injected after
+/* perfr shared look: clean, light by default, dark on demand. Injected after
    each post's own styles so it re-values the design tokens they use. One
-   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   accent, the perfr blue. Light is the default; dark is opt-in via the
    [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
    over each post's own prefers-color-scheme block). */
 :root{
@@ -39,9 +39,9 @@
 body{font-family:var(--body);}
 h1,h2,h3,h4,h5,h6{font-family:var(--display);}
 code,pre,kbd,samp,tt{font-family:var(--mono);}
-.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+.perfr-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
   display:inline-flex;align-items:center;gap:.4rem;
   font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
   color:var(--muted);background:var(--surface);border:1px solid var(--line);
   border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
-.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+.perfr-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}

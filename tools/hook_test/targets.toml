@@ -23,17 +23,17 @@
 
 [[target]]
 name = "workload"
-out = "/tmp/orbit-hook-workload"
-build = "cc -O2 -g -fno-omit-frame-pointer -o /tmp/orbit-hook-workload tools/hook_test/workload.c -lpthread -lm"
-argv = ["/tmp/orbit-hook-workload"]
+out = "/tmp/perfr-hook-workload"
+build = "cc -O2 -g -fno-omit-frame-pointer -o /tmp/perfr-hook-workload tools/hook_test/workload.c -lpthread -lm"
+argv = ["/tmp/perfr-hook-workload"]
 select = "report"
 top = 8
 
 [[target]]
 name = "crash-demo"
-out = "/tmp/orbit-hook-crash-demo"
-build = "cc -O0 -g -o /tmp/orbit-hook-crash-demo tools/hook_test/crash_demo.c"
-argv = ["/tmp/orbit-hook-crash-demo"]
+out = "/tmp/perfr-hook-crash-demo"
+build = "cc -O0 -g -o /tmp/perfr-hook-crash-demo tools/hook_test/crash_demo.c"
+argv = ["/tmp/perfr-hook-crash-demo"]
 select = "list:crash_in_here"
 wait_go = true
 gdb = true

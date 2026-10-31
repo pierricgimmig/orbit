@@ -1,4 +1,4 @@
-# Orbit in Unreal Engine
+# perfr in Unreal Engine
 
 Three levels, each on top of the previous one. Written against Unreal 5.8;
 the hooks it uses (`FExternalProfiler`, the named-event macros) have been in
@@ -8,24 +8,24 @@ the engine since 4.x.
 
 Sampling and the Functions tab's dynamic hooks work on any Linux build of an
 Unreal game, Shipping included, with symbols from the `.debug` file next to
-the executable. Point `orbit-service` at the process and press Record. This is
+the executable. Point `perfr` at the process and press Record. This is
 how the ThirdPerson demo in the e2e suite is profiled.
 
-## 1. The plugin: Unreal's own macros reach Orbit
+## 1. The plugin: Unreal's own macros reach perfr
 
-Copy [`OrbitProfiler/`](OrbitProfiler) into `<Project>/Plugins/` (a project
+Copy [`PerfrProfiler/`](PerfrProfiler) into `<Project>/Plugins/` (a project
 plugin is enabled by default) or `Engine/Plugins/Developer/` (then enable it
 in the `.uproject`), build, and run with the profiler selected:
 
 ```
-UnrealEditor MyGame.uproject -game -Orbit -statnamedevents
+UnrealEditor MyGame.uproject -game -perfr -statnamedevents
 ```
 
-`-Orbit` is how Unreal selects an external profiler; `UE_EXTERNAL_PROFILER=Orbit`
-in the environment or `[Core.ProfilingDebugging] ExternalProfiler=Orbit` in
+`-perfr` is how Unreal selects an external profiler; `UE_EXTERNAL_PROFILER=perfr`
+in the environment or `[Core.ProfilingDebugging] ExternalProfiler=perfr` in
 `DefaultEngine.ini` do the same. From then on:
 
-| Unreal | Orbit |
+| Unreal | perfr |
 |---|---|
 | `SCOPED_NAMED_EVENT(Name, Color)`, `_TEXT`, `_TCHAR`, `_F`, `_FSTRING` | a scope on the calling thread |
 | `SCOPE_CYCLE_COUNTER(STAT_x)`, `QUICK_SCOPE_CYCLE_COUNTER(x)` | a scope, when stat named events are on: `-statnamedevents` or `stats.NamedEvents on` |
@@ -33,13 +33,13 @@ in the environment or `[Core.ProfilingDebugging] ExternalProfiler=Orbit` in
 | each game-thread frame (`FExternalProfiler::FrameSync`) | a `frame` instant |
 | thread names | come from the OS; Unreal names its threads |
 
-The plugin is one Core-only module: at startup it calls `orbit_init()`, which
-finds `liborbit_api` (`$ORBIT_API_LIB`, then beside an `orbit-service` on
-`PATH`, `~/.local/bin`, `~/.orbit/bin`, beside the executable, then the system
+The plugin is one Core-only module: at startup it calls `perfr_init()`, which
+finds `libperfr_api` (`$PERFR_API_LIB`, then beside a `perfr` on
+`PATH`, `~/.local/bin`, `~/.perfr/bin`, beside the executable, then the system
 loader) and logs one line either way. Without a library every macro is one
-predictable branch. It then registers `FOrbitExternalProfiler`, which maps
-Unreal's `StartScopedEvent` / `EndScopedEvent` onto `orbit_start` /
-`orbit_stop` with a per-thread stack of handles, since Unreal ends an event
+predictable branch. It then registers `FPerfrExternalProfiler`, which maps
+Unreal's `StartScopedEvent` / `EndScopedEvent` onto `perfr_start` /
+`perfr_stop` with a per-thread stack of handles, since Unreal ends an event
 without naming it.
 
 Configurations: Development and Test. Unreal compiles external profiling out
@@ -52,50 +52,50 @@ GlobalDefinitions.Add("UE_EXTERNAL_PROFILING_ENABLED=1");
 GlobalDefinitions.Add("ALLOW_NAMED_EVENTS_IN_TEST=1"); // Test builds only need this one
 ```
 
-`orbit.h` is copied into the plugin so it can be dropped into a project as is;
-[`sync-orbit-header.sh`](sync-orbit-header.sh) refreshes the copy from
-`crates/orbit-api/include/orbit.h`.
+`perfr.h` is copied into the plugin so it can be dropped into a project as is;
+[`sync-perfr-header.sh`](sync-perfr-header.sh) refreshes the copy from
+`crates/perfr-api/include/perfr.h`.
 
-## 2. Your code: the Orbit API directly
+## 2. Your code: the perfr API directly
 
-A module that depends on `OrbitProfiler` gets the whole API from one include:
+A module that depends on `PerfrProfiler` gets the whole API from one include:
 
 ```cpp
-#include "OrbitProfiler.h"
+#include "PerfrProfiler.h"
 
 void AMyCharacter::Tick(float DeltaSeconds)
 {
-    ORBIT_SCOPE("AMyCharacter::Tick");       // RAII, nested on this thread
-    ORBIT_VALUE("speed", GetVelocity().Size()); // a lane to graph
+    PERFR_SCOPE("AMyCharacter::Tick");       // RAII, nested on this thread
+    PERFR_VALUE("speed", GetVelocity().Size()); // a lane to graph
     ...
 }
 
 // A job handed to another thread: the handle is the identity, link joins them.
-orbit_scope Enqueued = orbit_instant(ORBIT_LIT("enqueue"));
+perfr_scope Enqueued = perfr_instant(PERFR_LIT("enqueue"));
 Async(EAsyncExecution::TaskGraph, [Enqueued] {
-    ORBIT_SCOPE("job");
-    orbit_link(Enqueued, orbit_start_async(ORBIT_LIT("job result")));
+    PERFR_SCOPE("job");
+    perfr_link(Enqueued, perfr_start_async(PERFR_LIT("job result")));
 });
 
 // GPU work whose timestamps come back later: a span at the times you supply.
-orbit_span_async(ORBIT_LIT("shadow pass"), StartNs, EndNs);
+perfr_span_async(PERFR_LIT("shadow pass"), StartNs, EndNs);
 ```
 
-Names are pointer and length (`ORBIT_LIT` for a literal); TCHAR text wants
+Names are pointer and length (`PERFR_LIT` for a literal); TCHAR text wants
 `TCHAR_TO_ANSI` or the `FString`'s `Len()`. The header documents every call.
 
 ## 3. `TRACE_CPUPROFILER_EVENT_SCOPE` too (engine patch, optional)
 
 The Unreal Insights macros never reach an external profiler: they write to
 the trace channel or nothing. [`engine-cpu-trace-scopes.patch`](engine-cpu-trace-scopes.patch)
-adds an Orbit scope to `TRACE_CPUPROFILER_EVENT_SCOPE_USE`, the one macro
+adds a perfr scope to `TRACE_CPUPROFILER_EVENT_SCOPE_USE`, the one macro
 every `TRACE_CPUPROFILER_EVENT_SCOPE*` expands through, so all of them show
-in Orbit at the same cost as the Insights channel check when no library is
+in perfr at the same cost as the Insights channel check when no library is
 loaded. Apply from the engine root after copying the header:
 
 ```
-cp <orbit>/crates/orbit-api/include/orbit.h Engine/Source/Runtime/Core/Public/ProfilingDebugging/orbit.h
-patch -p1 < <orbit>/integrations/unreal/engine-cpu-trace-scopes.patch
+cp <perfr>/crates/perfr-api/include/perfr.h Engine/Source/Runtime/Core/Public/ProfilingDebugging/perfr.h
+patch -p1 < <perfr>/integrations/unreal/engine-cpu-trace-scopes.patch
 ```
 
 Two things to know. It touches a header that every module includes, so it is
@@ -104,14 +104,14 @@ these scopes, more than the scope ring drains (it drops past about a million
 records a second and the viewer shows the gap), so start with the plugin's
 named events and add the patch when you want the finer Insights-level
 picture of one system. With the patch applied, `SCOPED_NAMED_EVENT` scopes
-arrive twice if `-Orbit` is also passed; pick one route.
+arrive twice if `-perfr` is also passed; pick one route.
 
 ## Checking it works
 
-![Unreal's named events as Orbit scopes: the ThirdPerson demo, Development Editor, `-game -nullrhi -Orbit -statnamedevents`](../../docs/screenshots/unreal-named-events.png)
+![Unreal's named events as perfr scopes: the ThirdPerson demo, Development Editor, `-game -nullrhi -perfr -statnamedevents`](../../docs/screenshots/unreal-named-events.png)
 
 
-The game log says `Orbit: liborbit_api loaded` at module startup. The
+The game log says `perfr: libperfr_api loaded` at module startup. The
 service log says `opened segment of pid <n>` when Record starts, and
 `manual instrumentation: <n> events` when it stops. In the viewer the game's
 threads carry scope bands named as the macros named them, and the game

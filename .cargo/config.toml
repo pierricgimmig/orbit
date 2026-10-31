@@ -1,9 +1,9 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# Windows: link the C runtime statically, so orbit-service.exe, the helper,
-# the agent DLL and orbit_api.dll depend on nothing but kernel32/ntdll and
+# Windows: link the C runtime statically, so perfr.exe, the helper,
+# the agent DLL and perfr_api.dll depend on nothing but kernel32/ntdll and
 # the system DLLs they name -- the Windows reading of "static binary"
 # (docs/design/cross-platform-plan.md). It also matches the Frida devkits, which
 # are built against the static CRT.

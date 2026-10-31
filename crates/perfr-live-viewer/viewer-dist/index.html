@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<!-- Copyright (c) 2026 The perfr Authors. All rights reserved.
+     Use of this source code is governed by a BSD-style license that can be
+     found in the LICENSE file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="perfr Live" />
+  <title>perfr Live Viewer</title>
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <style>
+    :root {
+      --sat: env(safe-area-inset-top, 0px);
+      --sar: env(safe-area-inset-right, 0px);
+      --sab: env(safe-area-inset-bottom, 0px);
+      --sal: env(safe-area-inset-left, 0px);
+    }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      height: 100svh;
+      height: 100dvh;
+      min-height: 100%;
+      min-height: -webkit-fill-available;
+      background: #0B0C0E;
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: none;
+    }
+    canvas {
+      position: fixed;
+      left: 0; top: 0;
+      width: 100%; height: 100%;
+      display: block; outline: none;
+      /* Without this iOS Safari keeps pan and pinch for itself and never
+         delivers a usable touchmove stream, so egui sees no gesture at all:
+         no pinch-zoom, no drag. */
+      touch-action: none;
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
+    }
+    #fallback {
+      display: none; color: #ffffff; font: 13px/1.4 "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+      padding: 16px; max-width: 36rem;
+    }
+    #fallback a { color: #64B5F6; }
+  </style>
+</head>
+<body>
+  <canvas id="the_canvas_id" tabindex="0"></canvas>
+  <div id="fallback">
+    eframe WASM failed to start.
+    <a href="fallback.html">Open the last-ditch HTML viewer</a>.
+    Rebuild with <code>build_wasm.sh</code> so
+    <code>perfr_live_viewer.js</code> / <code>.wasm</code> are served.
+  </div>
+  <script type="module">
+    const canvas = document.getElementById("the_canvas_id");
+
+    // Fill the visual viewport (Safari URL / toolbars) so "fullscreen"
+    // still uses the on-screen height when the element API is missing.
+    let lastFit = "";
+    function fitVisualViewport() {
+      const vv = window.visualViewport;
+      const w = vv ? vv.width : window.innerWidth;
+      const h = vv ? vv.height : window.innerHeight;
+      const x = vv ? vv.offsetLeft : 0;
+      const y = vv ? vv.offsetTop : 0;
+      const key = `${w}x${h}@${x},${y}`;
+      if (key === lastFit) return;
+      lastFit = key;
+      canvas.style.left = `${x}px`;
+      canvas.style.top = `${y}px`;
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+    }
+    fitVisualViewport();
+    window.addEventListener("resize", fitVisualViewport);
+    window.addEventListener("orientationchange", fitVisualViewport);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", fitVisualViewport);
+      window.visualViewport.addEventListener("scroll", fitVisualViewport);
+    }
+
+    // iOS Safari fires these non-standard events for pinch and double-tap and
+    // zooms the *page* unless they are cancelled. touch-action alone does not
+    // stop them.
+    for (const ev of ["gesturestart", "gesturechange", "gestureend"]) {
+      document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+    }
+    // Double-tap-to-zoom is a separate path again.
+    document.addEventListener("dblclick", (e) => e.preventDefault(), { passive: false });
+
+    // What goes wrong before or outside the wasm -- the pack did not load,
+    // a JS error, a wasm trap surfacing as an exception -- goes to the
+    // service's log file too, the way the viewer's own lines do once it
+    // runs. sendBeacon is fire-and-forget and works while the page is
+    // going away; on a static site with no service the request just fails.
+    function relayLog(level, message) {
+      try {
+        // A static capture (?capture=) has no service. /api/log would 404,
+        // and the leading slash would leave a project-site prefix (/perfr/)
+        // and hit the host root.
+        if (new URLSearchParams(location.search).get("capture")) return;
+        const text = String((message && (message.stack || message.message)) || message).slice(0, 4000);
+        const body = JSON.stringify({ page: "js", lines: [{ t_ms: Date.now(), level, target: "index.html", message: text }] });
+        navigator.sendBeacon("/api/log", body);
+      } catch (_) {}
+    }
+    window.addEventListener("error", (e) => relayLog("error", e.error || e.message));
+    window.addEventListener("unhandledrejection", (e) => relayLog("error", e.reason));
+
+    const fallback = document.getElementById("fallback");
+    function showFallback(err) {
+      console.error(err);
+      relayLog("error", "viewer failed to start: " + ((err && (err.stack || err.message)) || err));
+      canvas.style.display = "none";
+      fallback.style.display = "block";
+    }
+    try {
+      const mod = await import("./perfr_live_viewer.js");
+      await mod.default();
+      // SAB + COOP/COEP: init the rayon pool once, before the first collect.
+      // Old browsers / missing isolation headers → sequential, no crash.
+      if (typeof SharedArrayBuffer !== "undefined" && typeof mod.initThreadPool === "function") {
+        try {
+          // Workers are not free: each is a wasm instance with its own stack,
+          // spawned before the first frame. The parallel section here is
+          // per-frame collect/raster measured in single-digit milliseconds, so
+          // the useful width is bounded by that work, not by the core count.
+          // Default to a modest cap and let ?threads=N override it, so the
+          // knee can actually be measured on a given machine.
+          const hw = Number(navigator.hardwareConcurrency) || 4;
+          const forced = Number(new URLSearchParams(location.search).get("threads"));
+          const want = Number.isFinite(forced) && forced > 0 ? forced : Math.min(hw, 16);
+          const n = Math.max(1, Math.min(want, 32));
+          await mod.initThreadPool(n);
+          if (typeof mod.markWasmPoolReady === "function") {
+            mod.markWasmPoolReady(n);
+          }
+        } catch (poolErr) {
+          console.warn("WASM lane pool unavailable; sequential collect/raster", poolErr);
+        }
+      } else if (typeof SharedArrayBuffer === "undefined") {
+        console.warn("SharedArrayBuffer unavailable; sequential lane collect/raster");
+      }
+      await mod.start_eframe(canvas);
+    } catch (e) {
+      showFallback(e);
+    }
+  </script>
+<script>
+    // Shared captures carry a separately downloadable, complete archive.
+    const archive = new URLSearchParams(location.search).get('download');
+    if (archive) {
+      try {
+        const url = new URL(archive);
+        if (url.protocol === 'https:') {
+          const link = document.createElement('a');
+          link.href = url.href;
+          link.textContent = 'Download complete capture';
+          link.download = 'capture.perfr.zip';
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:20;color:#64B5F6;background:#14181e;padding:6px 10px;border-radius:5px;font:12px system-ui';
+          document.body.append(link);
+        }
+      } catch (_) { /* Invalid download URLs do not affect the viewer. */ }
+    }
+  </script>
+</body>
+</html>

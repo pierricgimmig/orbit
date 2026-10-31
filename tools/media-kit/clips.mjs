@@ -23,7 +23,7 @@ export const clips = [
   { id: "08-selection-report", scene: "08-selection.mjs", title: "Time-range selection",
     caption: "Right-drag selects a time range across all threads and the report (flame graph, top-down) recomputes for just that window; left-drag on a thread's sample bar selects that thread only.", max_s: 26, hero: false },
   { id: "09-service-health", scene: "09-service-health.mjs", title: "Service self-profiling",
-    caption: "orbit-service instruments itself: its CPU %, RSS, events-per-pass and ring lanes plus its own scopes, read with the cursor line across the whole capture.", max_s: 26, hero: false },
+    caption: "perfr instruments itself: its CPU %, RSS, events-per-pass and ring lanes plus its own scopes, read with the cursor line across the whole capture.", max_s: 26, hero: false },
   { id: "10-code-view", scene: "10-code-view.mjs", title: "Disassembly & source",
     caption: "Right-click simulate_physics > Show disassembly and source: the service disassembles it from the running binary and interleaves the game_loop.c lines (Source / Disassembly / Both).", max_s: 30, hero: true },
   { id: "11-scope-search", scene: "11-search.mjs", title: "Scope search",

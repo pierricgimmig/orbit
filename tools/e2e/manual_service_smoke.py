@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -39,35 +39,35 @@ def read_line_within(child, seconds):
 
 
 def producer():
-    sys.path.insert(0, str(ROOT / "crates/orbit-api/python"))
-    import orbit_api as orbit
-    assert orbit.init() == 0, "manual API failed to initialize"
+    sys.path.insert(0, str(ROOT / "crates/perfr-api/python"))
+    import perfr_api as perfr
+    assert perfr.init() == 0, "manual API failed to initialize"
     for line in sys.stdin:
         label = line.strip()
         # A nonzero handle acknowledges the service discovered this segment.
         deadline = time.monotonic() + 10
         handle = 0
         while not handle and time.monotonic() < deadline:
-            handle = orbit.start("ready")
+            handle = perfr.start("ready")
             if not handle:
                 time.sleep(0.02)
         assert handle, "producer was not discovered"
-        orbit.stop(handle)
-        with orbit.scope(label):
-            with orbit.scope(LONG_NAME):
+        perfr.stop(handle)
+        with perfr.scope(label):
+            with perfr.scope(LONG_NAME):
                 time.sleep(0.01)
-            async_handle = orbit.start_async(label + " async")
+            async_handle = perfr.start_async(label + " async")
             def finish_async():
                 time.sleep(0.01)
-                orbit.stop(async_handle)
+                perfr.stop(async_handle)
             worker = threading.Thread(target=finish_async)
             worker.start()
             worker.join()
-            orbit.value(label + " value", 42)
-            orbit.instant(label + " instant")
+            perfr.value(label + " value", 42)
+            perfr.instant(label + " instant")
         # Stay alive until the parent has stopped/exported the capture.
         print("done", flush=True)
-    orbit.shutdown()
+    perfr.shutdown()
 
 
 def main():
@@ -123,7 +123,7 @@ def main():
                 request("/api/capture/start", b'{"pid":0}')
                 if child is None:
                     # Initialize only after capture starts, exercising discovery.
-                    env = dict(os.environ, ORBIT_API_LIB=str(Path(args.api_lib).resolve()))
+                    env = dict(os.environ, PERFR_API_LIB=str(Path(args.api_lib).resolve()))
                     child = subprocess.Popen([sys.executable, __file__, "--producer"],
                                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                              text=True, env=env)
@@ -152,7 +152,7 @@ def main():
                 assert imported["events"] == len(rows), "bundle did not round trip"
             if sys.platform in ("darwin", "win32"):
                 with tempfile.TemporaryDirectory() as directory:
-                    output = Path(directory) / "timed.orbit.zip"
+                    output = Path(directory) / "timed.perfr.zip"
                     timed = subprocess.Popen(
                         [str(Path(args.service).resolve()), "--pid", str(child.pid),
                          "--duration-ms", "1500", "--out", str(output)], stdout=log, stderr=log,

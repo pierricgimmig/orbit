@@ -13,7 +13,7 @@ rustup, then from the repository root:
 ```sh
 rustup toolchain install 1.88.0 --profile minimal
 tools/build/build-service-macos.sh
-./dist/macos/orbit-service --host 127.0.0.1 --serve 3000
+./dist/macos/perfr --host 127.0.0.1 --serve 3000
 ```
 
 Open <http://127.0.0.1:3000> and start a capture. No root privileges, task ports,
@@ -24,27 +24,27 @@ These are locally ad-hoc signed builds, not notarized distribution packages.
 
 ## Instrument a program
 
-Rust applications can depend on `crates/orbit-api`, call `orbit_api::init()`,
-and use `orbit_api::scope("work")`. Build and run the existing example:
+Rust applications can depend on `crates/perfr-api`, call `perfr_api::init()`,
+and use `perfr_api::scope("work")`. Build and run the existing example:
 
 ```sh
-cargo +1.88.0 run --release -p orbit-test-rust -- --seconds 0
+cargo +1.88.0 run --release -p perfr-test-rust -- --seconds 0
 ```
 
-C and C++ use `dist/macos/include/orbit.h` and `dist/macos/liborbit_api.a`:
+C and C++ use `dist/macos/include/perfr.h` and `dist/macos/libperfr_api.a`:
 
 ```sh
-cc -DORBIT_STATIC -I dist/macos/include your_app.c dist/macos/liborbit_api.a -lSystem -liconv -o your_app
-./tools/test-programs/OrbitTestC/build.sh
-./tools/test-programs/OrbitTestCpp/build.sh
+cc -DPERFR_STATIC -I dist/macos/include your_app.c dist/macos/libperfr_api.a -lSystem -liconv -o your_app
+./tools/test-programs/PerfrTestC/build.sh
+./tools/test-programs/PerfrTestCpp/build.sh
 ```
 
 Python uses the same C ABI through the dylib:
 
 ```sh
-export ORBIT_API_LIB="$PWD/dist/macos/liborbit_api.dylib"
+export PERFR_API_LIB="$PWD/dist/macos/libperfr_api.dylib"
 export PYTHONPATH="$PWD/dist/macos"
-python3 -c 'import orbit_api as orbit,time; assert orbit.init() == 0; exec("while True:\n with orbit.scope(\"Python work\"):\n  time.sleep(0.01)")'
+python3 -c 'import perfr_api as perfr,time; assert perfr.init() == 0; exec("while True:\n with perfr.scope(\"Python work\"):\n  time.sleep(0.01)")'
 ```
 
 Producers can start before or during capture. Discovery runs every 250 ms;
@@ -55,10 +55,10 @@ not drawn as arrows yet. Stop completes the final drain before returning; scopes
 still open are clipped at capture end. There is no global barrier for producer
 calls already in flight at Stop.
 
-Export/import `.orbit.zip` captures through the viewer, or record a timed bundle:
+Export/import `.perfr.zip` captures through the viewer, or record a timed bundle:
 
 ```sh
-./dist/macos/orbit-service --pid 1234 --duration-ms 5000 --out capture.orbit.zip
+./dist/macos/perfr --pid 1234 --duration-ms 5000 --out capture.perfr.zip
 ```
 
 Manual instrumentation is collected from all discovered producers, regardless of
@@ -68,7 +68,7 @@ producer enable flag does not support independent simultaneous capture sessions.
 ## Platform details and limits
 
 macOS uses file-backed shared mappings in the private, mode-0700 directory
-`/tmp/orbit-scopes-<uid>`; individual segments are mode 0600. Clean shutdown unlinks
+`/tmp/perfr-scopes-<uid>`; individual segments are mode 0600. Clean shutdown unlinks
 them, and the service sweeps segments whose processes have disappeared. Fixed
 16 KiB control areas keep offsets compatible between Intel, Apple Silicon and
 Rosetta producers on the same Mac. Records retain the existing 32-bit thread-ID
@@ -97,7 +97,7 @@ Runner labels follow the [GitHub runner reference](https://docs.github.com/en/ac
 Run the smoke test locally with Python and `pyarrow` installed:
 
 ```sh
-python3 tools/e2e/manual_service_smoke.py --service dist/macos/orbit-service --api-lib dist/macos/liborbit_api.dylib
+python3 tools/e2e/manual_service_smoke.py --service dist/macos/perfr --api-lib dist/macos/libperfr_api.dylib
 ```
 
 Initial development was on Linux, with compile checks for both Apple targets and

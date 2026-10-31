@@ -1,0 +1,22 @@
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "perfr-unwind"
+version = "0.1.0"
+description = "DWARF callstack unwinding with framehop over sampled stack copies"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+framehop = "0.13"
+object = { version = "0.36", default-features = false, features = ["read", "std", "compression"] }
+perfr-maps = { path = "../perfr-maps" }
+
+[dev-dependencies]
+libc = "0.2"
+perfr-perf-records = { path = "../perfr-perf-records" }
+perfr-perf-ring = { path = "../perfr-perf-ring" }

@@ -1,0 +1,20 @@
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "perfr-etw"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Event Tracing for Windows: the kernel logger as a scheduling, thread-state and sampling source for perfr"
+
+# No bindings crate: the whole surface is a dozen advapi32/kernel32 calls,
+# declared by hand the way perfr-scope-ring::platform does, and the kernel
+# event layouts are fixed MOF structures decoded from raw bytes -- no TDH.
+# The two state machines are the same ones the Linux perf path feeds.
+[dependencies]
+perfr-thread-states = { path = "../perfr-thread-states" }
+perfr-tracing-state = { path = "../perfr-tracing-state" }

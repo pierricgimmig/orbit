@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "url";
 import { launch } from "../lib/harness.mjs";
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
-const OUT = path.resolve(arg("--out", "/workspace/orbit-media"));
+const OUT = path.resolve(arg("--out", "/workspace/perfr-media"));
 const ONLY = arg("--only", "") ? arg("--only").split(",") : null;
 const SKIP_EXISTING = process.argv.includes("--skip-existing");   // keep clips already recorded without error
 const SERVE = process.argv.includes("--serve");

@@ -1,16 +1,16 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
-# Rust orbit-service release for Linux x86-64 and macOS (universal).
+# Rust perfr release for Linux x86-64 and macOS (universal).
 #
-# Tags are orbit-vX.Y.Z (optional suffix, e.g. orbit-v0.1.0-rc.1).
+# Tags are perfr-vX.Y.Z (optional suffix, e.g. perfr-v0.1.0-rc.1).
 # That scheme does not collide with the legacy C++ line (v1.* and
-# nightly-*). A plain orbit-vX.Y.Z becomes GitHub's Latest release.
+# nightly-*). A plain perfr-vX.Y.Z becomes GitHub's Latest release.
 # A suffix is published as a prerelease and is not Latest.
 #
 # workflow_dispatch with an empty tag builds the same artifacts and
-# does not create a release or a tag. Set tag to an existing orbit-v*
+# does not create a release or a tag. Set tag to an existing perfr-v*
 # tag to attach a release to it. This workflow never creates a tag.
 
 name: release-rust
@@ -18,11 +18,11 @@ name: release-rust
 on:
   push:
     tags:
-      - "orbit-v*"
+      - "perfr-v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing orbit-vX.Y.Z tag to publish. Empty builds artifacts only."
+        description: "Existing perfr-vX.Y.Z tag to publish. Empty builds artifacts only."
         required: false
         type: string
 
@@ -48,15 +48,15 @@ jobs:
           rustup default 1.88.0
           rustup target add x86_64-unknown-linux-musl
 
-      - name: Build static orbit-service
+      - name: Build static perfr
         run: |
           set -euo pipefail
-          test -f crates/orbit-live-viewer/viewer-dist/index.html
-          test -f crates/orbit-live-viewer/viewer-dist/orbit_live_viewer_bg.wasm
-          # orbit-live-server's build script embeds viewer-dist into the binary.
+          test -f crates/perfr-live-viewer/viewer-dist/index.html
+          test -f crates/perfr-live-viewer/viewer-dist/perfr_live_viewer_bg.wasm
+          # perfr-live-server's build script embeds viewer-dist into the binary.
           cargo +1.88.0 build --locked --release --target x86_64-unknown-linux-musl \
-            -p orbit-service
-          bin=target/x86_64-unknown-linux-musl/release/orbit-service
+            -p perfr
+          bin=target/x86_64-unknown-linux-musl/release/perfr
           file "$bin"
           file "$bin" | grep -q 'statically linked'
 
@@ -67,34 +67,34 @@ jobs:
           # static musl and looks for these next to its own executable.
           ./tools/frida/devkits.sh x86_64-unknown-linux-gnu
           cargo +1.88.0 build --locked --release \
-            -p orbit-frida-helper
+            -p perfr-frida-helper
           cargo +1.88.0 build --locked --release \
-            -p orbit-frida-agent --features native
+            -p perfr-frida-agent --features native
           cargo +1.88.0 build --locked --release \
-            -p orbit-api -p orbit-gpu-helper
+            -p perfr-api -p perfr-gpu-helper
 
       - name: Pack archive
         run: |
           set -euo pipefail
-          stage=dist/orbit
+          stage=dist/perfr
           mkdir -p "$stage/licenses"
-          cp target/x86_64-unknown-linux-musl/release/orbit-service "$stage/"
-          cp target/release/liborbit_frida_agent.so "$stage/"
-          cp target/release/orbit-frida-helper "$stage/"
-          cp target/release/liborbit_api.so "$stage/"
-          cp crates/orbit-api/include/orbit.h "$stage/"
-          cp target/release/orbit-gpu-helper "$stage/"
+          cp target/x86_64-unknown-linux-musl/release/perfr "$stage/"
+          cp target/release/libperfr_frida_agent.so "$stage/"
+          cp target/release/perfr-frida-helper "$stage/"
+          cp target/release/libperfr_api.so "$stage/"
+          cp crates/perfr-api/include/perfr.h "$stage/"
+          cp target/release/perfr-gpu-helper "$stage/"
           cp tools/frida/licenses/* "$stage/licenses/"
-          chmod 755 "$stage/orbit-service" "$stage/orbit-frida-helper" "$stage/orbit-gpu-helper"
-          tar -C dist -czf orbit-linux-x86_64.tar.gz orbit
-          sha256sum orbit-linux-x86_64.tar.gz | tee orbit-linux-x86_64.tar.gz.sha256
+          chmod 755 "$stage/perfr" "$stage/perfr-frida-helper" "$stage/perfr-gpu-helper"
+          tar -C dist -czf perfr-linux-x86_64.tar.gz perfr
+          sha256sum perfr-linux-x86_64.tar.gz | tee perfr-linux-x86_64.tar.gz.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: orbit-linux-x86_64
+          name: perfr-linux-x86_64
           path: |
-            orbit-linux-x86_64.tar.gz
-            orbit-linux-x86_64.tar.gz.sha256
+            perfr-linux-x86_64.tar.gz
+            perfr-linux-x86_64.tar.gz.sha256
           if-no-files-found: error
 
   macos:
@@ -115,25 +115,25 @@ jobs:
       - name: Pack archive
         run: |
           set -euo pipefail
-          stage=dist/orbit
+          stage=dist/perfr
           mkdir -p "$stage"
           # tools/build/build-service-macos.sh --universal writes dist/macos-universal,
           # including the Frida files the service loads from its own directory.
           cp -R dist/macos-universal/. "$stage/"
-          test -f "$stage/orbit-service"
-          test -f "$stage/liborbit_frida_agent.dylib"
-          test -f "$stage/orbit-frida-helper"
-          test -f "$stage/liborbit_api.dylib"
-          file "$stage/orbit-service" | grep -q 'universal'
-          tar -C dist -czf orbit-macos-universal.tar.gz orbit
-          shasum -a 256 orbit-macos-universal.tar.gz | tee orbit-macos-universal.tar.gz.sha256
+          test -f "$stage/perfr"
+          test -f "$stage/libperfr_frida_agent.dylib"
+          test -f "$stage/perfr-frida-helper"
+          test -f "$stage/libperfr_api.dylib"
+          file "$stage/perfr" | grep -q 'universal'
+          tar -C dist -czf perfr-macos-universal.tar.gz perfr
+          shasum -a 256 perfr-macos-universal.tar.gz | tee perfr-macos-universal.tar.gz.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: orbit-macos-universal
+          name: perfr-macos-universal
           path: |
-            orbit-macos-universal.tar.gz
-            orbit-macos-universal.tar.gz.sha256
+            perfr-macos-universal.tar.gz
+            perfr-macos-universal.tar.gz.sha256
           if-no-files-found: error
 
   windows:
@@ -154,23 +154,23 @@ jobs:
 
       - name: Pack archive
         run: |
-          $stage = 'dist\orbit'
+          $stage = 'dist\perfr'
           New-Item -ItemType Directory -Force $stage | Out-Null
           Copy-Item -Path 'dist\windows\*' -Destination $stage -Recurse -Force
-          foreach ($required in 'orbit-service.exe', 'orbit_frida_agent.dll', 'orbit-frida-helper.exe', 'orbit_api.dll', 'include\orbit.h') {
+          foreach ($required in 'perfr.exe', 'perfr_frida_agent.dll', 'perfr-frida-helper.exe', 'perfr_api.dll', 'include\perfr.h') {
             if (-not (Test-Path (Join-Path $stage $required))) { throw "missing $required" }
           }
-          Compress-Archive -Path $stage -DestinationPath orbit-windows-x86_64.zip -Force
-          $hash = (Get-FileHash -Algorithm SHA256 orbit-windows-x86_64.zip).Hash.ToLowerInvariant()
-          "$hash  orbit-windows-x86_64.zip" | Out-File -Encoding ascii -NoNewline orbit-windows-x86_64.zip.sha256
-          Get-Content orbit-windows-x86_64.zip.sha256
+          Compress-Archive -Path $stage -DestinationPath perfr-windows-x86_64.zip -Force
+          $hash = (Get-FileHash -Algorithm SHA256 perfr-windows-x86_64.zip).Hash.ToLowerInvariant()
+          "$hash  perfr-windows-x86_64.zip" | Out-File -Encoding ascii -NoNewline perfr-windows-x86_64.zip.sha256
+          Get-Content perfr-windows-x86_64.zip.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: orbit-windows-x86_64
+          name: perfr-windows-x86_64
           path: |
-            orbit-windows-x86_64.zip
-            orbit-windows-x86_64.zip.sha256
+            perfr-windows-x86_64.zip
+            perfr-windows-x86_64.zip.sha256
           if-no-files-found: error
 
   publish:
@@ -207,46 +207,46 @@ jobs:
             echo "workflow_dispatch without a tag: artifacts only, no GitHub Release and no tag."
             exit 0
           fi
-          if ! [[ "$tag" =~ ^orbit-v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.]+)?$ ]]; then
+          if ! [[ "$tag" =~ ^perfr-v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.]+)?$ ]]; then
             echo "refusing tag '$tag'"
-            echo "use orbit-vX.Y.Z or orbit-vX.Y.Z-suffix. v1.* is the legacy C++ line."
+            echo "use perfr-vX.Y.Z or perfr-vX.Y.Z-suffix. v1.* is the legacy C++ line."
             exit 1
           fi
           notes=$(mktemp)
           python3 - "$notes" <<'PY'
           import pathlib, sys
           pathlib.Path(sys.argv[1]).write_text(
-              "Rust `orbit-service` for Linux, macOS and Windows. The viewer is in the binary; open it in a browser.\n\n"
-              "**Linux x86-64** (`orbit-linux-x86_64.tar.gz`): static musl binary with the WASM viewer embedded. "
+              "Rust `perfr` for Linux, macOS and Windows. The viewer is in the binary; open it in a browser.\n\n"
+              "**Linux x86-64** (`perfr-linux-x86_64.tar.gz`): static musl binary with the WASM viewer embedded. "
               "Beside it, the files the service loads from its own directory:\n\n"
-              "- `liborbit_frida_agent.so` and `orbit-frida-helper` (function hooks)\n"
-              "- `liborbit_api.so` and `orbit.h` (manual instrumentation)\n"
-              "- `orbit-gpu-helper` (optional NVIDIA lanes; dynamically linked)\n"
+              "- `libperfr_frida_agent.so` and `perfr-frida-helper` (function hooks)\n"
+              "- `libperfr_api.so` and `perfr.h` (manual instrumentation)\n"
+              "- `perfr-gpu-helper` (optional NVIDIA lanes; dynamically linked)\n"
               "- `licenses/` (Frida)\n\n"
-              "**macOS** (`orbit-macos-universal.tar.gz`): universal binary (Apple silicon and Intel) from "
+              "**macOS** (`perfr-macos-universal.tar.gz`): universal binary (Apple silicon and Intel) from "
               "`tools/build/build-service-macos.sh --universal`. Ad-hoc signed, not notarized. "
               "Manual scopes and Frida function hooks. Attaching needs a task port. "
               "No call-stack sampling, scheduler, live disassembly, or auto-profiling. No GPU helper.\n\n"
-              "**Windows x86-64** (`orbit-windows-x86_64.zip`): static-CRT binaries from "
-              "`.\\build-service-windows.ps1`. Beside `orbit-service.exe`: `orbit_frida_agent.dll` and "
-              "`orbit-frida-helper.exe` (function hooks), `orbit_api.dll`, `orbit_api.lib` and `include\\orbit.h` "
-              "(manual instrumentation), `OrbitTestRust.exe`, `licenses/`. Call-stack sampling, the scheduler and "
+              "**Windows x86-64** (`perfr-windows-x86_64.zip`): static-CRT binaries from "
+              "`.\\build-service-windows.ps1`. Beside `perfr.exe`: `perfr_frida_agent.dll` and "
+              "`perfr-frida-helper.exe` (function hooks), `perfr_api.dll`, `perfr_api.lib` and `include\\perfr.h` "
+              "(manual instrumentation), `PerfrTestRust.exe`, `licenses/`. Call-stack sampling, the scheduler and "
               "thread states come from the kernel logger (ETW) and need an elevated prompt; manual scopes and Frida "
               "hooks do not. No auto-profiling, no kernel hook engine, no GPU helper.\n\n"
               "Checksums: `SHA256SUMS` and the per-archive `.sha256` files.\n\n"
-              "Install (fails with a clear message until a non-prerelease `orbit-v*` tag exists):\n\n"
+              "Install (fails with a clear message until a non-prerelease `perfr-v*` tag exists):\n\n"
               "```\n"
-              "curl -fsSL https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.sh | sh\n"
+              "curl -fsSL https://perfr.dev/install.sh | sh\n"
               "```\n\n"
               "Windows (PowerShell):\n\n"
               "```\n"
-              "irm https://raw.githubusercontent.com/pierricgimmig/orbit/main/tools/install/install.ps1 | iex\n"
+              "irm https://perfr.dev/install.ps1 | iex\n"
               "```\n\n"
               "This is not a legacy C++ nightly (`nightly-*` / `v1.*`).\n"
           )
           PY
-          args=(--verify-tag --title "Orbit $tag" --notes-file "$notes")
-          if [[ "$tag" =~ ^orbit-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          args=(--verify-tag --title "perfr $tag" --notes-file "$notes")
+          if [[ "$tag" =~ ^perfr-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             args+=(--latest)
           else
             args+=(--prerelease --latest=false)

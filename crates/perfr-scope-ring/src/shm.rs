@@ -1,0 +1,850 @@
+// Copyright (c) 2026 The perfr Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//! The shared mapping: one segment per instrumented process.
+//!
+//! A segment in [`segment_directory`], created by the process being profiled
+//! and opened with read-only data and writable capture control by the service. Naming it by pid is what lets the service
+//! discover an instrumented process without the two ever having talked.
+//!
+//! The reader treats the segment as untrusted. It is written by another
+//! process which may be buggy, may be mid-crash, or may simply be a different
+//! build: every field of the header is validated before a single event is
+//! read, and a mismatch is an error rather than a mapping used at the wrong
+//! dimensions.
+
+use crate::event::EVENT_SIZE;
+use crate::ring::{self, Header, Rings, MAGIC, MAX_RINGS, VERSION};
+use std::io;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::sync::atomic::Ordering;
+
+/// What the whole segment costs the profiled process by default.
+///
+/// This is the number that matters, not the per-ring size: a process is
+/// entitled to know what instrumenting it will cost in resident memory, and
+/// eight megabytes is small enough not to be an argument.
+/// 32 MiB: a hooked game writes a million records a second in bursts, and
+/// the reader drains every few milliseconds; 8 MiB (128k slots) lapped
+/// under two hot Unreal functions before the reader's next pass.
+pub const DEFAULT_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+
+pub use crate::ring::DEFAULT_RING_COUNT;
+
+/// Slots per ring at the default budget and ring count: 32768 slots, 2 MiB.
+///
+/// A thread emitting a hundred thousand events a second fills about five
+/// hundred slots between five-millisecond drains, so there is an order of
+/// magnitude of headroom for a burst. A thread that outruns it laps, and the
+/// drain says how many events were lost rather than hiding it.
+pub const DEFAULT_SLOTS_PER_RING: usize =
+    crate::ring::slots_for_budget(DEFAULT_RING_COUNT, DEFAULT_BUDGET_BYTES);
+
+/// The directory POSIX shared memory lives in on Linux, for a service that
+/// wants to notice segments appearing.
+///
+/// It is a tmpfs, which is an ordinary filesystem as far as the kernel is
+/// concerned, so `inotify` works on it: `IN_CREATE` fires when a process
+/// calls `shm_open` and `IN_DELETE` when it calls `shm_unlink`. Verified
+/// rather than assumed -- a probe watching this directory saw mask 0x100 on
+/// creation and 0x200 on unlink. No polling is needed to find instrumented
+/// processes.
+///
+/// A watcher still has to enumerate the directory once at startup, for the
+/// processes that were already running, and should treat a create as "try to
+/// open, and retry if the header is not initialised yet" -- the notification
+/// arrives when the file appears, which is before the writer has finished
+/// writing its header. That is exactly the case [`ScopeRingReader::open`]
+/// reports as "not initialised yet" rather than mapping garbage.
+pub const SHM_DIR: &str = "/dev/shm";
+
+/// macOS has no enumerable POSIX-shm directory. Use shared file mappings in
+/// a private per-user directory instead, retaining discovery and crash cleanup.
+pub fn segment_directory() -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    { std::path::PathBuf::from(format!("/tmp/perfr-scopes-{}", unsafe { libc::geteuid() })) }
+    #[cfg(not(target_os = "macos"))]
+    { std::path::PathBuf::from(SHM_DIR) }
+}
+
+fn prepare_directory() -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+        let dir = segment_directory();
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => {},
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {},
+            Err(e) => return Err(e),
+        }
+        let meta = std::fs::symlink_metadata(&dir)?;
+        if !meta.is_dir() || meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "scope directory must be owned by this user with mode 0700"));
+        }
+    }
+    Ok(())
+}
+
+unsafe fn segment_open(name: &std::ffi::CStr, flags: i32, mode: libc::mode_t) -> i32 {
+    #[cfg(target_os = "macos")]
+    { libc::open(name.as_ptr(), flags | libc::O_NOFOLLOW | libc::O_CLOEXEC, mode as libc::c_uint) }
+    #[cfg(not(target_os = "macos"))]
+    { libc::shm_open(name.as_ptr(), flags | libc::O_CLOEXEC, mode) }
+}
+
+unsafe fn segment_unlink(name: &std::ffi::CStr) -> i32 {
+    #[cfg(target_os = "macos")]
+    { libc::unlink(name.as_ptr()) }
+    #[cfg(not(target_os = "macos"))]
+    { libc::shm_unlink(name.as_ptr()) }
+}
+
+/// The filename, without a leading slash, that `pid`'s segment appears under
+/// in [`SHM_DIR`].
+pub fn shm_file_name(pid: u32) -> String {
+    format!("perfr-scopes-{pid}")
+}
+
+/// Removes the segment of `pid`, whether or not this process created it.
+///
+/// For sweeping: a process killed by a signal never runs its shutdown, and
+/// its segment stays in tmpfs until reboot. Eighteen of them, 144 MiB, were
+/// found after one day of testing. A service that unlinks segments whose pid
+/// is gone keeps the machine clean without anybody remembering to.
+pub fn unlink_segment(pid: u32) -> bool {
+    let name = shm_name(pid);
+    // SAFETY: unlinking a name; the call has no other effect on this process.
+    unsafe { segment_unlink(&name) == 0 }
+}
+
+/// Unlinks every perfr segment in [`SHM_DIR`] whose process no longer exists.
+/// Returns how many were removed. Never touches a live process's segment.
+pub fn sweep_dead_segments() -> usize {
+    let Ok(entries) = std::fs::read_dir(segment_directory()) else { return 0 };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(pid_from_shm_file_name) else {
+            continue;
+        };
+        if pid == std::process::id() {
+            continue;
+        }
+        if !crate::platform::process_alive(pid) && unlink_segment(pid) {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// Every perfr segment in [`SHM_DIR`] whose process is alive: the pids that
+/// are instrumenting themselves right now, whoever they are. The service
+/// opens all of them -- a span somebody asked for is of interest whatever
+/// process it is in -- so this is the discovery a capture runs each pass.
+pub fn live_segment_pids() -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir(segment_directory()) else { return Vec::new() };
+    let mut pids: Vec<u32> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().to_str().and_then(pid_from_shm_file_name))
+        .filter(|pid| crate::platform::process_alive(*pid))
+        .collect();
+    pids.sort_unstable();
+    pids
+}
+
+/// The pid a segment filename belongs to, or `None` if it is not one of ours.
+///
+/// A service watching the directory sees every POSIX segment on the machine,
+/// most of them nothing to do with perfr.
+pub fn pid_from_shm_file_name(name: &str) -> Option<u32> {
+    name.strip_prefix("perfr-scopes-")?.parse().ok()
+}
+
+/// The protocol [`VERSION`] stamped in `pid`'s segment, or `None` when there
+/// is no initialised perfr segment for that pid.
+///
+/// Returns `Some(v)` even when `v != VERSION`, so a caller can tell a real
+/// version mismatch -- a producer built against another perfr -- from an
+/// absent or half-written segment, which [`ScopeRingReader::open`] reports the
+/// same way. Maps only the header, read-only, and unmaps it before returning.
+pub fn segment_version(pid: u32) -> Option<u32> {
+    prepare_directory().ok()?;
+    let name = shm_name(pid);
+    // SAFETY: plain syscall, result checked.
+    let fd = unsafe { segment_open(&name, libc::O_RDONLY, 0) };
+    if fd < 0 {
+        return None;
+    }
+    // SAFETY: fd is freshly opened; OwnedFd closes it when this returns.
+    let owner = unsafe { OwnedFd::from_raw_fd(fd) };
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: fd is open, stat is a live local.
+    if unsafe { libc::fstat(owner.as_raw_fd(), &mut stat) } != 0 {
+        return None;
+    }
+    if (stat.st_size as u64) < std::mem::size_of::<Header>() as u64 {
+        // A segment mid-creation: ftruncate has not run yet. Absent, retry.
+        return None;
+    }
+    let len = std::mem::size_of::<Header>();
+    // SAFETY: mapping the header of an open fd whose file is at least that big.
+    let base = unsafe {
+        libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, owner.as_raw_fd(), 0)
+    };
+    if base == libc::MAP_FAILED {
+        return None;
+    }
+    let mapping = Mapping { base: base.cast::<u8>(), len };
+    // SAFETY: the mapping covers Header; the producer stores magic last, so a
+    // segment that reads MAGIC here has its version and pid already written.
+    let header = unsafe { &*mapping.base.cast::<Header>() };
+    if header.magic.load(Ordering::Acquire) == MAGIC && header.pid == pid {
+        Some(header.version)
+    } else {
+        None
+    }
+}
+
+fn shm_name(pid: u32) -> std::ffi::CString {
+    #[cfg(target_os = "macos")]
+    return std::ffi::CString::new(segment_directory().join(shm_file_name(pid)).to_string_lossy().as_bytes()).unwrap();
+    #[cfg(not(target_os = "macos"))]
+    std::ffi::CString::new(format!("/perfr-scopes-{pid}")).expect("no NUL in a formatted pid")
+}
+
+struct Mapping {
+    base: *mut u8,
+    len: usize,
+}
+
+impl Drop for Mapping {
+    fn drop(&mut self) {
+        // SAFETY: base/len are the mapping this value owns.
+        unsafe {
+            libc::munmap(self.base.cast(), self.len);
+        }
+    }
+}
+
+/// The producer side: creates the segment and writes into it.
+pub struct ScopeRingWriter {
+    _owner_fd: OwnedFd,
+    mapping: Mapping,
+    rings: Rings,
+    pid: u32,
+}
+
+// SAFETY: all shared access goes through the atomics in `Rings`.
+unsafe impl Send for ScopeRingWriter {}
+unsafe impl Sync for ScopeRingWriter {}
+
+impl ScopeRingWriter {
+    /// Creates this process's segment at the default budget.
+    pub fn create_default() -> io::Result<ScopeRingWriter> {
+        ScopeRingWriter::create(DEFAULT_RING_COUNT, DEFAULT_SLOTS_PER_RING)
+    }
+
+    /// Creates this process's segment sized to a total memory budget.
+    pub fn create_with_budget(threads: usize, total_bytes: usize) -> io::Result<ScopeRingWriter> {
+        let rings = crate::ring::ring_count_for_threads(threads);
+        ScopeRingWriter::create(rings, crate::ring::slots_for_budget(rings, total_bytes))
+    }
+
+    /// Creates (or replaces) this process's segment.
+    pub fn create(ring_count: usize, slots_per_ring: usize) -> io::Result<ScopeRingWriter> {
+        prepare_directory()?;
+        let pid = std::process::id();
+        let ring_count = ring_count.clamp(1, MAX_RINGS);
+        let slots_per_ring = slots_per_ring.max(2).next_power_of_two();
+        let len = ring::layout_size(ring_count, slots_per_ring);
+        let name = shm_name(pid);
+
+        // SAFETY: plain syscalls; every failure is checked before use.
+        let fd = unsafe {
+            segment_unlink(&name); // a stale segment from a recycled pid
+            segment_open(&name, libc::O_CREAT | libc::O_RDWR | libc::O_EXCL, 0o600)
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: fd is open; sized before mapping.
+        if unsafe { libc::ftruncate(fd, len as libc::off_t) } != 0 {
+            let error = io::Error::last_os_error();
+            unsafe { libc::close(fd); segment_unlink(&name); }
+            return Err(error);
+        }
+        // SAFETY: mapping the fd we just sized.
+        let base = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            )
+        };
+        // Keep an exclusive lease until exit (CLOEXEC closes it at exec).
+        // A descriptor in a stale segment must never be called after PID reuse
+        // or exec. Readers check this lease before exposing its address.
+        let owner_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        if base == libc::MAP_FAILED {
+            let error = io::Error::last_os_error();
+            unsafe { segment_unlink(&name); }
+            return Err(error);
+        }
+        if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let error = io::Error::last_os_error();
+            unsafe { libc::munmap(base, len); segment_unlink(&name); }
+            return Err(error);
+        }
+        let base = base.cast::<u8>();
+        // SAFETY: base is a fresh writable mapping of exactly `len` bytes.
+        unsafe { ring::init_region(base, ring_count, slots_per_ring, pid) };
+        // SAFETY: the region was just initialised at these dimensions.
+        let rings = unsafe { Rings::from_raw(base, ring_count, slots_per_ring) };
+        Ok(ScopeRingWriter { _owner_fd: owner_fd, mapping: Mapping { base, len }, rings, pid })
+    }
+
+    /// Release an inherited API lease in an atfork child callback.
+    /// # Safety
+    /// Only call once in the child, for a permanently leaked writer that will
+    /// never be used or dropped there. The parent's descriptor is unaffected.
+    pub unsafe fn abandon_in_fork_child(&self) {
+        libc::close(self._owner_fd.as_raw_fd());
+    }
+
+    /// Publish a process-local descriptor for injected instrumentation.
+    pub fn publish_api_descriptor(&self, address: u64) {
+        unsafe { &*self.mapping.base.cast::<Header>() }.api_descriptor.store(address, Ordering::Release);
+    }
+
+    pub fn rings(&self) -> &Rings {
+        &self.rings
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    /// Whether a service is draining this segment right now.
+    ///
+    /// The producer's cheap gate: one relaxed load. When it is false, an
+    /// instrumented process skips writing entirely, so being linked against
+    /// perfr costs almost nothing until someone actually captures.
+    pub fn is_capturing(&self) -> bool {
+        // SAFETY: base maps the header, which lives for the mapping's life.
+        let header = unsafe { &*self.mapping.base.cast::<Header>() };
+        header.capturing.load(Ordering::Relaxed) != 0
+    }
+
+    /// Removes the name so a later process with the same pid starts clean.
+    /// The mapping itself lives until this value drops.
+    pub fn unlink(&self) {
+        let name = shm_name(self.pid);
+        // SAFETY: unlinking a name this process created.
+        unsafe {
+            segment_unlink(&name);
+        }
+    }
+}
+
+impl Drop for ScopeRingWriter {
+    fn drop(&mut self) {
+        self.unlink();
+        let _ = &self.mapping;
+    }
+}
+
+/// The consumer side: opens another process's segment.
+///
+/// The rings are mapped read-only, so a bug here cannot corrupt the process
+/// being observed. The control page alone is mapped read-write, so the
+/// service can set `capturing`, and that page holds nothing but the header.
+pub struct ScopeRingReader {
+    owner_fd: OwnedFd,
+    mapping: Mapping,
+    control: Mapping,
+    rings: Rings,
+    pid: u32,
+    /// This reader's count in `capturing`: `NO_LEASE`, a 1-based slot in
+    /// the lease table, or `UNSLOTTED_LEASE` when the table was full.
+    lease: std::sync::atomic::AtomicU32,
+}
+
+// SAFETY: as for the writer.
+unsafe impl Send for ScopeRingReader {}
+unsafe impl Sync for ScopeRingReader {}
+
+impl ScopeRingReader {
+    /// Opens the segment of `pid`, validating everything the producer claims.
+    pub fn open(pid: u32) -> io::Result<ScopeRingReader> {
+        prepare_directory()?;
+        let name = shm_name(pid);
+        // O_RDWR, not O_RDONLY: the rings are still mapped read-only below,
+        // but the control page needs a writable mapping so the service can set
+        // `capturing`. The segment is mode 0600, so this is same-user only.
+        // SAFETY: plain syscall, result checked.
+        let fd = unsafe { segment_open(&name, libc::O_RDWR, 0) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // Keep one descriptor for both views: reopening by name can race a
+        // producer restart and map the control page of a different segment.
+        let fd_owner = unsafe { OwnedFd::from_raw_fd(fd) };
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: fd is open, stat is a live local.
+        if unsafe { libc::fstat(fd, &mut stat) } != 0 {
+            let error = io::Error::last_os_error();
+            return Err(error);
+        }
+        let len = usize::try_from(stat.st_size).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid segment size"))?;
+        if len < ring::CACHE_LINE {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "segment is smaller than its header"));
+        }
+        // Read-only: a buggy consumer must not be able to corrupt the process
+        // it is observing.
+        // SAFETY: mapping an open fd at its own size.
+        let base = unsafe {
+            libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd, 0)
+        };
+        // SAFETY: the mapping holds its own reference.
+        if base == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+        let base = base.cast::<u8>();
+        let mapping = Mapping { base, len };
+
+        // SAFETY: the mapping is at least one cache line, which covers Header.
+        let header = unsafe { &*base.cast::<Header>() };
+        let bad = |what: &str| io::Error::new(io::ErrorKind::InvalidData, what.to_string());
+        if header.magic.load(Ordering::Acquire) != MAGIC {
+            // Also the answer while a writer is between shm_open and
+            // init_region: the segment exists, zero-filled, and the magic is
+            // stored last precisely so this window is visible rather than
+            // silently mapped at bogus dimensions. Callers retry.
+            return Err(bad("not a perfr scope segment (or not initialised yet)"));
+        }
+        if header.pid != pid {
+            return Err(bad("scope segment pid mismatch"));
+        }
+        if header.version != VERSION {
+            return Err(bad("scope segment version mismatch"));
+        }
+        if header.event_size != EVENT_SIZE as u32 {
+            return Err(bad("scope segment event size mismatch"));
+        }
+        let ring_count = header.ring_count as usize;
+        let slots_per_ring = header.slots_per_ring as usize;
+        if ring_count == 0 || ring_count > MAX_RINGS {
+            return Err(bad("scope segment ring count out of range"));
+        }
+        if slots_per_ring < 2 || !slots_per_ring.is_power_of_two() {
+            return Err(bad("scope segment slot count is not a power of two"));
+        }
+        // The size the header describes must fit in the mapping actually
+        // made, or every offset computed from it reads out of bounds.
+        if ring::layout_size(ring_count, slots_per_ring) > len {
+            return Err(bad("scope segment is smaller than its header describes"));
+        }
+
+        // A second, writable mapping of the control page alone. It overlaps
+        // the read-only mapping's first page, which is harmless: nothing but
+        // the header lives there, and the rings begin on the next page.
+        // SAFETY: mapping the same open fd; failure is checked.
+        let control_len = ring::control_bytes();
+        let control_base = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                control_len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            )
+        };
+        if control_base == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+        let control = Mapping { base: control_base.cast::<u8>(), len: control_len };
+
+        // SAFETY: dimensions validated against the mapped length above.
+        let rings = unsafe { Rings::from_raw(base, ring_count, slots_per_ring) };
+        Ok(ScopeRingReader { owner_fd: fd_owner, mapping, control, rings, pid, lease: std::sync::atomic::AtomicU32::new(NO_LEASE) })
+    }
+
+    /// Address in the producer's address space, not the reader's. Consumers
+    /// outside the producer must never dereference this value.
+    pub fn api_descriptor(&self) -> u64 {
+        let fd = self.owner_fd.as_raw_fd();
+        if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            unsafe { libc::flock(fd, libc::LOCK_UN) };
+            return 0;
+        }
+        if std::io::Error::last_os_error().raw_os_error() != Some(libc::EWOULDBLOCK) {
+            return 0;
+        }
+        unsafe { &*self.mapping.base.cast::<Header>() }.api_descriptor.load(Ordering::Acquire)
+    }
+
+    /// Tells the producer this reader wants it writing (true when a capture
+    /// starts) or no longer does (false when it stops). The producer writes
+    /// while any reader wants it: this takes or returns one count in
+    /// `capturing`, so a service stopping its capture no longer silences
+    /// another still reading the same segment. Idempotent per reader, and
+    /// dropping the reader returns its count. Release-ordered, so a producer
+    /// that sees the count also sees a fully initialised segment behind it.
+    pub fn set_capturing(&self, on: bool) {
+        if on {
+            self.take_lease();
+        } else {
+            self.return_lease();
+        }
+    }
+
+    /// Readers currently holding a count, as the producer sees it.
+    pub fn capturing_readers(&self) -> u32 {
+        self.header().capturing.load(Ordering::Acquire)
+    }
+
+    fn header(&self) -> &Header {
+        // SAFETY: control maps the header page read-write, alone.
+        unsafe { &*self.control.base.cast::<Header>() }
+    }
+
+    fn leases(&self) -> &ring::ReaderLeases {
+        // SAFETY: the control mapping is a whole page, and the table sits
+        // after the header inside it (asserted in ring.rs).
+        unsafe { &*self.control.base.add(ring::READER_LEASES_OFFSET).cast::<ring::ReaderLeases>() }
+    }
+
+    fn take_lease(&self) {
+        if self.lease.load(Ordering::Acquire) != NO_LEASE {
+            return;
+        }
+        self.free_dead_leases();
+        let me = std::process::id();
+        let mut lease = UNSLOTTED_LEASE;
+        for (slot, pid) in self.leases().pids.iter().enumerate() {
+            if pid.compare_exchange(0, me, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                lease = slot as u32 + 1;
+                break;
+            }
+        }
+        self.header().capturing.fetch_add(1, Ordering::Release);
+        self.lease.store(lease, Ordering::Release);
+    }
+
+    fn return_lease(&self) {
+        match self.lease.swap(NO_LEASE, Ordering::AcqRel) {
+            NO_LEASE => {}
+            UNSLOTTED_LEASE => self.drop_count(),
+            slot => {
+                let pid = &self.leases().pids[slot as usize - 1];
+                // Only the slot's holder returns its count: if another reader
+                // already freed it as dead (a recycled pid), it took the count.
+                if pid.compare_exchange(std::process::id(), 0, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                    self.drop_count();
+                }
+            }
+        }
+    }
+
+    /// Frees the slots of readers that exited while capturing, returning
+    /// their counts. Each slot is freed by exactly one compare-exchange, so a
+    /// count is returned once however many readers sweep at the same time.
+    fn free_dead_leases(&self) {
+        for pid in &self.leases().pids {
+            let holder = pid.load(Ordering::Acquire);
+            if holder != 0
+                && !process_alive(holder)
+                && pid.compare_exchange(holder, 0, Ordering::AcqRel, Ordering::Relaxed).is_ok()
+            {
+                self.drop_count();
+            }
+        }
+    }
+
+    /// Never below zero: a reader built before the count (a plain store of
+    /// 0 or 1) may have reset it under the leases.
+    fn drop_count(&self) {
+        let _ = self.header().capturing.fetch_update(Ordering::Release, Ordering::Relaxed, |n| n.checked_sub(1));
+    }
+
+    pub fn rings(&self) -> &Rings {
+        &self.rings
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+}
+
+impl Drop for ScopeRingReader {
+    fn drop(&mut self) {
+        self.return_lease();
+        let _ = &self.mapping;
+    }
+}
+
+/// `ScopeRingReader::lease` values other than a slot number (1-based).
+const NO_LEASE: u32 = 0;
+const UNSLOTTED_LEASE: u32 = u32::MAX;
+
+/// Whether `pid` still runs. EPERM means it does, under another user.
+fn process_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 only checks the pid; nothing is delivered.
+    let signalled = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+    signalled || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// CLOCK_MONOTONIC in nanoseconds.
+///
+/// The same clock perf timestamps use, which is not a detail: manual scopes
+/// have to interleave with scheduling slices and samples on one timeline, and
+/// a TSC reading would not. The vDSO makes this a function call rather than a
+/// syscall.
+pub fn now_monotonic_ns() -> u64 {
+    crate::platform::monotonic_ns()
+}
+
+/// The core this thread is running on.
+///
+/// No longer used to pick a ring -- rings follow threads, which is what made
+/// the design portable. Kept because it is the cheapest way to record which
+/// core a scope ran on, should that ever be wanted.
+#[cfg(target_os = "linux")]
+pub fn current_cpu() -> usize {
+    // SAFETY: sched_getcpu takes no arguments and cannot fail meaningfully.
+    let cpu = unsafe { libc::sched_getcpu() };
+    if cpu < 0 {
+        0
+    } else {
+        cpu as usize
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn current_cpu() -> usize { 0 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::ScopeEvent;
+
+    /// A process has exactly one scope segment, named by its pid -- so tests
+    /// that create one cannot run alongside each other, since they all share
+    /// this process's pid. Serialising them here is the test harness paying
+    /// for a property the design wants in production.
+    static SEGMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn exclusive() -> std::sync::MutexGuard<'static, ()> {
+        SEGMENT.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn segment_version_reads_the_live_segment_and_is_none_when_absent() {
+        let _serial = exclusive();
+        let pid = std::process::id();
+        assert_eq!(segment_version(pid), None, "no segment before one is made");
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        assert_eq!(segment_version(pid), Some(VERSION), "the live segment's version");
+        assert_eq!(segment_version(pid + 1), None, "a pid with no segment");
+        drop(writer);
+    }
+
+    #[test]
+    fn api_descriptor_requires_a_live_writer_lease() {
+        let _serial = exclusive();
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        let reader = ScopeRingReader::open(std::process::id()).unwrap();
+        writer.publish_api_descriptor(1234);
+        assert_eq!(reader.api_descriptor(), 1234);
+        drop(writer);
+        assert_eq!(reader.api_descriptor(), 0, "never call a stale process-local address");
+    }
+
+    #[test]
+    fn a_writer_and_a_reader_share_one_segment() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(4, 64).expect("create");
+        writer.rings().push(0, ScopeEvent { timestamp_ns: 1234, tid: 7, ..Default::default() });
+
+        let reader = ScopeRingReader::open(writer.pid()).expect("open");
+        assert_eq!(reader.rings().ring_count(), 4);
+        assert_eq!(reader.rings().slots_per_ring(), 64);
+        let event = reader.rings().committed(0, 0).expect("the event crossed the boundary");
+        assert_eq!(event.timestamp_ns, 1234);
+        assert_eq!(event.tid, 7);
+    }
+
+    #[test]
+    fn one_reader_stopping_leaves_the_producer_writing_for_another() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        let mine = ScopeRingReader::open(writer.pid()).unwrap();
+        let other_service = ScopeRingReader::open(writer.pid()).unwrap();
+        mine.set_capturing(true);
+        mine.set_capturing(true);
+        other_service.set_capturing(true);
+        assert_eq!(mine.capturing_readers(), 2, "a repeated start is one count");
+        other_service.set_capturing(false);
+        other_service.set_capturing(false);
+        assert!(writer.is_capturing(), "the other service's stop must not silence mine");
+        drop(other_service);
+        assert_eq!(mine.capturing_readers(), 1, "and a stopped reader's drop returns nothing twice");
+        mine.set_capturing(false);
+        assert!(!writer.is_capturing());
+    }
+
+    #[test]
+    fn dropping_a_capturing_reader_returns_its_count() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        ScopeRingReader::open(writer.pid()).unwrap().set_capturing(true);
+        assert!(!writer.is_capturing());
+    }
+
+    #[test]
+    fn a_reader_that_died_capturing_is_not_counted_forever() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        let reader = ScopeRingReader::open(writer.pid()).unwrap();
+        // A service killed mid-capture: its slot and its count are left behind.
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+        reader.leases().pids[5].store(dead, Ordering::Release);
+        reader.header().capturing.fetch_add(1, Ordering::Release);
+        reader.set_capturing(true);
+        assert_eq!(reader.capturing_readers(), 1, "the dead reader's count was taken back");
+        reader.set_capturing(false);
+        assert!(!writer.is_capturing());
+    }
+
+    #[test]
+    fn a_count_reset_by_an_older_reader_never_goes_negative() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        let reader = ScopeRingReader::open(writer.pid()).unwrap();
+        reader.set_capturing(true);
+        // A service built before the count stores a plain 0 when it stops.
+        reader.header().capturing.store(0, Ordering::Release);
+        reader.set_capturing(false);
+        assert_eq!(reader.capturing_readers(), 0);
+        assert!(!writer.is_capturing());
+    }
+
+    #[test]
+    fn a_segment_with_the_wrong_pid_is_rejected() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(2, 8).unwrap();
+        // No consumer exists yet; simulate a stale or malformed producer.
+        unsafe { (*writer.mapping.base.cast::<Header>()).pid = writer.pid() + 1; }
+        assert_eq!(ScopeRingReader::open(writer.pid()).err().unwrap().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_segments_are_private_and_have_architecture_independent_offsets() {
+        use std::os::unix::fs::MetadataExt;
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(2, 8).unwrap();
+        let directory = std::fs::symlink_metadata(segment_directory()).unwrap();
+        assert_eq!(directory.mode() & 0o777, 0o700);
+        assert_eq!(directory.uid(), unsafe { libc::geteuid() });
+        let segment = std::fs::metadata(segment_directory().join(shm_file_name(writer.pid()))).unwrap();
+        assert_eq!(segment.mode() & 0o777, 0o600);
+        assert_eq!(ring::control_bytes(), 16 * 1024);
+        assert_eq!(ring::layout_size(2, 8), 16 * 1024 + 2 * 64 + 2 * 8 * 64);
+    }
+
+    #[test]
+    fn opening_a_process_with_no_segment_fails_cleanly() {
+        // pid 1 does not publish scopes; this must be an error, not a panic.
+        assert!(ScopeRingReader::open(1).is_err());
+    }
+
+    #[test]
+    fn a_slot_count_is_rounded_up_to_a_power_of_two() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(2, 100).expect("create");
+        assert_eq!(writer.rings().slots_per_ring(), 128);
+    }
+
+    #[test]
+    fn the_ring_count_is_capped_however_many_are_asked_for() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(9_999, 8).expect("create");
+        assert_eq!(writer.rings().ring_count(), MAX_RINGS);
+    }
+
+    #[test]
+    fn the_monotonic_clock_advances_and_is_absolute() {
+        let a = now_monotonic_ns();
+        let b = now_monotonic_ns();
+        assert!(b >= a);
+        // Absolute CLOCK_MONOTONIC, not time-since-first-call: on any machine
+        // that has been up a moment this is far from zero. Getting this wrong
+        // once already cost a debugging session elsewhere in this repo.
+        assert!(a > 1_000_000, "looks like a relative clock: {a}");
+    }
+
+    #[test]
+    fn the_default_budget_is_what_it_claims() {
+        assert_eq!(DEFAULT_RING_COUNT, 16);
+        assert_eq!(DEFAULT_SLOTS_PER_RING, 32768);
+        let bytes = crate::ring::layout_size(DEFAULT_RING_COUNT, DEFAULT_SLOTS_PER_RING);
+        assert!(bytes <= DEFAULT_BUDGET_BYTES + 64 * 1024, "{bytes} bytes for the default budget");
+        assert!(bytes > DEFAULT_BUDGET_BYTES / 2, "and not wastefully under it");
+    }
+
+    #[test]
+    fn a_segment_name_round_trips_to_its_pid() {
+        let name = shm_file_name(4242);
+        assert_eq!(name, "perfr-scopes-4242");
+        assert_eq!(pid_from_shm_file_name(&name), Some(4242));
+    }
+
+    #[test]
+    fn other_processes_shared_memory_is_not_mistaken_for_ours() {
+        // A watcher on /dev/shm sees every POSIX segment on the machine.
+        assert_eq!(pid_from_shm_file_name("sem.something"), None);
+        assert_eq!(pid_from_shm_file_name("perfr-scopes-"), None);
+        assert_eq!(pid_from_shm_file_name("perfr-scopes-abc"), None);
+        assert_eq!(pid_from_shm_file_name("not-perfr-scopes-1"), None);
+    }
+
+    #[test]
+    fn the_writer_creates_a_file_a_watcher_can_see() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(2, 8).expect("create");
+        let path = segment_directory().join(shm_file_name(writer.pid())).display().to_string();
+        assert!(std::path::Path::new(&path).exists(), "{path} should exist");
+        drop(writer);
+        assert!(!std::path::Path::new(&path).exists(), "and be unlinked on drop");
+    }
+
+    #[test]
+    fn the_sweep_removes_only_segments_whose_process_is_gone() {
+        let _guard = exclusive();
+        // Our own segment, alive: must survive a sweep.
+        let mine = ScopeRingWriter::create(2, 8).expect("create");
+        // A segment for a pid that certainly does not exist.
+        let dead_pid = 4_000_000_000u32 - 7;
+        let name = shm_name(dead_pid);
+        let fd = unsafe { segment_open(&name, libc::O_CREAT | libc::O_RDWR, 0o600) };
+        assert!(fd >= 0);
+        unsafe { libc::close(fd) };
+        let dead_path = segment_directory().join(shm_file_name(dead_pid)).display().to_string();
+        assert!(std::path::Path::new(&dead_path).exists());
+
+        let removed = sweep_dead_segments();
+        assert!(removed >= 1, "the dead pid's segment was swept");
+        assert!(!std::path::Path::new(&dead_path).exists());
+        assert!(
+            ScopeRingReader::open(mine.pid()).is_ok(),
+            "a live process's segment is never touched"
+        );
+    }
+}

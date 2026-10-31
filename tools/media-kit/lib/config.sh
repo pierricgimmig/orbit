@@ -1,12 +1,12 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 # Shared configuration. Every value can be overridden from the environment.
 KIT="${KIT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-# The Orbit checkout that contains this kit (tools/media-kit). Override to
+# The perfr checkout that contains this kit (tools/media-kit). Override to
 # point at another clone; the build step only fetches, and never edits it.
-ORBIT_REPO="${ORBIT_REPO:-$(cd "$KIT/../.." && pwd)}"
+PERFR_REPO="${PERFR_REPO:-$(cd "$KIT/../.." && pwd)}"
 CACHE="${CACHE:-$KIT/.cache}"                                    # build worktrees, binaries
 VM_DIR="${VM_DIR:-/workspace/autoinstr-test/vm}"                 # disk.qcow2 + vmkey (see README / steps/vm-create.sh)
 VM_DISK="${VM_DISK:-$VM_DIR/disk.qcow2}"

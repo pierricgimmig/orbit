@@ -1,4 +1,4 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -33,29 +33,29 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal
       - name: Test manual API and shared mappings
-        run: cargo +1.88.0 test --locked -p orbit-api -p orbit-scope-ring
+        run: cargo +1.88.0 test --locked -p perfr-api -p perfr-scope-ring
       - name: Test service
-        run: cargo +1.88.0 test --locked -p orbit-service
+        run: cargo +1.88.0 test --locked -p perfr
       - name: Build distributable service and SDK
         run: tools/build/build-service-macos.sh
       - name: Build and run C and C++ consumers
         env:
-          ORBIT_API_LIB: ${{ github.workspace }}/dist/macos/liborbit_api.dylib
+          PERFR_API_LIB: ${{ github.workspace }}/dist/macos/libperfr_api.dylib
         run: |
-          ./tools/test-programs/OrbitTestC/build.sh
-          ./tools/test-programs/OrbitTestCpp/build.sh
-          ./tools/test-programs/OrbitTestC/OrbitTestC --seconds 1
-          ./tools/test-programs/OrbitTestCpp/OrbitTestCpp --seconds 1
+          ./tools/test-programs/PerfrTestC/build.sh
+          ./tools/test-programs/PerfrTestCpp/build.sh
+          ./tools/test-programs/PerfrTestC/PerfrTestC --seconds 1
+          ./tools/test-programs/PerfrTestCpp/PerfrTestCpp --seconds 1
       - name: Smoke test capture and restart
         run: |
-          python3 -m venv /tmp/orbit-smoke
-          /tmp/orbit-smoke/bin/pip install pyarrow
-          /tmp/orbit-smoke/bin/python tools/e2e/manual_service_smoke.py --service dist/macos/orbit-service --api-lib dist/macos/liborbit_api.dylib
+          python3 -m venv /tmp/perfr-smoke
+          /tmp/perfr-smoke/bin/pip install pyarrow
+          /tmp/perfr-smoke/bin/python tools/e2e/manual_service_smoke.py --service dist/macos/perfr --api-lib dist/macos/libperfr_api.dylib
       - name: Smoke test two services in one timeline
         run: |
-          cargo +1.88.0 build --locked -p orbit-test-rust
-          /tmp/orbit-smoke/bin/python tools/e2e/multi_machine_smoke.py --service dist/macos/orbit-service --target target/debug/OrbitTestRust
+          cargo +1.88.0 build --locked -p perfr-test-rust
+          /tmp/perfr-smoke/bin/python tools/e2e/multi_machine_smoke.py --service dist/macos/perfr --target target/debug/PerfrTestRust
       - uses: actions/upload-artifact@v4
         with:
-          name: orbit-${{ matrix.runner }}
+          name: perfr-${{ matrix.runner }}
           path: dist/macos/

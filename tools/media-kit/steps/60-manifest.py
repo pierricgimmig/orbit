@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -29,12 +29,12 @@ FEATURES = [  # (feature, clip ids covering it, note)
     ("Chrome Trace Event JSON import (Open)", ["14-chrome-trace-import"], ""),
 ]
 NOT_CAPTURED = [
-    ("Save / Save slice (.orbit.zip) and reopening a slice", "needs a native save dialog; covered by the API (/api/capture/export) not the UI"),
+    ("Save / Save slice (.perfr.zip) and reopening a slice", "needs a native save dialog; covered by the API (/api/capture/export) not the UI"),
     ("Hook from report (right-click > Hook function) / Functions-tab ticking", "shown only in passing (menu hover in 10-code-view); auto-profile already hooks everything"),
     ("Self pane (F2) and Benchmark (F3)", "developer tools, not a landing-page feature"),
     ("Tracks filter box, track drag-reorder / hide, Inspector, Modules tab, Paper canvas, Compact tracks", "minor UI; not recorded to keep the set short"),
-    ("Manual instrumentation API (orbit.h / Rust / Python), orbit-scope CLI, agent track", "needs an instrumented target; game_loop uses dynamic instrumentation only"),
-    ("Perfetto (.pftrace) import, static .orbit.stream viewer, website", "not exercised"),
+    ("Manual instrumentation API (perfr.h / Rust / Python), perfr-scope CLI, agent track", "needs an instrumented target; game_loop uses dynamic instrumentation only"),
+    ("Perfetto (.pftrace) import, static .perfr.stream viewer, website", "not exercised"),
 ]
 
 def probe(p):
@@ -71,11 +71,11 @@ def main():
     clips = json.loads(subprocess.run(["node", "-e", f"import('{kit}/clips.mjs').then(m=>console.log(JSON.stringify(m.clips)))"], capture_output=True, text=True).stdout)
     cap = {c["id"]: c for c in clips}
     cap["00-hero"] = {"title": "Hero montage", "caption": "Montage of the best moments: " + ", ".join(s[0].replace(".mkv", "") for s in conv.get("00-hero", {}).get("segments", []))}
-    L = [f"# Orbit live viewer media", "",
-         f"Generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M %Z')} by orbit-media-kit" + (f" from `{a.ref}` ({a.sha})" if a.ref else "") + ".",
+    L = [f"# perfr live viewer media", "",
+         f"Generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M %Z')} by perfr-media-kit" + (f" from `{a.ref}` ({a.sha})" if a.ref else "") + ".",
          (f"Command: `{a.cmd}`" if a.cmd else ""), "",
          *history(out),
-         "Recorded live from orbit-service in a Debian 13 VM (QEMU TCG, 6 vCPU, 2 GB) capturing the `game_loop` dummy, viewer in headful Chrome "
+         "Recorded live from perfr in a Debian 13 VM (QEMU TCG, 6 vCPU, 2 GB) capturing the `game_loop` dummy, viewer in headful Chrome "
          "(SwiftShader WebGL) at 1600x1000 device px (1280x800 CSS px, DPR 1.25). Software GL renders the viewer at roughly 8-12 fps, so the "
          "videos carry that frame rate (encoded at 30 fps); clips longer than ~15 s play faster, up to 1.75x (speed column).", "",
          "| File | Size | Duration | Resolution | Speed | Caption |", "|---|---:|---:|---|---:|---|"]

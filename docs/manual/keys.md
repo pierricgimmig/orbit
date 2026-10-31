@@ -52,6 +52,6 @@ More also lists “Pan time: A / D”, “Zoom: W / S” and “Scroll tracks: �
 | `?report=` | Open a tab: `flat`, `top_down`, `bottom_up`, `modules`, `live`, `flame`, `functions`, `code`, `inspector`, `selection` |
 | `?tracks=` | Fill the tracks filter. `+` and `%20` are spaces |
 | `?collapse=scheduler` | Start with the scheduler track folded |
-| `?theme=` | `orbit`, `dracula`, `nord`, `gruvbox`, `solarized`, `solarized-light`, `gruvbox-light` |
+| `?theme=` | `perfr`, `dracula`, `nord`, `gruvbox`, `solarized`, `solarized-light`, `gruvbox-light` |
 | `?webgpu` | Try WebGPU instead of WebGL2 |
-| `?capture=` | Open a `.orbit.stream` with no service. The site’s embedded viewer uses this |
+| `?capture=` | Open a `.perfr.stream` with no service. The site’s embedded viewer uses this |

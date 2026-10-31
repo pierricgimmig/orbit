@@ -6,8 +6,8 @@
 
 | Package | Wheel carries | Command it adds |
 |---|---|---|
-| `orbit-api` | prebuilt `liborbit_api` (glibc 2.17 on Linux) | — (`import orbit_api`) |
-| `orbit-profiler` | `orbit-service` binary + `liborbit_api` + `orbit.h`, depends on `orbit-api` | `orbit-service` |
+| `perfr-api` | prebuilt `libperfr_api` (glibc 2.17 on Linux) | — (`import perfr_api`) |
+| `perfr` | `perfr` binary + `libperfr_api` + `perfr.h`, depends on `perfr-api` | `perfr` |
 
 Both wheels for a platform are cut from **one** build, so the ring protocol
 version matches between the library that writes scopes and the service that
@@ -26,27 +26,27 @@ use Apple's toolchain. Wheels are stripped and tagged `py3-none-<platform>` —
 one wheel serves every Python 3.
 
 The script refuses to run if the release version drifts between
-`crates/orbit-api/Cargo.toml`, the two `pyproject.toml`s, the
-`orbit-api==` pin in orbit-profiler, and the two `__version__`s: bump all of
+`crates/perfr-api/Cargo.toml`, the two `pyproject.toml`s, the
+`perfr-api==` pin in perfr, and the two `__version__`s: bump all of
 them together.
 
-The orbit-profiler wheel includes the Frida companions
-(`liborbit_frida_agent`, `orbit-frida-helper`, `licenses/`). The service
-loads them from the directory that contains `orbit-service`. The script
-builds them for the wheel target. `ORBIT_COMPANIONS_DIR=<dir>` skips that
+The perfr wheel includes the Frida companions
+(`libperfr_frida_agent`, `perfr-frida-helper`, `licenses/`). The service
+loads them from the directory that contains `perfr`. The script
+builds them for the wheel target. `PERFR_COMPANIONS_DIR=<dir>` skips that
 build and copies a directory already produced by `tools/frida/build.sh`.
 
 Local check:
 
 ```bash
 python3 -m venv /tmp/v
-/tmp/v/bin/pip install --no-index --find-links dist/wheels orbit-profiler
-/tmp/v/bin/python -c "import orbit_api as o; print(o.init(), o.library_path())"
-/tmp/v/bin/orbit-service --help
+/tmp/v/bin/pip install --no-index --find-links dist/wheels perfr
+/tmp/v/bin/python -c "import perfr_api as o; print(o.init(), o.library_path())"
+/tmp/v/bin/perfr --help
 ```
 
-CI (`.github/workflows/python-wheels.yml`) runs the matrix on an `orbit-v*`
+CI (`.github/workflows/python-wheels.yml`) runs the matrix on a `perfr-v*`
 tag (not the legacy C++ `v1.*` tags) and publishes to PyPI via Trusted
-Publishing — configure the publishers for `orbit-api` and `orbit-profiler`
+Publishing — configure the publishers for `perfr-api` and `perfr`
 on PyPI once before the first tagged release. `workflow_dispatch` builds
 wheels and does not publish. See [docs/releasing.md](../../docs/releasing.md).

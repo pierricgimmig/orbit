@@ -1,4 +1,4 @@
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -34,53 +34,53 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal
       - name: Test producer crates and the ETW decoders
-        run: cargo +1.88.0 test --locked -p orbit-api -p orbit-scope-ring -p orbit-frida-transport -p orbit-etw
+        run: cargo +1.88.0 test --locked -p perfr-api -p perfr-scope-ring -p perfr-frida-transport -p perfr-etw
       - name: Test the kernel logger live (the runner is elevated)
         env:
           # Turns the "not elevated" skip into a failure: this job must run it.
-          ORBIT_ETW_LIVE: '1'
-        run: cargo +1.88.0 test --locked -p orbit-etw --test live -- --nocapture
+          PERFR_ETW_LIVE: '1'
+        run: cargo +1.88.0 test --locked -p perfr-etw --test live -- --nocapture
       - name: Test service
-        run: cargo +1.88.0 test --locked -p orbit-service
+        run: cargo +1.88.0 test --locked -p perfr
       - name: Test Frida helper and agent
         # The devkit download is bounded in the script; this bounds the step
         # so a hang fails in minutes, not at the job's 90.
         timeout-minutes: 20
         run: |
           .\tools\frida\devkits.ps1
-          cargo +1.88.0 test --locked -p orbit-frida-helper
-          cargo +1.88.0 test --locked -p orbit-frida-agent --features native
+          cargo +1.88.0 test --locked -p perfr-frida-helper
+          cargo +1.88.0 test --locked -p perfr-frida-agent --features native
       - name: Build distributable service and SDK
         timeout-minutes: 30
         run: .\tools\build\build-service-windows.ps1
       - name: Build and run C and C++ consumers
         env:
-          ORBIT_API_LIB: ${{ github.workspace }}\dist\windows\orbit_api.dll
+          PERFR_API_LIB: ${{ github.workspace }}\dist\windows\perfr_api.dll
         run: |
-          .\tools\test-programs\OrbitTestC\build.ps1
-          .\tools\test-programs\OrbitTestCpp\build.ps1
-          .\tools\test-programs\OrbitTestC\OrbitTestC.exe --seconds 1
-          .\tools\test-programs\OrbitTestCpp\OrbitTestCpp.exe --seconds 1
-          .\dist\windows\OrbitTestRust.exe --seconds 1
+          .\tools\test-programs\PerfrTestC\build.ps1
+          .\tools\test-programs\PerfrTestCpp\build.ps1
+          .\tools\test-programs\PerfrTestC\PerfrTestC.exe --seconds 1
+          .\tools\test-programs\PerfrTestCpp\PerfrTestCpp.exe --seconds 1
+          .\dist\windows\PerfrTestRust.exe --seconds 1
       - name: Smoke test manual capture and restart
         run: |
           python -m pip install --quiet pyarrow
-          python tools/e2e/manual_service_smoke.py --service dist/windows/orbit-service.exe --api-lib dist/windows/orbit_api.dll
+          python tools/e2e/manual_service_smoke.py --service dist/windows/perfr.exe --api-lib dist/windows/perfr_api.dll
       - name: Smoke test two services in one timeline
-        run: python tools/e2e/multi_machine_smoke.py --service dist/windows/orbit-service.exe --target dist/windows/OrbitTestRust.exe
+        run: python tools/e2e/multi_machine_smoke.py --service dist/windows/perfr.exe --target dist/windows/PerfrTestRust.exe
       - name: Smoke test Frida hooks
         run: |
           . .\tools\windows\msvc-env.ps1
           New-Item -ItemType Directory -Force target\e2e | Out-Null
           Push-Location target\e2e
-          cl.exe /nologo /O1 /Zi /std:c11 /utf-8 /DORBIT_STATIC /I..\..\crates\orbit-api\include ..\..\..\tools\e2e\frida_target.c /Fe:orbit-frida-target.exe /link /DEBUG ..\x86_64-pc-windows-msvc\release\orbit_api.lib ws2_32.lib ntdll.lib userenv.lib bcrypt.lib advapi32.lib kernel32.lib
+          cl.exe /nologo /O1 /Zi /std:c11 /utf-8 /DPERFR_STATIC /I..\..\crates\perfr-api\include ..\..\..\tools\e2e\frida_target.c /Fe:perfr-frida-target.exe /link /DEBUG ..\x86_64-pc-windows-msvc\release\perfr_api.lib ws2_32.lib ntdll.lib userenv.lib bcrypt.lib advapi32.lib kernel32.lib
           Pop-Location
-          python tools/e2e/frida_smoke.py --service dist/windows/orbit-service.exe --agent dist/windows/orbit_frida_agent.dll --helper dist/windows/orbit-frida-helper.exe --target target/e2e/orbit-frida-target.exe
-          python tools/e2e/frida_smoke.py --service dist/windows/orbit-service.exe --agent dist/windows/orbit_frida_agent.dll --helper dist/windows/orbit-frida-helper.exe --target target/e2e/orbit-frida-target.exe --inflight
+          python tools/e2e/frida_smoke.py --service dist/windows/perfr.exe --agent dist/windows/perfr_frida_agent.dll --helper dist/windows/perfr-frida-helper.exe --target target/e2e/perfr-frida-target.exe
+          python tools/e2e/frida_smoke.py --service dist/windows/perfr.exe --agent dist/windows/perfr_frida_agent.dll --helper dist/windows/perfr-frida-helper.exe --target target/e2e/perfr-frida-target.exe --inflight
       - name: Capture the scheduler and samples with the kernel logger
         run: |
-          python tools/e2e/windows_etw_smoke.py --service dist/windows/orbit-service.exe --target dist/windows/OrbitTestRust.exe
+          python tools/e2e/windows_etw_smoke.py --service dist/windows/perfr.exe --target dist/windows/PerfrTestRust.exe
       - uses: actions/upload-artifact@v4
         with:
-          name: orbit-windows-x86_64
+          name: perfr-windows-x86_64
           path: dist/windows/

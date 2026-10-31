@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
@@ -16,7 +16,7 @@
 #   ./run.sh -- --pid 1234 --duration-ms 5000 --out /tmp/c.pod   # file mode
 #
 # This builds the service and native Frida components, not the viewer pack. Run
-# crates/orbit-live-viewer/build_wasm.sh if you changed the front end; the script
+# crates/perfr-live-viewer/build_wasm.sh if you changed the front end; the script
 # warns when it looks stale.
 
 set -euo pipefail
@@ -42,7 +42,7 @@ Options:
   --gpu-helper    Also build the NVIDIA telemetry helper and pass it through
   -h, --help      This message
 
-Anything after -- goes to orbit-service verbatim, which is how you get the
+Anything after -- goes to perfr verbatim, which is how you get the
 file-capture mode (--pid / --duration-ms / --out) instead of the UI.
 USAGE
 }
@@ -74,7 +74,7 @@ for arg in "${PASSTHROUGH[@]:-}"; do
 done
 
 if [[ "$SERVE" -eq 1 && "$HTTP_PORT" != "0" ]] && port_in_use "$HTTP_PORT"; then
-  die "port $HTTP_PORT is already in use (another orbit-service?)"
+  die "port $HTTP_PORT is already in use (another perfr?)"
 fi
 
 command -v cargo >/dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
@@ -96,11 +96,11 @@ fi
 if [[ "$STATIC" -eq 1 ]]; then
   echo "run.sh: building the static musl service"
   tools/build/build-service-musl.sh >/dev/null
-  BIN="$ROOT/target/x86_64-unknown-linux-musl/release/orbit-service"
+  BIN="$ROOT/target/x86_64-unknown-linux-musl/release/perfr"
 else
-  echo "run.sh: building orbit-service (release)"
-  cargo build --release -p orbit-service
-  BIN="$ROOT/target/release/orbit-service"
+  echo "run.sh: building perfr (release)"
+  cargo build --release -p perfr
+  BIN="$ROOT/target/release/perfr"
 fi
 [[ -x "$BIN" ]] || die "built, but $BIN is missing"
 
@@ -111,21 +111,21 @@ if [[ "$SERVE" -eq 1 && "$STATIC" -eq 0 ]]; then
 fi
 
 if [[ "$WITH_GPU" -eq 1 ]]; then
-  echo "run.sh: building orbit-gpu-helper"
-  cargo build --release -p orbit-gpu-helper
-  HELPER="$ROOT/target/release/orbit-gpu-helper"
+  echo "run.sh: building perfr-gpu-helper"
+  cargo build --release -p perfr-gpu-helper
+  HELPER="$ROOT/target/release/perfr-gpu-helper"
   [[ -x "$HELPER" ]] || die "built, but $HELPER is missing"
   PASSTHROUGH+=(--gpu-helper "$HELPER")
 fi
 
 # The service embeds nothing: it serves whatever pack is in viewer-dist, so a
 # stale pack shows a stale page.
-PACK="$ROOT/crates/orbit-live-viewer/viewer-dist/orbit_live_viewer_bg.wasm"
-VIEWER_SRC="$ROOT/crates/orbit-live-viewer/src"
+PACK="$ROOT/crates/perfr-live-viewer/viewer-dist/perfr_live_viewer_bg.wasm"
+VIEWER_SRC="$ROOT/crates/perfr-live-viewer/src"
 if [[ "$SERVE" -eq 1 && -f "$PACK" && -d "$VIEWER_SRC" ]] &&
    [[ -n "$(find "$VIEWER_SRC" -name '*.rs' -newer "$PACK" -print -quit)" ]]; then
-  warn "viewer-dist/ is older than crates/orbit-live-viewer/src — the page will"
-  warn "serve the previous pack. Run crates/orbit-live-viewer/build_wasm.sh to refresh it."
+  warn "viewer-dist/ is older than crates/perfr-live-viewer/src — the page will"
+  warn "serve the previous pack. Run crates/perfr-live-viewer/build_wasm.sh to refresh it."
 fi
 
 # Scheduling is the one capture feature that needs privilege. Say so up front
@@ -146,7 +146,7 @@ fi
 
 cat <<BANNER
 
-  Orbit live viewer   http://127.0.0.1:${HTTP_PORT}/
+  perfr live viewer   http://127.0.0.1:${HTTP_PORT}/
 
   Ctrl-C to stop. No root required: without it the service captures what it
   can and prints how to enable the rest.

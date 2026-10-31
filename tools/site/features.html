@@ -1,11 +1,11 @@
 <!doctype html>
 <html lang="en">
 <head>
-<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<script>try{var t=localStorage.getItem("perfr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 <meta charset="utf-8">
-<title>Features — Orbit</title>
+<title>Features — perfr</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="The rest of Orbit: scope search, call trees, live statistics, disassembly, the service’s own lanes, colour schemes, the phone layout and Chrome traces.">
+<meta name="description" content="The rest of perfr: scope search, call trees, live statistics, disassembly, the service’s own lanes, colour schemes, the phone layout and Chrome traces.">
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,11 +15,11 @@
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <nav class="site" aria-label="Site">
-  <a class="brand" href="index.html"><img src="logo.png" alt="Orbit"></a>
+  <a class="brand" href="index.html"><img src="logo.png" alt="perfr"></a>
   <a href="features.html" aria-current="page">Features</a>
   <a href="manual/index.html">Manual</a>
   <a class="nav-more" href="blog/index.html">Blog</a>
-  <a class="nav-more" href="https://github.com/pierricgimmig/orbit" rel="noopener noreferrer">GitHub</a>
+  <a class="nav-more" href="https://github.com/perfr/perfr" rel="noopener noreferrer">GitHub</a>
   <span class="spacer"></span>
   <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
   <a class="cta" href="index.html#viewer">Live viewer</a>
@@ -201,7 +201,7 @@
       <figure class="stage">
         <div class="stage-frame">
           <img class="poster" alt="" src="media/09-service-health.jpg" width="1280" height="768">
-          <video id="clip-09" width="1280" height="768" muted loop playsinline webkit-playsinline preload="none" poster="media/09-service-health.jpg" data-src="media/09-service-health.mp4" aria-label="orbit-service profiling itself: CPU, RSS, events per pass and ring lanes"></video>
+          <video id="clip-09" width="1280" height="768" muted loop playsinline webkit-playsinline preload="none" poster="media/09-service-health.jpg" data-src="media/09-service-health.mp4" aria-label="perfr profiling itself: CPU, RSS, events per pass and ring lanes"></video>
         </div>
         <figcaption>
           <span>Service self-profile</span>
@@ -210,7 +210,7 @@
       </figure>
       <div class="copy">
         <h3>The profiler, profiling itself</h3>
-        <p>orbit-service instruments itself. CPU percent, RSS, events per pass and the ring lanes sit with its own scopes, and a cursor line reads them across the capture.</p>
+        <p>perfr instruments itself. CPU percent, RSS, events per pass and the ring lanes sit with its own scopes, and a cursor line reads them across the capture.</p>
       </div>
     </article>
   </section>
@@ -262,7 +262,7 @@
       <figure class="stage">
         <div class="stage-frame">
           <img class="poster" alt="" src="media/14-chrome-trace-import.jpg" width="1280" height="512">
-          <video id="clip-14" width="1280" height="512" muted loop playsinline webkit-playsinline preload="none" poster="media/14-chrome-trace-import.jpg" data-src="media/14-chrome-trace-import.mp4" aria-label="Opening a Chrome Trace Event JSON file onto the Orbit timeline"></video>
+          <video id="clip-14" width="1280" height="512" muted loop playsinline webkit-playsinline preload="none" poster="media/14-chrome-trace-import.jpg" data-src="media/14-chrome-trace-import.mp4" aria-label="Opening a Chrome Trace Event JSON file onto the perfr timeline"></video>
         </div>
         <figcaption>
           <span>Chrome trace</span>
@@ -283,16 +283,16 @@
       <p class="sub">Optional, Linux only. The service binary does not link the driver.</p>
     </header>
     <div class="card">
-      <p>If <code>orbit-gpu-helper</code> is next to <code>orbit-service</code>, a capture can show NVIDIA utilisation, memory and power. The helper loads the driver library at runtime and stays quiet when it is not there, so a machine without an NVIDIA GPU still captures. This is not AMD job tracing or Vulkan debug labels; those were the original Orbit and are not a live feature here.</p>
+      <p>If <code>perfr-gpu-helper</code> is next to <code>perfr</code>, a capture can show NVIDIA utilisation, memory and power. The helper loads the driver library at runtime and stays quiet when it is not there, so a machine without an NVIDIA GPU still captures. This is not AMD job tracing or Vulkan debug labels; those were the original perfr and are not a live feature here.</p>
     </div>
   </section>
 </main>
 <footer class="site">
-  <span>Orbit</span>
+  <span>perfr</span>
   <a href="https://github.com/google/orbit" rel="noopener noreferrer">Original Orbit</a>
   <a href="index.html">Home</a>
   <a href="manual/index.html">Manual</a>
-  <a href="https://github.com/pierricgimmig/orbit" rel="noopener noreferrer">GitHub</a>
+  <a href="https://github.com/perfr/perfr" rel="noopener noreferrer">GitHub</a>
   <a href="blog/index.html">Blog</a>
   <a href="e2e/report.html">Test report</a>
 </footer>
@@ -307,7 +307,7 @@
   b.addEventListener("click", function () {
     var n = cur() === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", n);
-    try { localStorage.setItem("orbit-theme", n); } catch (e) {}
+    try { localStorage.setItem("perfr-theme", n); } catch (e) {}
     lab();
   });
 })();

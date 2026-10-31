@@ -1,0 +1,2358 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+"""End-to-end tests for the Rust perfr service, which double as the screenshot
+generator for the viewer.
+
+Every scenario does the same two things: assert something about the service's
+answers, and photograph the viewer showing it. That pairing is deliberate. A
+test that only checks JSON cannot catch a feature that is computed correctly
+and drawn invisibly -- which is exactly the bug that hid the sample bar, where
+the ticks were right in every respect except their colour. A screenshot that
+nobody asserts on is decoration. Together they cover both halves.
+
+Run:  python3 tools/e2e/perfr_e2e.py
+      python3 tools/e2e/perfr_e2e.py --only sampling --keep-going
+Output: docs/screenshots/*.png and a pass/fail summary; exit code 1 on failure.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+sys.path.insert(0, HERE)
+
+from cdp import Chrome  # noqa: E402  (path set above)
+
+DEFAULT_BOX3D = os.path.expanduser("~/git/box3d")
+SERVICE = os.path.join(REPO, "target/release/perfr")
+
+
+class Failure(AssertionError):
+    pass
+
+
+def check(condition, message):
+    if not condition:
+        raise Failure(message)
+
+
+def check_at_least(value, minimum, what):
+    if value < minimum:
+        raise Failure(f"{what}: expected at least {minimum}, got {value}")
+
+
+# --------------------------------------------------------------------- target
+
+
+def build_target(box3d_root, out_path):
+    """Compiles the Box3D workload the suite profiles."""
+    lib = os.path.join(box3d_root, "build/src/libbox3d.a")
+    include = os.path.join(box3d_root, "include")
+    if not os.path.exists(lib):
+        raise Failure(
+            f"Box3D is not built: {lib} is missing.\n"
+            f"Build it first:  cd {box3d_root} && ./build.sh"
+        )
+    subprocess.run(
+        ["gcc", "-O2", "-g", "-fno-omit-frame-pointer", "-o", out_path,
+         os.path.join(HERE, "box3d_target.c"), "-I", include, lib, "-lpthread", "-lm"],
+        check=True,
+    )
+    return out_path
+
+
+class Target:
+    """The profiled process. `command` is a full argv; the process must print
+    `pid=<n>` on its first line of stdout. With `stdin=True` the process gets
+    a pipe, for programs that wait for a line before starting (`--wait-go`)."""
+
+    def __init__(self, command, stdin=False):
+        self.proc = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            stdin=subprocess.PIPE if stdin else None,
+        )
+        line = self.proc.stdout.readline()
+        match = re.search(r"pid=(\d+)", line)
+        if not match:
+            raise Failure(f"target did not announce its pid: {line!r}")
+        self.pid = int(match.group(1))
+
+    def go(self):
+        """Sends the line a `--wait-go` program is waiting for."""
+        self.proc.stdin.write("go\n")
+        self.proc.stdin.flush()
+
+    def wait(self, timeout=120.0):
+        """Waits for the process to exit; returns the rest of its stdout."""
+        out, _ = self.proc.communicate(timeout=timeout)
+        return out or ""
+
+    def stop(self):
+        if self.proc.poll() is not None:
+            return
+        self.proc.terminate()
+        try:
+            self.proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+
+
+# -------------------------------------------------------------------- service
+
+
+# Set by --sudo: the service runs as root (`sudo -n`, so a password prompt
+# fails fast instead of hanging), which is what arming uprobes needs.
+SUDO = False
+
+
+class Service:
+    def __init__(self, port, binary=SERVICE, sudo=None, extra_args=()):
+        if not os.path.exists(binary):
+            raise Failure(
+                f"{binary} is missing.\nBuild it:  ./run.sh (builds the service with the "
+                "Frida helper and agent beside it)"
+            )
+        self.port = port
+        self.base = f"http://127.0.0.1:{port}"
+        self.log = open(f"/tmp/perfr-e2e-service-{port}.log", "w")
+        self.sudo = SUDO if sudo is None else sudo
+        # Through the wrapper tools/sudo/install.sh installs, when it is
+        # there: its sudoers rule needs no password and is tied to the
+        # binary's name, so a rebuilt or relocated service still qualifies.
+        wrapper = "/usr/local/bin/perfr-sudo"
+        prefix = []
+        if self.sudo:
+            prefix = ["sudo", "-n", "--"] + ([wrapper] if os.path.exists(wrapper) else [])
+            binary = os.path.abspath(binary)
+        # sudo relays the SIGTERM `stop` sends, so the service exits either way.
+        self.proc = subprocess.Popen(
+            prefix + [binary, *extra_args, "--serve", str(port)], stdout=self.log, stderr=subprocess.STDOUT
+        )
+        self._wait_ready()
+        # The service's own pid: under sudo, `proc` is sudo (and the wrapper
+        # behind it), and the service is a grandchild.
+        self.pid = self.get("/api/status").get("service_pid") or self.proc.pid
+
+    def _wait_ready(self, timeout=30.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                self.get("/api/status")
+                return
+            except Exception:  # noqa: BLE001 - retried until the deadline
+                time.sleep(0.2)
+        raise Failure("service never answered /api/status")
+
+    def get(self, path, timeout=30.0):
+        with urllib.request.urlopen(self.base + path, timeout=timeout) as response:
+            body = response.read()
+        return json.loads(body) if body.strip().startswith((b"{", b"[")) else body
+
+    def post(self, path, payload=None, timeout=30.0):
+        data = json.dumps(payload).encode() if payload is not None else b""
+        request = urllib.request.Request(
+            self.base + path, data=data, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read().decode()
+        except urllib.error.HTTPError as error:
+            return f"HTTP {error.code}: {error.read().decode()[:200]}"
+
+    def stderr_text(self):
+        self.log.flush()
+        with open(self.log.name) as handle:
+            return handle.read()
+
+    def stop(self):
+        self.proc.terminate()
+        try:
+            self.proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+        self.log.close()
+
+
+# ------------------------------------------------------------------- fixtures
+
+
+def check_capture_clock(service):
+    """Nothing in the ring may start before the capture did. Every stop
+    goes through here, so every scenario's capture is checked."""
+    status = service.get("/api/status")
+    start = status.get("capture_start_ns", 0)
+    if start and status.get("events_live", 0):
+        oldest = status["oldest_start_ns"]
+        check(oldest >= start, f"an event starts {start - oldest} ns before the capture start")
+    return status.get("dropped_before_start", 0)
+
+
+class Run:
+    """Everything a scenario needs, plus where its screenshots go."""
+
+    def __init__(self, service, target, chrome, shots_dir):
+        self.service = service
+        self.target = target
+        self.chrome = chrome
+        self.shots_dir = shots_dir
+        self.shots = []
+        # Numbers a scenario measured, written to the report at the end.
+        self.perf = {}
+
+    def shot(self, name, settle=1.5):
+        # --no-shots runs the assertions without a browser, for CI machines
+        # with no Chrome. Scenarios do not branch on it; this does.
+        if self.chrome is None:
+            return None
+        time.sleep(settle)
+        path = os.path.join(self.shots_dir, f"{name}.png")
+        size = self.chrome.screenshot(path)
+        self.shots.append((name, size))
+        # A blank canvas compresses to a few KB; a real frame does not. This
+        # has caught a headless browser that loaded the page and never
+        # painted, which no JSON assertion would notice.
+        check_at_least(size, 20_000, f"screenshot {name} looks blank ({size} bytes)")
+        return path
+
+    def open_viewer(self, query=""):
+        if self.chrome is None:
+            return
+        self.chrome.goto(self.service.base + "/" + query, settle=8.0)
+
+    def capture(self, seconds=6.0, **body):
+        payload = {"pid": self.target.pid}
+        payload.update(body)
+        self.service.post("/api/capture/start", payload)
+        time.sleep(seconds)
+
+    def stop_capture(self):
+        self.service.post("/api/capture/stop")
+        time.sleep(1.0)
+        check_capture_clock(self.service)
+
+    # ---- the viewer's readouts -------------------------------------------
+    #
+    # egui paints to a canvas, so nothing on the page has a DOM node. The
+    # viewer hands the harness what it needs instead: `window.__perfr_sel`
+    # (selection, tab, view, event count...), `window.__perfr_ui` (the
+    # rectangle of every pill, report tab, menu item, Live row and track
+    # header painted this frame, by label) and `window.__perfr_self` (its own
+    # frame-time breakdown). A scenario clicks "Clear" or the header of
+    # thread 1234 by name, and the layout can move without breaking it.
+
+    def sel(self):
+        text = self.chrome.eval("window.__perfr_sel || null")
+        return json.loads(text) if text else {}
+
+    def ui(self):
+        text = self.chrome.eval("window.__perfr_ui || '[]'")
+        rects = {}
+        for label, x, y, w, h in json.loads(text):
+            rects[label] = (x, y, w, h)  # the last one painted wins
+        return rects
+
+    def self_phases(self):
+        text = self.chrome.eval("window.__perfr_self || null")
+        return json.loads(text) if text else {}
+
+    def wait_for(self, predicate, what, timeout=10.0, every=0.25):
+        deadline = time.time() + timeout
+        last = None
+        while time.time() < deadline:
+            last = predicate()
+            if last:
+                return last
+            time.sleep(every)
+        raise Failure(f"timed out waiting for {what}")
+
+    def rect(self, label, timeout=10.0):
+        """The rectangle painted under `label`, waiting for it to appear."""
+        return self.wait_for(lambda: self.ui().get(label), f"the {label!r} rectangle", timeout)
+
+    def rects_matching(self, prefix):
+        return {k: v for k, v in self.ui().items() if k.startswith(prefix)}
+
+    def click(self, label, button="left", dx=0.5, dy=0.5):
+        """Clicks inside the rectangle painted under `label`, at the fraction
+        (dx, dy) of its width and height."""
+        x, y, w, h = self.rect(label)
+        self.chrome.click(x + w * dx, y + h * dy, button=button)
+        time.sleep(0.4)
+
+    def load_symbols(self, timeout=40.0):
+        self.service.post("/api/symbols/load", {"pid": self.target.pid})
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            status = self.service.get(f"/api/symbols/status?pid={self.target.pid}")
+            if status.get("status") == "ready":
+                return status
+            if status.get("status") == "error":
+                raise Failure(f"symbol load failed: {status.get('error')}")
+            time.sleep(0.4)
+        raise Failure("symbols never became ready")
+
+
+# ------------------------------------------------------------------ scenarios
+
+SCENARIOS = []
+
+
+def scenario(name, description):
+    def wrap(fn):
+        SCENARIOS.append((name, description, fn))
+        return fn
+    return wrap
+
+
+@scenario("viewer-idle", "The viewer loads and shows its chrome with no capture")
+def viewer_idle(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.open_viewer()
+    check(run.chrome.eval("document.title") == "perfr Live Viewer", "wrong page title")
+    canvas = run.chrome.eval(
+        "(()=>{const c=document.querySelector('canvas');"
+        "return c?c.width*c.height:0})()"
+    )
+    check_at_least(canvas, 100_000, "canvas is too small to be the viewer")
+    # The viewer defaults to the WebGL2 backend (WebGPU/Dawn fails on some
+    # Linux/NVIDIA drivers); the More menu and this readout report which is live.
+    renderer = run.wait_for(lambda: run.sel().get("renderer"), "the renderer readout")
+    check(renderer == "WebGL", f"expected the WebGL default backend, got {renderer!r}")
+    run.shot("01-viewer-idle")
+
+
+@scenario("processes", "The process list is served from /proc and includes the target")
+def processes(run):
+    processes = run.service.get("/api/processes")
+    check_at_least(len(processes), 10, "process list")
+    pids = {p["pid"] for p in processes}
+    check(run.target.pid in pids, f"target pid {run.target.pid} is missing from /api/processes")
+
+
+@scenario("symbols", "Symbols load for the target and the modules view lists them")
+def symbols(run):
+    status = run.load_symbols()
+    check_at_least(status["function_count"], 100, "functions indexed")
+    check_at_least(status["module_count"], 1, "modules indexed")
+    modules = run.service.get(f"/api/symbols/modules?pid={run.target.pid}")["modules"]
+    check_at_least(len(modules), 1, "modules listed")
+    total = sum(m["function_count"] for m in modules)
+    check(total == status["function_count"], "module counts do not add up to the index")
+
+
+@scenario("function-search", "Searching finds the target's own instrumentable functions")
+def function_search(run):
+    run.load_symbols()
+    hits = run.service.get(
+        f"/api/functions/search?pid={run.target.pid}&q=perfr_e2e&limit=10"
+    )["functions"]
+    names = {h["name"] for h in hits}
+    # These are the workload's own named functions; if the ELF index cannot
+    # find them, nothing downstream can hook them either.
+    for expected in ("perfr_e2e_step_world", "perfr_e2e_build_world"):
+        check(expected in names, f"{expected} not found by search, got {sorted(names)}")
+
+
+@scenario("capture-scheduling", "A capture streams scheduling slices onto the timeline")
+def capture_scheduling(run):
+    run.capture(seconds=6.0)
+    status = run.service.get("/api/status")
+    check(status["capturing"], "service does not report capturing")
+    check_at_least(status["events_live"], 1000, "events streamed during capture")
+    run.open_viewer()
+    running = None
+    if run.chrome is not None:
+        # The timer, left of More, counts the capture up while it runs.
+        first = run.wait_for(lambda: run.sel().get("capture_elapsed") or None,
+                             "the capture timer to run", timeout=10)
+        time.sleep(1.0)
+        running = run.sel().get("capture_elapsed")
+        check(running > first, f"the capture timer should advance while capturing ({first} -> {running})")
+        timer = run.rect("Timer")
+        check(timer[0] > run.rect("Symbols")[0] and timer[0] < run.rect("More")[0],
+              f"the timer is painted between the status line and More: {timer}")
+    run.shot("02-capture-live", settle=3.0)
+    run.stop_capture()
+    # A finished capture lands on the top-down call tree by default.
+    if run.chrome is not None:
+        tab = run.wait_for(
+            lambda: run.sel().get("tab") if run.sel().get("tab") == "Top-down" else None,
+            "the report to default to Top-down after stop", timeout=10,
+        )
+        check(tab == "Top-down", f"a finished capture should default to Top-down, got {tab!r}")
+        # ...and the timer freezes at the capture's length.
+        frozen = run.sel().get("capture_elapsed")
+        time.sleep(1.0)
+        again = run.sel().get("capture_elapsed")
+        check(frozen == again and frozen >= running,
+              f"the timer should freeze at the capture's length after Stop ({running} -> {frozen}, {again})")
+        # ...which is the service's own measure of it.
+        status = run.service.get("/api/status")
+        if status.get("live_end_ns", 0) > status.get("capture_start_ns", 0) > 0:
+            length = (status["live_end_ns"] - status["capture_start_ns"]) / 1e9
+            check(abs(frozen - length) < 1.0,
+                  f"the frozen timer ({frozen}s) should match the capture's length ({length:.3f}s)")
+            return f"timer {running}s while capturing, {frozen}s after stop (capture {length:.3f}s)"
+        return f"timer {running}s while capturing, {frozen}s after stop"
+
+
+@scenario("sampling-report", "The whole-capture flat report names the workload's functions")
+def sampling_report(run):
+    run.load_symbols()
+    run.capture(seconds=8.0)
+    run.stop_capture()
+    report = run.service.get("/api/sampling/report?start_ns=0&end_ns=18446744073709551615")
+    check_at_least(report["samples"], 200, "callstack samples")
+    names = [f["name"] for f in report["functions"]]
+    check(
+        any("b3" in n or "perfr_e2e" in n for n in names),
+        f"no Box3D or workload frames in the report; top rows were {names[:5]}",
+    )
+    percent = sum(f["self_percent"] for f in report["functions"])
+    check(95.0 <= percent <= 105.0, f"self percentages sum to {percent:.1f}, not ~100")
+
+
+@scenario("call-trees", "Top-down and bottom-up trees agree with the flat report")
+def call_trees(run):
+    run.load_symbols()
+    run.capture(seconds=8.0)
+    run.stop_capture()
+    flat = run.service.get("/api/sampling/report?start_ns=0&end_ns=18446744073709551615")
+    self_counts = {f["name"]: f["self"] for f in flat["functions"]}
+
+    top = run.service.get("/api/sampling/tree?mode=top_down")
+    check_at_least(len(top["roots"]), 2, "thread roots in the top-down tree")
+    check(all(r["kind"] == "thread" for r in top["roots"]), "top-down roots must be threads")
+
+    bottom = run.service.get("/api/sampling/tree?mode=bottom_up")
+    check_at_least(len(bottom["roots"]), 1, "bottom-up roots")
+    for root in bottom["roots"]:
+        # The invariant that defines bottom-up: a root's inclusive count is
+        # that function's self count, because the walk starts at the leaf.
+        check(
+            root["inclusive"] == self_counts.get(root["name"], -1),
+            f"bottom-up root {root['name']} has inclusive {root['inclusive']} but "
+            f"self count {self_counts.get(root['name'])} in the flat report",
+        )
+
+
+@scenario("selection-report", "A time selection narrows the report, and a tid narrows it further")
+def selection_report(run):
+    run.load_symbols()
+    run.capture(seconds=8.0)
+    run.stop_capture()
+    whole = run.service.get("/api/sampling/report?start_ns=0&end_ns=18446744073709551615")
+    check_at_least(whole["samples"], 200, "samples in the whole capture")
+
+    # Subdivide the span the samples actually occupy, not /api/status's
+    # oldest/newest: the ring spans every capture this service has run, so a
+    # quarter of it can easily fall in a stretch this capture never covered.
+    t0, t1 = whole["first_sample_ns"], whole["last_sample_ns"]
+    check(t0 < t1, f"the report reports no sample span: {t0}..{t1}")
+    middle_a = t0 + (t1 - t0) // 4
+    middle_b = t0 + (t1 - t0) // 2
+    part = run.service.get(f"/api/sampling/report?start_ns={middle_a}&end_ns={middle_b}")
+    check(
+        0 < part["samples"] < whole["samples"],
+        f"a sub-range must hold fewer samples: whole={whole['samples']} "
+        f"sub={part['samples']} over [{middle_a}, {middle_b}] of [{t0}, {t1}]",
+    )
+
+    tree = run.service.get("/api/sampling/tree?mode=top_down")
+    tid = tree["roots"][0]["tid"]
+    scoped = run.service.get(
+        f"/api/sampling/report?start_ns=0&end_ns=18446744073709551615&tid={tid}"
+    )
+    check(scoped["tid"] == tid, "the report does not echo the tid it was scoped to")
+    check(
+        0 < scoped["samples"] < whole["samples"],
+        "one thread's samples must be a strict subset of the capture's",
+    )
+
+
+@scenario("report-tabs", "Each report tab renders: flat, top-down, bottom-up, modules")
+def report_tabs(run):
+    run.load_symbols()
+    run.capture(seconds=8.0)
+    run.open_viewer()
+    run.stop_capture()
+    # The panel appears on its own once the capture stops, showing the
+    # whole-capture aggregate over everything just recorded.
+    run.shot("03-report-flat", settle=4.0)
+    # The other tabs are reached by deep link rather than by clicking. egui
+    # paints to a canvas, so a pill has no DOM node; synthesising clicks at
+    # fixed coordinates would break the first time the layout moved.
+    tabs = [("top_down", "topdown"), ("bottom_up", "bottomup"), ("modules", "modules")]
+    for index, (param, slug) in enumerate(tabs, start=4):
+        run.open_viewer(f"?report={param}")
+        run.shot(f"0{index}-report-{slug}", settle=3.0)
+
+
+# The four manual-instrumentation test programs. Each runs the same scenario
+# -- frames, three physics workers, an async job with an arrow, two graphed
+# values, a name long enough to spill -- so their captures look alike and the
+# documentation can show any of them.
+
+def _build_app(lang):
+    """Returns the argv to launch the test app for `lang`, building it first."""
+    # PerfrTestC, PerfrTestCpp and the Python package do not link the API:
+    # perfr.h and perfr_api load libperfr_api at run time, by default from
+    # beside the perfr on PATH. The suite's service is not on PATH, so
+    # name the tree's library explicitly; Target inherits the environment.
+    lib = os.path.join(REPO, "target/release/libperfr_api.so")
+    if not os.path.exists(lib):
+        subprocess.run(["cargo", "build", "--release", "-p", "perfr-api"],
+                       cwd=REPO, check=True)
+    os.environ.setdefault("PERFR_API_LIB", lib)
+    if lang == "rust":
+        binary = os.path.join(REPO, "target/release/PerfrTestRust")
+        if not os.path.exists(binary):
+            subprocess.run(["cargo", "build", "--release", "-p", "perfr-test-rust"],
+                           cwd=REPO, check=True)
+        return [binary, "--seconds", "0"]
+    if lang in ("c", "cpp"):
+        name = {"c": "PerfrTestC", "cpp": "PerfrTestCpp"}[lang]
+        folder = os.path.join(REPO, "tools/test-programs", name)
+        binary = os.path.join(folder, name)
+        if not os.path.exists(binary):
+            subprocess.run([os.path.join(folder, "build.sh")], check=True)
+        return [binary, "--seconds", "0"]
+    if lang == "python":
+        return [sys.executable, os.path.join(REPO, "tools/test-programs/PerfrTestPython/PerfrTestPython.py"),
+                "--seconds", "0"]
+    raise Failure(f"unknown app language {lang}")
+
+
+def _instrumented_app(run, lang, shot_index):
+    """Captures one of the test apps and photographs it."""
+    app = Target(_build_app(lang))
+    try:
+        run.service.post("/api/capture/start", {"pid": app.pid})
+        time.sleep(6.0)
+        # Scheduler folded so the process's own lanes are the picture, and
+        # photographed while still capturing, before the report panel takes
+        # the bottom of the window.
+        run.open_viewer("?collapse=scheduler")
+        run.shot(f"{shot_index:02d}-api-{lang}", settle=3.0)
+        run.service.post("/api/capture/stop")
+        time.sleep(1.5)
+        # The app's ring held scopes from before Record: none may show.
+        refused = check_capture_clock(run.service)
+        log = run.service.stderr_text()
+        check(
+            f"opened segment of pid {app.pid}" in log,
+            f"the service never opened {lang}'s scope segment; log tail: {log[-600:]}",
+        )
+        # The closing line reports what reached the timeline.
+        summary = [l for l in log.splitlines() if "manual instrumentation:" in l and "events" in l]
+        check(summary, "no manual-instrumentation summary in the service log")
+        events = int(re.search(r"(\d+) events", summary[-1]).group(1))
+        check_at_least(events, 500, f"{lang}: scope events pushed to the timeline")
+        links = int(re.search(r"(\d+) links", summary[-1]).group(1))
+        check_at_least(links, 1, f"{lang}: async job links seen")
+        return f"{events} events, {links} links, {refused} pre-start refused"
+    finally:
+        app.stop()
+
+
+@scenario("api-rust", "PerfrTestRust: every instrumentation call, from Rust")
+def api_rust(run):
+    return _instrumented_app(run, "rust", 7)
+
+
+@scenario("api-c", "PerfrTestC: every instrumentation call, from C")
+def api_c(run):
+    return _instrumented_app(run, "c", 8)
+
+
+@scenario("api-cpp", "PerfrTestCpp: every instrumentation call, from C++ with RAII")
+def api_cpp(run):
+    return _instrumented_app(run, "cpp", 9)
+
+
+@scenario("api-python", "PerfrTestPython: every instrumentation call, from Python over ctypes")
+def api_python(run):
+    return _instrumented_app(run, "python", 10)
+
+
+@scenario("track-move", "Graph and async tracks move on their own, into another process, and come home")
+def track_move(run):
+    """A thread's graphs and its async block are tracks of their own -- rows
+    with a handle -- and any track can be dropped under another process,
+    where it keeps its owner's tint and carries a "from <pid>" badge that
+    sends it home. Proven on the Rust test app, which graphs two values and
+    runs an async job, by dragging a graph into the service's section."""
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    app = Target(_build_app("rust"))
+    try:
+        run.service.post("/api/capture/start", {"pid": app.pid})
+        time.sleep(5.0)
+        run.open_viewer("?collapse=scheduler")
+        pid = app.pid
+        # The app's threads on screen (the service's rows folded above them).
+        _thread_rows(run, pid)
+        graphs = run.wait_for(
+            lambda: {k: v for k, v in run.rects_matching(f"row:lane:{pid}:").items()
+                     if k.endswith(f":{KIND_VALUE}")} or None,
+            "a graph row of the app", timeout=20,
+        )
+        asyncs = run.rects_matching(f"row:async:{pid}:")
+        check_at_least(len(asyncs), 1, "async rows of the app (the async job's track)")
+        # 1. Own rows: the async block is not inside its thread's row.
+        label, (ax, ay, aw, ah) = sorted(asyncs.items(), key=lambda kv: kv[1][1])[0]
+        tid = int(label.split(":")[3])
+        tx, ty, tw, th = run.rect(f"row:thread:{pid}:{tid}")
+        check(ay >= ty + th - 0.5, f"the async row (y {ay}) must sit below its thread's block (y {ty}, h {th})")
+        # 2. A graph dragged into the service's section becomes its guest.
+        glabel, (gx, gy, gw, gh) = sorted(graphs.items(), key=lambda kv: kv[1][1])[0]
+        gtid = int(glabel.split(":")[3])
+        service_pid = run.service.get("/api/status").get("service_pid")
+        check(service_pid, "the service reports its pid")
+        # Fold every other process (the GPU telemetry rows, say) so the
+        # service's header, and the graph once it lands under it, are on
+        # screen: a row below the fold is laid out but not painted, and the
+        # badge is painted on the row.
+        for label in list(run.rects_matching("row:process:")):
+            if label in (f"row:process:{pid}", f"row:process:{service_pid}"):
+                continue
+            other = label.split(":")[2]
+            for _ in range(6):
+                if not run.rects_matching(f"row:thread:{other}:"):
+                    break
+                px, py, pw, ph = run.rect(label)
+                run.chrome.move(px + 16, py + ph * 0.5)
+                time.sleep(0.15)
+                run.chrome.click(px + 16, py + ph * 0.5)
+                time.sleep(0.4)
+            check(not run.rects_matching(f"row:thread:{other}:"), f"could not fold process {other}")
+        sx, sy, sw, sh = run.rect(f"row:process:{service_pid}")
+        gx, gy, gw, gh = run.rect(glabel)
+        # Drop just under the service's header: it is folded, and the hole
+        # opens right under a folded header.
+        x = gx + gw * 0.5
+        y0 = gy + gh * 0.5
+        y1 = sy + sh + 6
+
+        def mouse(kind, px, py):
+            run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1)
+
+        mouse("mousePressed", x, y0)
+        steps = 12
+        for i in range(1, steps + 1):
+            mouse("mouseMoved", x, y0 + (y1 - y0) * i / steps)
+            time.sleep(0.05)
+        time.sleep(0.3)
+        mouse("mouseReleased", x, y1)
+        time.sleep(0.5)
+        run.wait_for(lambda: run.rects_matching(f"guest:{pid}:{gtid}:{service_pid}") or None,
+                     "the graph to be a guest of the service's section")
+        badge = run.wait_for(lambda: run.rects_matching(f"badge:{pid}:{gtid}:") or None, "the 'from <pid>' badge")
+        gx2, gy2, _, _ = run.rect(glabel)
+        sx2, sy2, _, sh2 = run.rect(f"row:process:{service_pid}")
+        rail = sorted((round(v[1]), k) for k, v in run.rects_matching("row:").items())
+        check(gy2 > sy2, f"the graph (y {gy2}) must now be drawn under the service's header (y {sy2}); rail: {rail}")
+        run.rect(f"row:process:{pid}")  # the app's own header stays, to take the graph back
+        # The picture: a graph under the wrong process, badged as a guest.
+        run.chrome.move(gx + 4, 4)  # park the pointer off the rows
+        run.shot("46-track-moved", settle=1.0)
+        # 3. The badge sends it home.
+        bl, (bx, by, bw, bh) = next(iter(badge.items()))
+        run.chrome.click(bx + bw * 0.5, by + bh * 0.5)
+        time.sleep(0.5)
+        run.wait_for(lambda: not run.rects_matching(f"guest:{pid}:{gtid}:"), "the guest mark to go")
+        gx3, gy3, _, _ = run.rect(glabel)
+        tx3, ty3, _, th3 = run.rect(f"row:thread:{pid}:{gtid}")
+        check(gy3 >= ty3 + th3 - 0.5, f"home again: the graph (y {gy3}) sits under its thread (y {ty3}, h {th3})")
+        sx3, sy3, _, _ = run.rect(f"row:process:{service_pid}")
+        check(gy3 < sy3, "and above the service's section")
+        run.service.post("/api/capture/stop")
+        return f"async row of thread {tid} on its own; graph of thread {gtid} moved under pid {service_pid} and back"
+    finally:
+        app.proc.kill()
+
+
+@scenario("self-instrumentation", "The service profiles its own capture loop with the public API")
+def self_instrumentation(run):
+    # Any target will do; what is under test is that the service's own
+    # segment is opened and its scopes -- read context switches, read
+    # samples, unwind, symbolize, drain scope rings, push to viewer -- and its
+    # buffer-fill values reach the timeline like any other process's.
+    app = Target(_build_app("rust"))
+    try:
+        run.service.post("/api/capture/start", {"pid": app.pid})
+        time.sleep(5.0)
+        run.open_viewer("?collapse=scheduler")
+        run.shot("11-self-instrumentation", settle=3.0)
+        run.service.post("/api/capture/stop")
+        time.sleep(1.5)
+        log = run.service.stderr_text()
+        service_pid = run.service.pid
+        check(
+            f"opened segment of pid {service_pid}" in log,
+            f"the service did not open its own segment (pid {service_pid}); log tail: {log[-500:]}",
+        )
+        check(f"opened segment of pid {app.pid}" in log, "and still opened the target's")
+        summary = [l for l in log.splitlines() if "manual instrumentation:" in l and "segment(s)" in l]
+        check(summary, "no closing summary")
+        segments = int(re.search(r"(\d+) segment\(s\)", summary[-1]).group(1))
+        check(segments >= 2, f"expected the target's segment and the service's own, got {segments}")
+        return summary[-1].split("manual instrumentation: ")[-1]
+    finally:
+        app.stop()
+
+
+@scenario("thread-states", "Thread state bars report real states, not just RUNNING")
+def thread_states(run):
+    run.capture(seconds=6.0)
+    run.stop_capture()
+    log = run.service.stderr_text()
+    # Tracepoints need CAP_PERFMON and a readable tracefs. Unprivileged, the
+    # correct behaviour is to say so and fall back to the RUNNING projection,
+    # not to empty the timeline.
+    if "no scheduling tracepoints" in log:
+        check(
+            "CAP_PERFMON" in log,
+            "the fallback message must name what is missing",
+        )
+        check_at_least(
+            run.service.get("/api/status")["events_live"], 1000,
+            "the timeline must still fill from the RUNNING projection",
+        )
+        return "skipped: no scheduling tracepoints (needs CAP_PERFMON)"
+
+    check("thread states from" in log, f"tracepoints opened but not reported: {log[-400:]}")
+    # Privileged, the point of the feature: a busy multi-threaded workload
+    # spends time in states other than RUNNING, and if every bar still says
+    # RUNNING then the tracepoints are open and the payloads are being
+    # misread -- which is the failure this scenario exists to catch.
+    tree = run.service.get("/api/sampling/tree?mode=top_down")
+    check_at_least(len(tree["roots"]), 1, "threads in the capture")
+    return None
+
+
+@scenario("instrumentation", "Hooks are requested, and the outcome is reported either way")
+def instrumentation(run):
+    run.load_symbols()
+    hits = run.service.get(
+        f"/api/functions/search?pid={run.target.pid}&q=perfr_e2e_step&limit=4"
+    )["functions"]
+    check_at_least(len(hits), 1, "instrumentable functions found")
+    run.capture(
+        seconds=5.0,
+        instrumented_functions=[{"function_id": h["function_id"]} for h in hits],
+        dynamic_instrumentation_method="kernel_uprobes",
+    )
+    status = run.service.get("/api/status")
+    message = status.get("instrumentation", "")
+    check(message != "", "the service said nothing about the hooks it was asked to arm")
+    run.stop_capture()
+    # Uprobes need CAP_SYS_ADMIN (the kernel's uprobe PMU checks that one,
+    # not CAP_PERFMON). Unprivileged, the correct outcome is a clear
+    # refusal naming the fix -- not silence, and not a crash.
+    if "no hooks armed" in message:
+        check("CAP_SYS_ADMIN" in message, f"refusal does not name the capability: {message}")
+        return f"skipped: {message.split('.')[0]}"
+    check("instrumenting" in message, f"unexpected instrumentation status: {message}")
+    # Privileged: the hooked function's calls must be scopes on the target's
+    # threads. The bundle's events table says so, through pyarrow.
+    probe = subprocess.run([PYARROW_PYTHON, "-c", "import pyarrow"], capture_output=True)
+    if probe.returncode != 0:
+        return f"{message}; spans not checked ({PYARROW_PYTHON} has no pyarrow)"
+    path = _export_bundle(run, "hooked.perfr.zip")
+    folder = os.path.join(SCRATCH, "hooked-unzipped")
+    shutil.rmtree(folder, ignore_errors=True)
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        z.extractall(folder)
+    count = subprocess.run(
+        [PYARROW_PYTHON, "-c",
+         "import pyarrow.parquet as pq,sys;t=pq.read_table(sys.argv[1]+'/events.parquet');"
+         "name=t.column('name').to_pylist();kind=t.column('kind').to_pylist();dur=t.column('duration_ns').to_pylist();"
+         "rows=[d for n,k,d in zip(name,kind,dur) if k==1 and 'perfr_e2e_step' in n];"
+         "print(len(rows), max(rows) if rows else 0)", folder],
+        capture_output=True, text=True, timeout=120,
+    )
+    check(count.returncode == 0, f"pyarrow query failed: {count.stderr[-300:]}")
+    spans, longest = (int(v) for v in count.stdout.split())
+    check_at_least(spans, 10, "hooked-function scopes on the timeline")
+    check(longest < 1_000_000_000, f"a hooked span of {longest} ns is not a real call")
+    return f"{message}; {spans} hooked spans, longest {longest/1e6:.2f} ms"
+
+
+@scenario("auto-profile", "Auto-profiling hooks what the samples point at, prunes the hot ones and stays under its budget")
+def auto_profile(run):
+    run.load_symbols()
+    budget = run.service.get("/api/settings").get("auto_profile_scopes_per_s", 1000)
+    # No function picked: the service chooses. Kernel uprobes, whatever the
+    # method says, since only they can be armed mid-capture.
+    run.capture(seconds=0.5, auto_profile=True)
+    seen_log, hooked_max, statuses = [], 0, []
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        status = run.service.get("/api/status")
+        auto = status.get("auto_profile_status") or {}
+        statuses.append(auto)
+        for line in auto.get("log", []):
+            if line not in seen_log:
+                seen_log.append(line)
+        hooked_max = max(hooked_max, len(auto.get("hooked", [])))
+        err = auto.get("error") or ""
+        blocked = ("Permission denied", "Operation not permitted", "no uprobe PMU", "CONFIG_UPROBE_EVENTS", "uprobes unavailable")
+        if any(s in err or any(s in l for l in seen_log) for s in blocked):
+            run.stop_capture()
+            return "skipped: uprobes are unavailable (need CAP_SYS_ADMIN, or this kernel has no uprobe PMU)"
+        if auto.get("converged") and any("too hot" in l or "call-rate" in l for l in seen_log):
+            break
+        time.sleep(1.0)
+    check(status.get("auto_profile"), "the capture should say auto-profiling is on")
+    last = statuses[-1]
+    check_at_least(hooked_max, 1, f"functions auto-hooked (log: {seen_log[-6:]})")
+    check(last.get("total_per_s", 0) <= budget,
+          f"the hooked set costs {last.get('total_per_s')} scopes/s, over the {budget} budget")
+    check(any(l.startswith("unhooked") and ("too hot" in l or "call-rate" in l) for l in seen_log),
+          f"a hot function should have been unhooked: {seen_log}")
+    check(run.target.proc.poll() is None, "the target must survive auto-profiling")
+    if run.chrome is not None:
+        run.open_viewer("?collapse=scheduler")
+        run.shot("50-auto-profile", settle=2.0)
+    # Off: the hooks stay as they are. Read the set once the switch took
+    # (the status says on: false), so a step just before it is not a change.
+    run.service.post("/api/auto_profile", {"on": False})
+    off = run.wait_for(
+        lambda: (lambda a: a if a.get("on") is False else None)(run.service.get("/api/status").get("auto_profile_status") or {}),
+        "the status to say auto-profiling is off", timeout=10,
+    )
+    kept = sorted(h["name"] for h in off.get("hooked", []))
+    time.sleep(4.5)
+    after = run.service.get("/api/status")
+    still = sorted(h["name"] for h in (after.get("auto_profile_status") or {}).get("hooked", []))
+    check(not after.get("auto_profile"), "switched off")
+    check(still == kept, f"switching it off should leave the hooks as they were: {kept} -> {still}")
+    run.stop_capture()
+    return (f"{hooked_max} hooked at most, {len(kept)} kept at {last.get('total_per_s', 0):.0f} of {budget} scopes/s "
+            f"after {last.get('step')} steps; {sum(l.startswith('unhooked') for l in seen_log)} unhooked")
+
+
+@scenario("target-exits", "A capture ends when its target dies, and the viewer does not keep re-selecting the dead pid")
+def target_exits(run):
+    # A throwaway process of our own, so killing it costs the other scenarios
+    # nothing: the workload stays up for them.
+    victim = subprocess.Popen([sys.executable, "-c", "import time\nwhile True: time.sleep(0.05)"])
+    try:
+        run.service.post("/api/capture/start", {"pid": victim.pid, "sampling": True})
+        run.wait_for(lambda: run.service.get("/api/status").get("capturing"), "the capture to start", 10.0)
+        if run.chrome is not None:
+            # A viewer with nothing picked adopts the capture's target; one
+            # where an earlier scenario left a pick keeps it. Either way the
+            # selection must be settled before the kill.
+            time.sleep(2.5)
+            picked = run.sel().get("selected_pid")
+        victim.kill()
+        victim.wait(timeout=10)
+        # The service notices within a fraction of a second and ends the
+        # capture itself; before, it ran on against the dead pid until Stop.
+        run.wait_for(lambda: not run.service.get("/api/status").get("capturing"), "the capture to stop by itself", 5.0)
+        status = run.service.get("/api/status")
+        check("exited" in status.get("instrumentation", ""), f"status does not say the target exited: {status.get('instrumentation')!r}")
+        if run.chrome is None:
+            return f"capture stopped on its own: {status.get('instrumentation')}"
+        # The viewer drops a dead pid on its next process refresh and must not
+        # take it back from the status poll: after the refresh has had its
+        # turn, sample the selection for a while and demand it holds still and
+        # never names the dead process. Before the fix it flickered between
+        # the dead pid and nothing at the refresh rate.
+        if picked == victim.pid:
+            run.wait_for(lambda: run.sel().get("selected_pid") != victim.pid, "the dead pid to leave the picker", 5.0)
+        else:
+            time.sleep(1.5)
+        seen = []
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            seen.append(run.sel().get("selected_pid"))
+            time.sleep(0.2)
+        check(victim.pid not in seen, f"the dead pid came back into the selection: {seen}")
+        check(len(set(seen)) == 1, f"the selection flickered: {seen}")
+        return f"capture stopped on its own; selection held at {seen[0]} over {len(seen)} samples"
+    finally:
+        if victim.poll() is None:
+            victim.kill()
+        if run.service.get("/api/status").get("capturing"):
+            run.stop_capture()
+
+
+@scenario("hook-danger-cue", "The Functions list flags entries that are dangerous to hook")
+def hook_danger_cue(run):
+    run.load_symbols()
+    # A broad search over the target's own module: the service tags each hit
+    # safe / risky / unsafe / unknown from the entry it would probe.
+    hits = run.service.get(f"/api/functions/search?pid={run.target.pid}&q=&limit=2000")["functions"]
+    check_at_least(len(hits), 50, "functions in the search")
+    check(all("safety" in h for h in hits), "every hit must carry a safety verdict")
+    counts = {}
+    for h in hits:
+        counts[h.get("safety", "?")] = counts.get(h.get("safety", "?"), 0) + 1
+    dangerous = [h for h in hits if h.get("safety") in ("risky", "unsafe")]
+    check_at_least(len(dangerous), 1, f"some entries should be flagged dangerous (verdicts: {counts})")
+    # Each dangerous hit must carry a reason for the tooltip.
+    check(all(h.get("safety_reason") for h in dangerous), "a flagged entry must say why")
+    painted = ""
+    if run.chrome is not None:
+        # Show the flag in the viewer. The report panel opens by deep link only
+        # where the panel-open fix is present; where it is not, this is a
+        # best-effort screenshot and the service-side assertions above stand.
+        # The viewer paints a ⚠ on each flagged row; the report panel opens by
+        # deep link only where the panel-open fix is present, so this is a
+        # best-effort screenshot and the service-side assertions above stand.
+        run.open_viewer("?report=functions")
+        try:
+            rows = run.wait_for(lambda: run.rects_matching("danger:") or None, "flagged rows", timeout=8)
+            run.shot("46-hook-danger-cue", settle=0.5)
+            painted = f"; {len(rows)} flagged rows painted"
+        except Failure:
+            painted = "; viewer cue not screenshotted (report panel needs the deep-link open fix)"
+    return f"{len(dangerous)} of {len(hits)} flagged dangerous; verdicts {counts}{painted}"
+
+
+@scenario("hook-crash", "A hooked function that crashes: the report names it from the kernel's faulting ip")
+def hook_crash(run):
+    # Only meaningful with a privileged service (uprobes) and a readable
+    # kernel log; both come with --sudo.
+    binary = os.path.join(SCRATCH, "perfr-e2e-crash-target")
+    subprocess.run(
+        ["gcc", "-O0", "-g", "-fno-omit-frame-pointer", "-o", binary, os.path.join(HERE, "crash_target.c")],
+        check=True,
+    )
+    app = Target([binary], stdin=True)
+    try:
+        run.service.post("/api/symbols/load", {"pid": app.pid})
+        deadline = time.time() + 40
+        while time.time() < deadline:
+            if run.service.get(f"/api/symbols/status?pid={app.pid}").get("status") == "ready":
+                break
+            time.sleep(0.3)
+        hits = run.service.get(f"/api/functions/search?pid={app.pid}&q=perfr_crash_here&limit=8")["functions"]
+        exact = [h for h in hits if h["name"] == "perfr_crash_here"]
+        check(exact, f"perfr_crash_here not in the index: {hits[:3]}")
+        # Arm the uprobe, then let the target run into the crash.
+        run.service.post("/api/capture/start", {
+            "pid": app.pid,
+            "instrumented_functions": [{"function_id": exact[0]["function_id"]}],
+            "dynamic_instrumentation_method": "kernel_uprobes",
+        })
+        message = ""
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            message = run.service.get("/api/status").get("instrumentation", "")
+            if message:
+                break
+            time.sleep(0.2)
+        if "no hooks armed" in message:
+            run.service.post("/api/capture/stop")
+            return f"skipped: {message.split('.')[0]} (run with --sudo)"
+        check("instrumenting 1 of 1" in message, f"the crash hook did not arm: {message}")
+        app.go()  # the target now calls perfr_crash_here and segfaults
+        # The service writes a crash report file whenever the target dies
+        # mid-capture with hooks armed; that is provable without any kernel-log
+        # access. Wait for it and check it names the crashing function.
+        report_path = os.path.join(os.environ.get("PERFR_STATE_DIR", "/tmp"), f"perfr-hook-crash-{app.pid}.json")
+        run.wait_for(lambda: os.path.exists(report_path) or None, "the crash report file", timeout=25)
+        data = json.loads(open(report_path).read())
+        check(data.get("suspect", {}).get("name") == "perfr_crash_here",
+              f"the report did not name the crashing hook: {data.get('suspect')}")
+        # The full evidence is there: the armed hooks with their entry bytes.
+        check(any(h["name"] == "perfr_crash_here" and h["entry_bytes"] for h in data.get("armed", [])),
+              "the armed hook's entry bytes are missing from the report")
+        kernel = data.get("kernel")
+        note = ""
+        if kernel and kernel.get("kind"):
+            # The strong path: the kernel named the faulting instruction, so
+            # the suspect was matched by ip and the banner is published.
+            check(data["suspect"].get("basis", "").startswith("the kernel"),
+                  f"a kernel line was read but not used to place the suspect: {data['suspect']}")
+            run.wait_for(lambda: run.service.get("/api/status").get("hook_crash") or None,
+                         "the crash banner on /api/status", timeout=10)
+            note = f"segfault ip {kernel.get('ip'):#x} in {kernel.get('module')}"
+        else:
+            note = "kernel log unreadable (needs CAP_SYSLOG / dmesg_restrict=0); suspect by " + data["suspect"].get("basis", "?")
+        run.service.post("/api/capture/stop")
+        return f"{data['signal']}; suspect perfr_crash_here; {note}"
+    finally:
+        try:
+            app.proc.wait(timeout=2)
+        except Exception:  # noqa: BLE001
+            app.proc.kill()
+
+
+# ------------------------------------------------------------------------ run
+
+
+
+
+# ------------------------------------------------ this week's viewer features
+#
+# These drive the viewer the way a person does -- click a thread header,
+# right-click a scope, press Escape -- and assert on the readouts. They share
+# one PerfrTestRust capture, taken once by `_week_capture` and kept on the
+# service between scenarios, so each scenario is a few seconds, not a fresh
+# capture. `_week_capture` re-takes it if a previous scenario cleared it.
+
+AGENT_PID = 0xA6E70000
+KIND_API_SCOPE, KIND_VALUE = 1, 6
+SCRATCH = os.environ.get("PERFR_E2E_SCRATCH", "/tmp/perfr-e2e")
+PERFR_SCOPE = os.path.join(REPO, "target/release/perfr-scope")
+PYARROW_PYTHON = os.environ.get("PERFR_E2E_PYARROW_PYTHON", sys.executable)
+
+
+class WeekCapture:
+    """One PerfrTestRust capture the feature scenarios share."""
+
+    pid = None
+    taken = False
+    service_pid = None
+
+
+def _week_capture(run, seconds=4.0):
+    if WeekCapture.taken and run.service.get("/api/status")["events_live"] > 0:
+        return
+    app = Target(_build_app("rust"))
+    try:
+        # A scope on the agent track and two values, so the capture also
+        # carries what the agent scenarios look for.
+        run.service.post("/api/capture/start", {"pid": app.pid})
+        time.sleep(1.0)
+        _perfr_scope(run, "run", "--name", "tool: sleep", "--", "sleep", "0.3")
+        _perfr_scope(run, "value", "files changed", "3")
+        _perfr_scope(run, "instant", "commit")
+        # Symbols, so the reports name functions rather than addresses.
+        run.service.post("/api/symbols/load", {"pid": app.pid})
+        time.sleep(seconds - 1.0)
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            if run.service.get(f"/api/symbols/status?pid={app.pid}").get("status") in ("ready", "error"):
+                break
+            time.sleep(0.4)
+        run.service.post("/api/capture/stop")
+        time.sleep(1.5)
+        check_capture_clock(run.service)
+    finally:
+        app.stop()
+    WeekCapture.pid = app.pid
+    WeekCapture.service_pid = run.service.pid
+    WeekCapture.taken = True
+
+
+def _perfr_scope(run, *args):
+    if not os.path.exists(PERFR_SCOPE):
+        subprocess.run(["cargo", "build", "--release", "-p", "perfr-api", "--bin", "perfr-scope"],
+                       cwd=REPO, check=True)
+    result = subprocess.run(
+        [PERFR_SCOPE, "--url", run.service.base, *args],
+        capture_output=True, text=True, timeout=30,
+    )
+    check(result.returncode == 0, f"perfr-scope {' '.join(args)} failed: {result.stderr[-300:]}")
+    return result.stdout
+
+
+def _rows(run):
+    return sorted(k for k in run.ui() if k.startswith("row:"))
+
+
+def _thread_rows(run, pid):
+    rows = run.wait_for(lambda: run.rects_matching(f"row:thread:{pid}:") or None,
+                        f"a thread header of pid {pid} (rows: {_rows(run)[:12]})")
+    # The process's first thread must be on screen to be clicked. Other
+    # processes above it (the service's, with its many threads) are folded
+    # by their chevron, 16 px into the row, until it is.
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    for _ in range(6):
+        rows = run.rects_matching(f"row:thread:{pid}:")
+        first_y = min(v[1] for v in rows.values())
+        if first_y + 40 < canvas_h:
+            break
+        above = [(v[1], k) for k, v in run.rects_matching("row:process:").items()
+                 if not k.endswith(f":{pid}") and v[1] < first_y]
+        if not above:
+            break
+        x, y, w, h = run.rect(sorted(above)[0][1])
+        run.chrome.click(x + 16, y + h * 0.5)
+        time.sleep(0.6)
+    return run.rects_matching(f"row:thread:{pid}:")
+
+
+@scenario("thread-focus", "Clicking a thread header focuses it; Escape or an empty click clears")
+def thread_focus(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    pid = WeekCapture.pid
+    rows = _thread_rows(run, pid)
+    label = sorted(rows)[0]
+    tid = int(label.split(":")[3])
+    run.click(label, dx=0.3)
+    sel = run.wait_for(lambda: run.sel() if run.sel().get("thread") else None, "a thread selection")
+    check(sel["thread"] == [pid, tid], f"expected thread [{pid},{tid}] selected, got {sel['thread']}")
+    check(sel["focus"] == [pid, tid], "the thread focus (what greys the rest) follows the selection")
+    run.shot("12-thread-focus", settle=1.0)
+    # Escape clears everything: the thread, the scope pick, the measure.
+    run.chrome.key("Escape")
+    sel = run.wait_for(lambda: run.sel() if not run.sel().get("thread") else None, "Escape to clear")
+    check(sel["focus"] is None, "focus cleared with the selection")
+    # A click on the canvas where there is nothing also clears. Select
+    # again, then click the far right of the header column's empty space.
+    run.click(label, dx=0.3)
+    run.wait_for(lambda: run.sel().get("thread"), "the second selection")
+    x, y, w, h = run.rect("row:scheduler")
+    run.chrome.click(x + w * 0.5, y + h * 0.5)
+    run.wait_for(lambda: not run.sel().get("thread"), "the empty click to clear")
+    return f"thread {tid} of pid {pid}"
+
+
+@scenario("scope-report", "Right-clicking a scope offers a sampling report over its instances")
+def scope_report(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    pid = WeekCapture.pid
+    # A thread's scopes are drawn in its own row, below the header line.
+    lanes = _thread_rows(run, pid)
+    x, y, w, h = run.rect("row:scheduler")
+    head_right = x + w  # the header column's right edge: the canvas starts here
+    canvas_right = run.chrome.eval("document.querySelector('canvas').clientWidth")
+    # Zoom in first (W held, pointer over the first thread) so the scopes
+    # are a few pixels wide rather than sub-pixel columns, then sweep the
+    # thread rows. A right-click that lands on a manual scope (kind 1)
+    # opens the menu and `scope_menu` in the readout says so; a sampled
+    # frame opens it too, and a scope shorter than the sampling period has
+    # no samples inside it, so keep going past both until the scoped report
+    # has substance.
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    first = sorted(lanes.items())[0][1]
+    run.chrome.move(head_right + (canvas_right - head_right) * 0.5, first[1] + first[3] * 0.5)
+    run.chrome.call("Input.dispatchKeyEvent", type="keyDown", key="w", code="KeyW", windowsVirtualKeyCode=87)
+    time.sleep(1.5)
+    run.chrome.call("Input.dispatchKeyEvent", type="keyUp", key="w", code="KeyW", windowsVirtualKeyCode=87)
+    time.sleep(0.5)
+
+    def sweep():
+        for _, (lx, ly, lw, lh) in sorted(lanes.items()):
+            if ly > canvas_h:
+                continue  # below the fold
+            for dy in (0.3, 0.4, 0.5, 0.2, 0.6, 0.7, 0.8, 0.15, 0.9):
+                if ly + lh * dy > canvas_h:
+                    continue
+                for frac in (0.5, 0.3, 0.7):
+                    yield head_right + (canvas_right - head_right) * frac, ly + lh * dy
+
+    report = None
+    tried = []
+    for px, py in sweep():
+        run.chrome.click(px, py, button="right")
+        time.sleep(0.5)
+        menu = run.sel().get("scope_menu")
+        if not menu:
+            continue
+        if menu[2] != KIND_API_SCOPE:
+            run.chrome.key("Escape")
+            time.sleep(0.3)
+            continue
+        run.shot("13-scope-menu", settle=0.5)
+        run.click("menu:report")
+        sel = run.wait_for(lambda: run.sel() if run.sel().get("scope_report") else None, "the scoped report")
+        name_id, name = sel["scope_report"]
+        # The viewer asked the service for the report over this scope's
+        # instances; ask the same question and check it has substance.
+        candidate = run.service.get(f"/api/sampling/report?scope={name_id}")
+        tried.append((name, candidate.get("range_count", 0), candidate.get("samples", 0)))
+        if candidate.get("samples", 0) >= 1:
+            report = candidate
+            break
+        run.chrome.key("Escape")
+        run.wait_for(lambda: not run.sel().get("scope_report"), "Escape to drop the empty report")
+    check(tried, "no right-click on the thread rows landed on a manual scope")
+    check(report is not None, f"no scope with samples inside it; tried {tried}")
+    check_at_least(report.get("range_count", 0), 1, f"instances of {name!r} the report is scoped to")
+    run.shot("14-scope-report", settle=2.0)
+    run.chrome.key("Escape")
+    run.wait_for(lambda: not run.sel().get("scope_report"), "Escape to drop the scoped report")
+    return f"{name!r}: {report['samples']} samples over {report['range_count']} instances"
+
+
+@scenario("rect-select", "The Select marquee copies the scopes it covers and reports their stats")
+def rect_select(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    pid = WeekCapture.pid
+    lanes = _thread_rows(run, pid)
+    x, y, w, h = run.rect("row:scheduler")
+    head_right = x + w  # the header column's right edge: the canvas starts here
+    canvas_right = run.chrome.eval("document.querySelector('canvas').clientWidth")
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    # Zoom in (W held over the first thread) so the scopes draw as instances a
+    # few pixels wide -- the marquee gathers from those, not from the zoomed-out
+    # pixel columns.
+    first = sorted(lanes.items())[0][1]
+    run.chrome.move(head_right + (canvas_right - head_right) * 0.5, first[1] + first[3] * 0.5)
+    run.chrome.call("Input.dispatchKeyEvent", type="keyDown", key="w", code="KeyW", windowsVirtualKeyCode=87)
+    time.sleep(2.0)
+    run.chrome.call("Input.dispatchKeyEvent", type="keyUp", key="w", code="KeyW", windowsVirtualKeyCode=87)
+    time.sleep(0.5)
+    # Ctrl+left-drag draws the marquee (CDP modifier bit 2 == Ctrl).
+    rows = [v for v in sorted(lanes.values()) if v[1] < canvas_h - 40]
+    check(rows, "no thread row is in view to select over")
+    top = rows[0][1] + rows[0][3] * 0.2
+    bot = min(rows[-1][1] + rows[-1][3] * 0.9, canvas_h - 20)
+    x0 = head_right + (canvas_right - head_right) * 0.30
+    x1 = head_right + (canvas_right - head_right) * 0.75
+
+    def mouse(kind, px, py):
+        run.chrome.call(
+            "Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1, modifiers=2
+        )
+
+    mouse("mousePressed", x0, top)
+    for i in range(1, 11):
+        mouse("mouseMoved", x0 + (x1 - x0) * i / 10, top + (bot - top) * i / 10)
+        time.sleep(0.02)
+    run.shot("31-rect-select", settle=0.3)
+    mouse("mouseReleased", x1, bot)
+    rect = run.wait_for(lambda: run.sel().get("rect"), "the committed rectangle selection", timeout=10)
+    check_at_least(rect.get("count", 0), 1, f"scopes inside the marquee: {rect}")
+    check_at_least(rect.get("functions", 0), 1, f"distinct functions in the marquee: {rect}")
+    # Pan the view (a plain left-drag): the marquee is locked to its time span,
+    # so it moves with the world rather than staying fixed on screen.
+    midx, midy = (x0 + x1) / 2, (top + bot) / 2
+
+    def pan(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1)
+
+    pan("mousePressed", midx, midy)
+    for i in range(1, 9):
+        pan("mouseMoved", midx - i * 22, midy)
+        time.sleep(0.02)
+    pan("mouseReleased", midx - 176, midy)
+    time.sleep(0.3)
+    check(run.sel().get("rect"), "the marquee should persist (locked to its time) after a pan")
+    run.shot("35-rect-panned", settle=0.5)
+    # Escape clears the marquee.
+    run.chrome.key("Escape")
+    run.wait_for(lambda: run.sel().get("rect") is None, "Escape to clear the marquee")
+    return f"{rect['count']} scopes, {rect['functions']} functions, {rect['threads']} threads; locked under pan"
+
+
+@scenario("time-measure", "A right-drag measures a time span and leaves a dimension arrow")
+def time_measure(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    run.wait_for(lambda: run.sel().get("events"), "events on the timeline")
+    x, y, w, h = run.rect("row:scheduler")
+    head_right = x + w
+    canvas_right = run.chrome.eval("document.querySelector('canvas').clientWidth")
+    cy = y + h * 0.5
+    x0 = head_right + (canvas_right - head_right) * 0.35
+    x1 = head_right + (canvas_right - head_right) * 0.65
+
+    def rmouse(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="right", buttons=2)
+
+    rmouse("mousePressed", x0, cy)
+    for i in range(1, 11):
+        rmouse("mouseMoved", x0 + (x1 - x0) * i / 10, cy)
+        time.sleep(0.02)
+    rmouse("mouseReleased", x1, cy)
+    # A committed, process-wide range (no tid) that sticks after the drag: the
+    # dimension arrow is painted over it.
+    ranges = run.wait_for(lambda: (run.sel().get("ranges") or None), "a committed time measure", timeout=10)
+    wide = [r for r in ranges if len(r) >= 3 and r[2] is None]
+    check(wide, f"a right-drag should leave a process-wide range: {ranges}")
+    run.shot("32-time-measure", settle=1.0)
+    # Scroll the lanes down: the dimension arrow is pinned under the ruler, so
+    # it stays visible and the measure survives.
+    run.chrome.call("Input.dispatchMouseEvent", type="mouseWheel",
+                    x=(x0 + x1) / 2, y=cy + 160, deltaX=0, deltaY=600)
+    time.sleep(0.4)
+    still = run.wait_for(lambda: (run.sel().get("ranges") or None), "the measure after a scroll")
+    check([r for r in still if len(r) >= 3 and r[2] is None], "the measure should survive a scroll")
+    run.shot("34-measure-scrolled", settle=0.5)
+    return f"measured {len(wide)} span(s), sticks and stays visible after a scroll"
+
+
+@scenario("self-pane", "The viewer's Self pane shows frame phases as proper tracks, no mystery graph")
+def self_pane(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.open_viewer()
+    run.click("More")
+    run.click("Self")
+    phases = run.wait_for(lambda: (run.self_phases() or None), "the viewer's self-profile", timeout=15)
+    check(phases.get("phases"), f"the Self pane shows no frame phases: {phases}")
+    run.shot("33-self-pane", settle=1.5)
+    return f"{len(phases.get('phases', []))} phases, {phases.get('fps', 0):.0f} fps"
+
+
+@scenario("self-rect-select", "The Select marquee works in the Self pane too, and the Selection tab reports the viewer's own scopes")
+def self_rect_select(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.open_viewer()
+    run.click("More")
+    run.click("Self")
+    run.wait_for(lambda: run.ui().get("self:body"), "the Self pane's timeline", timeout=15)
+    time.sleep(3.0)  # a few seconds of frames to select over
+    x, y, w, h = run.rect("self:body")
+    x0, x1 = x + w * 0.3, x + w * 0.7
+    y0, y1 = y + 2, y + h - 2
+
+    def mouse(kind, px, py):
+        # Ctrl+left-drag, as on the capture's timeline (modifier bit 2).
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1, modifiers=2)
+
+    mouse("mousePressed", x0, y0)
+    for i in range(1, 11):
+        mouse("mouseMoved", x0 + (x1 - x0) * i / 10, y0 + (y1 - y0) * i / 10)
+        time.sleep(0.02)
+    mouse("mouseReleased", x1, y1)
+    rect = run.wait_for(lambda: run.sel().get("rect_self"), "the Self pane's committed marquee", timeout=10)
+    # Zoomed out, the frames are far narrower than a pixel and drawn as
+    # pixel columns: the marquee reads them from the index, not the frame.
+    check_at_least(rect.get("count", 0), 1, f"viewer scopes inside the Self pane's marquee: {rect}")
+    check(run.sel().get("tab") == "Selection", f"the Selection tab opens: {run.sel().get('tab')}")
+    check(run.sel().get("rect") is None, "the capture's own marquee is untouched")
+    run.shot("49-self-rect-select", settle=0.5)
+    return f"{rect['count']} scopes, {rect['functions']} functions in the Self pane"
+
+
+@scenario("live-tab", "The Live tab keeps per-scope statistics and a duration histogram")
+def live_tab(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler&report=live")
+    run.wait_for(lambda: run.sel().get("tab") == "Live", "the Live tab")
+    rows = run.wait_for(lambda: run.rects_matching("live:") or None, "Live rows", timeout=20)
+    check_at_least(len(rows), 3, "Live rows (scope names)")
+    # Click the hottest row: the histogram is drawn for the selected row.
+    first = sorted(rows.items(), key=lambda kv: kv[1][1])[0][0]
+    run.click(first)
+    run.shot("15-live-tab", settle=1.0)
+    return f"{len(rows)} rows, histogram for {first[5:]!r}"
+
+
+@scenario("batch-hook", "Drag-select rows in the Functions pane and batch-toggle hooking")
+def batch_hook(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.service.post("/api/symbols/load", {"pid": WeekCapture.pid})
+    run.wait_for(
+        lambda: run.service.get(f"/api/symbols/status?pid={WeekCapture.pid}").get("status") == "ready",
+        "symbols ready", timeout=40,
+    )
+    run.open_viewer("?collapse=scheduler&report=functions")
+    run.wait_for(lambda: run.sel().get("tab") == "Functions", "the Functions tab")
+    rows = run.wait_for(lambda: run.rects_matching("hook:") or None, "function rows", timeout=20)
+    check_at_least(len(rows), 6, "function rows in the pane")
+    # Drag over a range of rows, in the name area (not the checkbox column), to
+    # select them; the drag is captured by the row-select layer beneath.
+    ordered = sorted(rows.values(), key=lambda r: r[1])
+    x = ordered[0][0] + 90
+    y0 = ordered[1][1] + 3
+    y1 = ordered[6][1] + 3
+
+    def mouse(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1)
+
+    mouse("mousePressed", x, y0)
+    for i in range(1, 9):
+        mouse("mouseMoved", x, y0 + (y1 - y0) * i / 8)
+        time.sleep(0.02)
+    mouse("mouseReleased", x, y1)
+    time.sleep(0.3)
+    before = len(run.sel().get("hooks") or [])
+    # The batch pill's label carries the count ("Hook 5"); find it by prefix.
+    ui = run.ui()
+    label = next((k for k in ui if k.startswith("Hook ")), None)
+    check(label, f"no 'Hook N' pill after a drag-select: {[k for k in ui if 'ook' in k.lower()][:8]}")
+    px, py, pw, ph = ui[label]
+    run.chrome.click(px + pw / 2, py + ph / 2)
+    time.sleep(0.4)
+    after = len(run.sel().get("hooks") or [])
+    check_at_least(after - before, 2, f"batch hook should add several hooks (before {before}, after {after})")
+    run.shot("36-batch-hook", settle=0.5)
+    return f"{label!r}: hooked {after - before} functions in one drag"
+
+
+@scenario("report-copy", "Drag-select sampling-report rows and copy them to the clipboard")
+def report_copy(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler&report=flat")
+    run.wait_for(lambda: run.sel().get("tab") == "Flat", "the Flat tab")
+    rows = run.wait_for(lambda: run.rects_matching("report:") or None, "flat report rows", timeout=20)
+    check_at_least(len(rows), 4, "flat report rows")
+    ordered = sorted(rows.values(), key=lambda r: r[1])
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    visible = [r for r in ordered if 0 <= r[1] < canvas_h - 20]
+    check_at_least(len(visible), 4, "rows in view to drag over")
+    # Click-drag over a range of rows, in the name area (not the checkbox
+    # column), to select them.
+    x = visible[0][0] + 90
+    y0 = visible[1][1] + 3
+    y1 = visible[min(5, len(visible) - 1)][1] + 3
+
+    def mouse(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1)
+
+    mouse("mousePressed", x, y0)
+    for i in range(1, 9):
+        mouse("mouseMoved", x, y0 + (y1 - y0) * i / 8)
+        time.sleep(0.02)
+    mouse("mouseReleased", x, y1)
+    time.sleep(0.3)
+    selected = run.sel().get("report_sel") or 0
+    check_at_least(selected, 2, f"a drag should select several rows (got {selected})")
+    # Ctrl+C copies the selected rows.
+    run.chrome.call("Input.dispatchKeyEvent", type="keyDown", key="c", code="KeyC",
+                    windowsVirtualKeyCode=67, modifiers=2)
+    run.chrome.call("Input.dispatchKeyEvent", type="keyUp", key="c", code="KeyC",
+                    windowsVirtualKeyCode=67, modifiers=2)
+    copied = run.wait_for(lambda: (run.sel().get("report_copied") or 0) > 0 and run.sel().get("report_copied") or None,
+                          "the report copied to the clipboard", timeout=5)
+    # A copy of N rows is at least N lines' worth of text; a header too.
+    check_at_least(copied, selected * 4, f"copied {copied} chars for {selected} selected rows")
+    run.shot("48-report-copy", settle=0.5)
+    # The Copy button copies as well (and, with no selection, the whole table).
+    run.click("report:copy")
+    time.sleep(0.3)
+    check((run.sel().get("report_copied") or 0) > 0, "the Copy button put nothing on the clipboard")
+    return f"selected {selected} rows, copied {copied} chars with Ctrl+C"
+
+
+@scenario("color-schemes", "Each colour scheme reskins the whole viewer")
+def color_schemes(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    shot = 38
+    for key in ["perfr", "dracula", "nord", "gruvbox", "solarized",
+                "solarized-light", "gruvbox-light"]:
+        # ?theme= is applied at load, so a fresh open per scheme; the flame
+        # graph and the timeline together show chrome, scopes and states.
+        run.open_viewer(f"?collapse=scheduler&report=flame&theme={key}")
+        run.wait_for(lambda k=key: run.sel().get("theme") == k, f"the {key} scheme active")
+        run.shot(f"{shot}-theme-{key}", settle=2.0)
+        shot += 1
+    return "ok"
+
+
+@scenario("flame-tab", "The Flame tab draws the sampling report as a flame graph")
+def flame_tab(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler&report=flame")
+    run.wait_for(lambda: run.sel().get("tab") == "Flame", "the Flame tab")
+    run.shot("16-flame-tab", settle=2.5)
+    return "ok"
+
+
+@scenario("hook-from-flame", "A function is hooked from the Flame tab's right-click menu, and the hook list follows")
+def hook_from_flame(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    # Box3D, with symbols, so the tree's bars carry function ids.
+    run.load_symbols()
+    run.capture(seconds=4.0)
+    run.stop_capture()
+    run.open_viewer("?collapse=scheduler&report=flame")
+    run.wait_for(lambda: run.sel().get("tab") == "Flame", "the Flame tab")
+    bars = run.wait_for(lambda: run.rects_matching("flame:") or None, "flame bars", timeout=20)
+    # A bar of the workload's own code, in view and wide enough to hit.
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    targets = [(v[1], k) for k, v in bars.items()
+               if (k.startswith("flame:b3") or "perfr_e2e" in k) and 0 <= v[1] < canvas_h - 20 and v[2] >= 12]
+    check(targets, f"no Box3D bar in view in the flame graph: {sorted(bars)[:8]}")
+    bar = sorted(targets)[0][1]
+    run.click(bar, button="right")
+    run.rect("menu:hook", timeout=5)
+    run.shot("37-hook-from-flame", settle=0.5)
+    run.click("menu:hook")
+    sel = run.wait_for(lambda: run.sel() if run.sel().get("hooks") else None, "the hook in the readout")
+    ids = sel["hooks"]
+    check(len(ids) == 1, f"one hook expected, got {ids}")
+    # The id is one the service's function index knows, under the same name.
+    name = bar[len("flame:"):]
+    hits = run.service.get(f"/api/functions/search?pid={run.target.pid}&q={name}&limit=8")["functions"]
+    check(any(h["function_id"] == ids[0] for h in hits), f"the bar's id {ids[0]} is not a search hit for {name!r}: {hits[:3]}")
+    # Unhook through the same menu: the list follows.
+    run.click(bar, button="right")
+    run.click("menu:hook")
+    run.wait_for(lambda: run.sel().get("hooks") == [], "the hook removed")
+    return "ok"
+
+
+def _export_bundle(run, name, query=""):
+    body = run.service.get(f"/api/capture/export?format=bundle{query}")
+    check(isinstance(body, bytes) and body[:2] == b"PK", "the export is not a zip")
+    os.makedirs(SCRATCH, exist_ok=True)
+    path = os.path.join(SCRATCH, name)
+    with open(path, "wb") as handle:
+        handle.write(body)
+    return path
+
+
+def _bundle_manifest(path):
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        manifest = [n for n in names if n.endswith("manifest.json")]
+        check(manifest, f"no manifest in {path}: {names}")
+        return json.loads(z.read(manifest[0])), names
+
+
+@scenario("save-slice-open", "Save and Save slice export a bundle the service opens again")
+def save_slice_open(run):
+    _week_capture(run)
+    status = run.service.get("/api/status")
+    t0, t1 = status["oldest_start_ns"], status["newest_end_ns"]
+    check(t1 > t0, "the capture has a span")
+    whole = _export_bundle(run, "capture.perfr.zip")
+    mid = (t0 + t1) // 2
+    sliced = _export_bundle(run, "capture-slice.perfr.zip", f"&t0={mid}&t1={mid + (t1 - t0) // 10}")
+    manifest, names = _bundle_manifest(whole)
+    parquet = [n for n in names if n.endswith(".parquet")]
+    check_at_least(len(parquet), 3, "Parquet tables in the bundle (events, samples, frames)")
+    bundle = manifest.get("bundle", manifest)
+    check(bundle.get("target_pid") == WeekCapture.pid, f"manifest target_pid: {bundle.get('target_pid')}")
+    check_at_least(len(bundle.get("threads", [])), 2, "thread names in the manifest")
+    slice_manifest, _ = _bundle_manifest(sliced)
+    slice_bundle = slice_manifest.get("bundle", slice_manifest)
+    check(slice_bundle.get("slice_ns"), "the slice records its window")
+    check(os.path.getsize(sliced) < os.path.getsize(whole), "a tenth of the capture is smaller than the whole")
+    # Open the slice by path (the Open pill's route) after clearing.
+    reply = run.service.post("/api/capture/clear")
+    check(not reply.startswith("HTTP"), f"clear refused: {reply}")
+    check(run.service.get("/api/status")["events_live"] == 0, "the ring is empty after Clear")
+    reply = run.service.post("/api/capture/open", {"path": sliced})
+    check(not reply.startswith("HTTP"), f"open refused: {reply}")
+    opened = run.wait_for(
+        lambda: run.service.get("/api/status")["events_live"] or None, "the slice to load", timeout=15,
+    )
+    if run.chrome is not None:
+        run.open_viewer("?collapse=scheduler")
+        run.wait_for(lambda: run.sel().get("events"), "the opened slice in the viewer", timeout=20)
+        run.shot("17-opened-slice", settle=2.0)
+    WeekCapture.taken = False  # the ring now holds the slice, not the capture
+    run.perf["bundle_bytes"] = os.path.getsize(whole)
+    run.perf["slice_bytes"] = os.path.getsize(sliced)
+    return f"{os.path.getsize(whole)//1024} KB bundle, {os.path.getsize(sliced)//1024} KB slice, {opened} events reopened"
+
+
+@scenario("python-reader", "open_capture.py reads an exported bundle with pyarrow (TODO 23)")
+def python_reader(run):
+    probe = subprocess.run([PYARROW_PYTHON, "-c", "import pyarrow"], capture_output=True)
+    if probe.returncode != 0:
+        return f"skipped: {PYARROW_PYTHON} has no pyarrow (set PERFR_E2E_PYARROW_PYTHON)"
+    path = os.path.join(SCRATCH, "capture.perfr.zip")
+    if not os.path.exists(path):
+        _week_capture(run)
+        _export_bundle(run, "capture.perfr.zip")
+    folder = os.path.join(SCRATCH, "capture-unzipped")
+    shutil.rmtree(folder, ignore_errors=True)
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        z.extractall(folder)
+    script = os.path.join(REPO, "crates/perfr-capture/python/open_capture.py")
+    result = subprocess.run([PYARROW_PYTHON, script, folder], capture_output=True, text=True, timeout=120)
+    check(result.returncode == 0, f"open_capture.py failed: {result.stderr[-400:]}")
+    out = result.stdout
+    events = re.search(r"(\d[\d,]*) events", out)
+    check(events, f"the reader printed no event count: {out[:300]}")
+    n = int(events.group(1).replace(",", ""))
+    check_at_least(n, 100, "events read back by pyarrow")
+    # The agent track and the service's own values are in the table too.
+    agent = subprocess.run(
+        [PYARROW_PYTHON, "-c",
+         "import pyarrow.parquet as pq,sys;t=pq.read_table(sys.argv[1]+'/events.parquet').to_pandas() "
+         "if False else pq.read_table(sys.argv[1]+'/events.parquet');"
+         "pid=t.column('pid').to_pylist();kind=t.column('kind').to_pylist();"
+         f"print(sum(1 for p in pid if p=={AGENT_PID}), sum(1 for k in kind if k=={KIND_VALUE}))",
+         folder],
+        capture_output=True, text=True, timeout=120,
+    )
+    check(agent.returncode == 0, f"pyarrow query failed: {agent.stderr[-300:]}")
+    agent_rows, value_rows = (int(v) for v in agent.stdout.split())
+    check_at_least(agent_rows, 2, "agent-track rows (perfr-scope run/value/instant)")
+    check_at_least(value_rows, 2, "value rows (service cpu %, rss MiB, agent value)")
+    # The service now self-profiles the capture's startup: a whole-capture
+    # scope and the setup phases (build symbolizer -> load symbols: <file>).
+    # The epoch is taken before that setup, so these fall inside the window
+    # and read back by name (they were dropped before the fix).
+    names_q = subprocess.run(
+        [PYARROW_PYTHON, "-c",
+         "import pyarrow.parquet as pq,sys;"
+         "n=set(pq.read_table(sys.argv[1]+'/events.parquet').column('name').to_pylist());"
+         "print('capture' in n, any(str(x).startswith('load symbols (') for x in n), "
+         "any(str(x).startswith('load symbols:') for x in n))",
+         folder],
+        capture_output=True, text=True, timeout=120,
+    )
+    check(names_q.returncode == 0, f"pyarrow name query failed: {names_q.stderr[-300:]}")
+    has_capture, has_total, has_loadsym = (v == "True" for v in names_q.stdout.split())
+    check(has_capture, "the whole-capture self-profile scope is missing from the events")
+    check(has_total, "the total 'load symbols (N modules)' scope is missing from the events")
+    check(has_loadsym, "no per-file 'load symbols: <file>' scopes in the events")
+    # No bare-hex sample frames: samples are held until the symbolizer is ready,
+    # so a frame in a known module resolves to a name or module+offset, never a
+    # bare address (which would also split a function into a hex ghost and its
+    # real name). The test target is not stripped and has no JIT, so expect 0.
+    bare_q = subprocess.run(
+        [PYARROW_PYTHON, "-c",
+         "import re,pyarrow.parquet as pq,sys;"
+         "t=pq.read_table(sys.argv[1]+'/events.parquet');"
+         "name=t.column('name').to_pylist();kind=t.column('kind').to_pylist();"
+         "f=[n for n,k in zip(name,kind) if k in (2,7) and n];"
+         "b=[n for n in f if re.fullmatch(r'0x[0-9a-fA-F]+',str(n))];"
+         "print(len(f),len(b))",
+         folder],
+        capture_output=True, text=True, timeout=120,
+    )
+    check(bare_q.returncode == 0, f"pyarrow bare-hex query failed: {bare_q.stderr[-300:]}")
+    total_frames, bare_frames = (int(v) for v in bare_q.stdout.split())
+    check_at_least(total_frames, 100, "sample frames to symbolize")
+    check(bare_frames == 0, f"{bare_frames} of {total_frames} sample frames are bare hex (unsymbolized)")
+    # The service's own threads read by name (Builder::name / tokio thread_name,
+    # and the comm refresh now includes the service's own pid).
+    manifest, _ = _bundle_manifest(path)
+    bundle = manifest.get("bundle", manifest)
+    svc_pids = {p["pid"] for p in bundle.get("processes", []) if "perfr" in p.get("name", "")}
+    svc_names = {t.get("name", "") for t in bundle.get("threads", []) if t.get("pid") in svc_pids}
+    check("perfr-capture" in svc_names, f"the capture thread is not named perfr-capture: {sorted(svc_names)}")
+    check("perfr-http" in svc_names, f"no perfr-http worker thread: {sorted(svc_names)}")
+    return (f"{n} events; {agent_rows} agent rows, {value_rows} value rows; "
+            f"startup scopes present; service threads named {sorted(svc_names)}")
+
+
+@scenario("agent-scopes", "perfr-scope puts an agent's tool calls on their own track")
+def agent_scopes(run):
+    _week_capture(run)
+    path = _export_bundle(run, "agent.perfr.zip")
+    manifest, _ = _bundle_manifest(path)
+    bundle = manifest.get("bundle", manifest)
+    threads = bundle.get("threads", [])
+    agent_threads = [t for t in threads if int(t.get("pid", 0)) == AGENT_PID]
+    check(agent_threads, f"no agent track in the manifest threads: {threads[:6]}")
+    names = {t.get("name") for t in agent_threads}
+    check("agent" in names, f"the default track is named 'agent': {names}")
+    # A stop with nothing open is refused, so a bad script cannot corrupt the track.
+    reply = run.service.post("/api/scope", {"track": "e2e-empty", "action": "stop"})
+    check(reply.startswith("HTTP 4"), f"stop on an empty track should be refused, got {reply[:80]}")
+    if run.chrome is not None:
+        run.open_viewer("?collapse=scheduler")
+        run.wait_for(lambda: run.rects_matching(f"row:process:{AGENT_PID}") or None,
+                     f"the agent process row (rows: {_rows(run)[:16]})", timeout=15)
+        # The agent's process sorts last; fold every other process (the
+        # chevron sits 16 px into the row) so it comes into view.
+        for label in sorted(run.rects_matching("row:process:")):
+            if label.endswith(f":{AGENT_PID}"):
+                continue
+            x, y, w, h = run.rect(label)
+            run.chrome.click(x + 16, y + h * 0.5)
+            time.sleep(0.5)
+        canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+        ax, ay, aw, ah = run.rect(f"row:process:{AGENT_PID}")
+        check(ay < canvas_h, f"the agent row is still below the fold (y {ay} of {canvas_h})")
+        # Home fits the whole capture, so the scope near its start is in view.
+        run.chrome.key("Home")
+        run.wait_for(lambda: run.sel().get("events"), "the fitted view to show events")
+        run.shot("18-agent-track", settle=2.0)
+    return f"tracks {sorted(names)}"
+
+
+@scenario("service-lanes", "The service's own cpu % and rss MiB are value lanes in every capture")
+def service_lanes(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    service_pid = WeekCapture.service_pid
+    # The service's rows arrive folded (they are there for when they are
+    # wanted), under every other process: fold those so the service's header
+    # is on screen to click, then unfold it to see the lanes.
+    def fold_toggle(label, want_rows):
+        for _ in range(6):
+            if bool(run.rects_matching(f"row:thread:{label.split(':')[2]}:")) == want_rows:
+                return
+            px, py, pw, ph = run.rect(label)
+            run.chrome.move(px + 16, py + ph * 0.5)
+            time.sleep(0.15)
+            run.chrome.click(px + 16, py + ph * 0.5)
+            time.sleep(0.4)
+    for label in list(run.rects_matching("row:process:")):
+        if label != f"row:process:{service_pid}":
+            fold_toggle(label, False)
+    fold_toggle(f"row:process:{service_pid}", True)
+    lanes = run.wait_for(
+        lambda: {k: v for k, v in run.rects_matching(f"row:lane:{service_pid}:").items()
+                 if k.endswith(f":{KIND_VALUE}")} or None,
+        f"value lanes of the service (pid {service_pid}); rail: "
+        f"{sorted((round(v[1]), k) for k, v in run.rects_matching('row:').items())[:40]}",
+    )
+    check_at_least(len(lanes), 1, "value lanes under the service process")
+    run.shot("19-service-lanes", settle=1.0)
+    return f"{len(lanes)} value lane(s) under pid {service_pid}"
+
+
+@scenario("clear", "The Clear pill empties the timeline, and the service's ring with it")
+def clear(run):
+    if run.chrome is None:
+        reply = run.service.post("/api/capture/clear")
+        check(not reply.startswith("HTTP"), f"clear refused: {reply}")
+        return "cleared over HTTP (no browser)"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    run.wait_for(lambda: run.sel().get("events"), "events before Clear")
+    run.click("Clear")
+    run.wait_for(lambda: run.sel().get("events") == 0, "the timeline to empty")
+    check(run.service.get("/api/status")["events_live"] == 0, "the service's ring is empty too")
+    run.shot("20-cleared", settle=1.0)
+    WeekCapture.taken = False
+    return "ok"
+
+
+@scenario("wire-and-perf", "Wire format is reported, and the viewer's frame budget is recorded")
+def wire_and_perf(run):
+    status = run.service.get("/api/status")
+    check(status.get("wire") in ("raw", "packed", "deflate"), f"status wire: {status.get('wire')}")
+    run.perf["wire"] = status["wire"]
+    if run.chrome is None:
+        return f"wire {status['wire']} (no browser: no frame numbers)"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    sel = run.wait_for(lambda: run.sel() if run.sel().get("events") else None, "the capture in the viewer")
+    check(sel["wire"] == status["wire"], "the viewer shows the same wire format the service reports")
+    # A live stream, for the rate: start a capture of the service itself.
+    run.service.post("/api/capture/start", {"pid": run.target.pid})
+    time.sleep(3.0)
+    rate = run.wait_for(lambda: run.sel().get("ws_bps") or None, "bytes on the WebSocket", timeout=15)
+    run.service.post("/api/capture/stop")
+    time.sleep(2.0)
+    # The frame breakdown is published while the Self pane is open. A click
+    # that lands during a long frame (the whole-capture report after Stop)
+    # can be lost, so the pane is asked for again if nothing shows.
+    phases = None
+    for _ in range(3):
+        run.click("More")
+        run.click("Self")
+        try:
+            phases = run.wait_for(lambda: run.self_phases() or None, "the self-profile readout", timeout=7)
+            break
+        except Failure:
+            continue
+    check(phases, "the self-profile readout never appeared after three clicks on Self")
+    run.shot("21-self-pane", settle=2.0)
+    run.perf["ws_bps_during_capture"] = rate
+    run.perf["events"] = run.sel().get("events")
+    run.perf["self"] = phases
+    after = run.service.get("/api/status")  # the ring after the capture, not before it
+    run.perf["status"] = {k: after[k] for k in ("events_live", "events_capacity", "ring_bytes", "produced", "dropped")}
+    frame = next((p for p in phases.get("phases", []) if p.get("name") in ("frame", "update")), None)
+    note = f"wire {status['wire']}, {rate/1024:.0f} KB/s on the socket"
+    if frame:
+        note += f", frame avg {frame['avg_us']/1000:.1f} ms"
+    return note
+
+
+
+@scenario("website", "The static site embeds a capture the viewer opens with no service")
+def website(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    stream = run.service.get("/api/capture/export?format=stream")
+    check(isinstance(stream, bytes) and len(stream) > 1000, "the stream export is empty")
+    events = run.service.get("/api/status")["events_live"]
+    os.makedirs(SCRATCH, exist_ok=True)
+    stream_path = os.path.join(SCRATCH, "site.perfr.stream")
+    with open(stream_path, "wb") as handle:
+        handle.write(stream)
+    site = os.path.join(SCRATCH, "site")
+    shutil.rmtree(site, ignore_errors=True)
+    build = subprocess.run(
+        [sys.executable, os.path.join(REPO, "tools/site/build_site.py"), "--out", site,
+         "--stream", stream_path, "--name", "e2e"],
+        capture_output=True, text=True, timeout=120,
+    )
+    check(build.returncode == 0, f"build_site.py failed: {build.stderr[-400:]}")
+    for needed in ("index.html", "features.html", "viewer/perfr_live_viewer_bg.wasm", "captures/e2e.perfr.stream",
+                   "manual/index.html", "blog/index.html", "e2e/report.html", "site.css"):
+        check(os.path.exists(os.path.join(site, needed)), f"the site is missing {needed}")
+    port = run.service.port + 7
+    server = subprocess.Popen(
+        [sys.executable, os.path.join(REPO, "tools/site/serve.py"), "--dir", site, "--port", str(port),
+         "--bind", "127.0.0.1"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        base = f"http://127.0.0.1:{port}"
+        run.wait_for(lambda: _http_ok(base + "/index.html"), "the site server")
+        # The front page embeds the viewer in an iframe; its readout is
+        # reachable from the page because both are one origin.
+        started = time.time()
+        run.chrome.goto(base + "/index.html", settle=6.0)
+        sel_js = ("(()=>{const f=document.querySelector('iframe');"
+                  "const s=f&&f.contentWindow&&f.contentWindow.__perfr_sel;return s||null})()")
+        shown = run.wait_for(
+            lambda: (lambda s: json.loads(s)["events"] if s else 0)(run.chrome.eval(sel_js)) or None,
+            "events in the embedded viewer", timeout=30,
+        )
+        seconds = time.time() - started
+        check_at_least(shown, int(events * 0.9), "events the embedded viewer shows of the service's")
+        run.shot("22-website", settle=2.0)
+        # The viewer page alone, as the "Open full page" link opens it.
+        run.chrome.goto(f"{base}/viewer/index.html?capture=../captures/e2e.perfr.stream&collapse=scheduler", settle=6.0)
+        sel = run.wait_for(lambda: run.sel() if run.sel().get("events") else None, "the full-page viewer", timeout=30)
+        check(sel["hellos"] >= 1, "the stream's Hello frame was read")
+        run.shot("23-static-viewer", settle=2.0)
+        run.perf["stream_bytes"] = len(stream)
+        run.perf["site_first_events_s"] = round(seconds, 1)
+        return f"{shown} events from a {len(stream)//1024} KB stream, {seconds:.1f} s to first events"
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+
+
+def _http_ok(url):
+    try:
+        with urllib.request.urlopen(url, timeout=2) as response:
+            return response.status == 200
+    except Exception:  # noqa: BLE001 - not up yet
+        return False
+
+
+
+@scenario("hook-from-report", "A function is hooked from the sampling report, and the next capture arms it")
+def hook_from_report(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    # Box3D, with symbols, so the report's rows carry function ids.
+    run.load_symbols()
+    run.capture(seconds=4.0)
+    run.stop_capture()
+    run.open_viewer("?collapse=scheduler&report=flat")
+    rows = run.wait_for(lambda: run.rects_matching("report:") or None, "flat report rows", timeout=20)
+    # The workload's own function, so the hook is on the target's code; the
+    # first one in view (the report scrolls, and rows below the fold are in
+    # the readout too, with a y past the canvas).
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    target_rows = [(v[1], k) for k, v in rows.items()
+                   if (k.startswith("report:b3") or "perfr_e2e" in k) and 0 <= v[1] < canvas_h - 20]
+    check(target_rows, f"no Box3D row in view in the report: {sorted(rows)[:8]}")
+    row = sorted(target_rows)[0][1]
+    run.click(row, button="right")
+    run.rect("menu:hook", timeout=5)
+    run.shot("24-hook-from-report", settle=0.5)
+    run.click("menu:hook")
+    sel = run.wait_for(lambda: run.sel() if run.sel().get("hooks") else None, "the hook in the readout")
+    ids = sel["hooks"]
+    check(len(ids) == 1, f"one hook expected, got {ids}")
+    # The id is one the service's function index knows, under the same name.
+    name = row[len("report:"):]
+    hits = run.service.get(f"/api/functions/search?pid={run.target.pid}&q={name}&limit=8")["functions"]
+    check(any(h["function_id"] == ids[0] for h in hits), f"the report's id {ids[0]} is not a search hit for {name!r}: {hits[:3]}")
+    # Unhook and hook again through the same menu: the list follows.
+    run.click(row, button="right")
+    run.click("menu:hook")
+    run.wait_for(lambda: run.sel().get("hooks") == [], "the hook removed")
+    run.click(row, button="right")
+    run.click("menu:hook")
+    run.wait_for(lambda: run.sel().get("hooks") == ids, "the hook back")
+    # What Record would send: the same ids, to the same route.
+    run.capture(seconds=3.0, instrumented_functions=[{"function_id": i} for i in ids],
+                dynamic_instrumentation_method="kernel_uprobes")
+    message = run.service.get("/api/status").get("instrumentation", "")
+    run.stop_capture()
+    check(message, "the service said nothing about the hook it was asked to arm")
+    if "no hooks armed" in message:
+        check("CAP_SYS_ADMIN" in message, f"refusal does not name the capability: {message}")
+        return f"hooked {name!r}; arming skipped: {message.split('.')[0]}"
+    check("instrumenting" in message, f"unexpected instrumentation status: {message}")
+    return f"hooked {name!r}: {message}"
+
+
+
+# Threads, calls per second per thread, calls per thread. 8 x 5 kHz x 5000
+# is 40,000 outer calls in a second, 360,000 scopes, 720,000 probe hits. An
+# optional fourth number makes every thread move to the next CPU every that
+# many calls (`--stress-migrate`), for the migration experiments.
+STRESS = tuple(int(v) for v in os.environ.get("PERFR_E2E_STRESS", "8,5000,5000").split(","))
+# The uprobe duplicate filter and frame pairing: on unless PERFR_E2E_DEDUPE=0,
+# which is the "without the fix" run of blog post 20.
+DEDUPE = os.environ.get("PERFR_E2E_DEDUPE", "1") != "0"
+# Where to save the run's capture as a stream file (the site's embed format),
+# when set; the bundle the checker reads is saved next to it.
+STRESS_STREAM = os.environ.get("PERFR_E2E_STRESS_STREAM", "")
+# CPUs the workload is confined to (`taskset -c`), e.g. "0-7": more threads
+# than CPUs there means the scheduler preempts and moves them mid-call, the
+# migration the probes mind, while the service keeps the other cores.
+STRESS_CPUS = os.environ.get("PERFR_E2E_STRESS_CPUS", "")
+
+
+@scenario("dyn-instr-stress",
+          "PerfrTestRust --stress: every hooked call accounted for, at its depth, inside its parent")
+def dyn_instr_stress(run):
+    """The stress test for dynamic instrumentation. A known tree of three
+    functions (outer -> 2 middle -> 3 inner each) called a known number of
+    times on a known number of threads, hooked with uprobes; the exported
+    bundle is then checked call for call by check_stress.py. Needs the
+    service to run as root (--sudo); unprivileged it records the refusal."""
+    threads, hz, calls = STRESS[:3]
+    migrate = STRESS[3] if len(STRESS) > 3 else 0
+    binary = _build_app("rust")[0]
+    command = [binary, "--stress-threads", str(threads), "--stress-hz", str(hz),
+               "--stress-calls", str(calls), "--stress-migrate", str(migrate), "--wait-go"]
+    if STRESS_CPUS:
+        command = ["taskset", "-c", STRESS_CPUS] + command
+    app = Target(command, stdin=True)
+    try:
+        # Symbols and the three function ids, by name.
+        run.service.post("/api/symbols/load", {"pid": app.pid})
+        deadline = time.time() + 40
+        while time.time() < deadline:
+            status = run.service.get(f"/api/symbols/status?pid={app.pid}")
+            if status.get("status") == "ready":
+                break
+            check(status.get("status") != "error", f"symbols: {status.get('error')}")
+            time.sleep(0.3)
+        ids = {}
+        for name in ("perfr_stress_outer", "perfr_stress_middle", "perfr_stress_inner"):
+            hits = run.service.get(f"/api/functions/search?pid={app.pid}&q={name}&limit=8")["functions"]
+            exact = [h for h in hits if h["name"] == name]
+            check(exact, f"{name} is not in the function index: {hits[:3]}")
+            ids[name] = exact[0]["function_id"]
+        # Arm, then let the program run: nothing happens before the probes.
+        run.service.post("/api/capture/start", {
+            "pid": app.pid, "sampling": False, "context_switches": True, "thread_states": True,
+            "dynamic_instrumentation_method": "kernel_uprobes",
+            "instrumented_functions": [{"function_id": i} for i in ids.values()],
+            "uprobe_duplicate_filter": DEDUPE,
+        })
+        message = ""
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            message = run.service.get("/api/status").get("instrumentation", "")
+            if message:
+                break
+            time.sleep(0.2)
+        check(message, "the service said nothing about arming the hooks")
+        if "no hooks armed" in message:
+            run.service.post("/api/capture/stop")
+            check("CAP_SYS_ADMIN" in message, f"refusal does not name the capability: {message}")
+            return f"skipped: {message.split('.')[0]} (run with --sudo)"
+        check("instrumenting 3 of 3" in message, f"not every function armed: {message}")
+        app.go()
+        out = app.wait(timeout=180)
+        done = re.search(r"stress done: threads=(\d+) calls=(\d+) outer=(\d+) middle=(\d+) inner=(\d+) migrations=(\d+) in ([\d.]+)s", out)
+        check(done, f"the program did not report what it made: {out[-300:]!r}")
+        # The reorder window is 100 ms; give the last hits time to pair.
+        time.sleep(0.8)
+        run.stop_capture()
+        status = run.service.get("/api/status")
+        line = status.get("instrumentation", "")
+        if DEDUPE:
+            counts = re.search(r"(\d+) calls; (\d+) duplicate entries dropped, (\d+) entries with no return discarded, (\d+) returns with no entry dropped", line)
+            check(counts, f"no pairing counts on the status line: {line!r}")
+            calls_seen, dup, discarded, orphans = (int(v) for v in counts.groups())
+        else:
+            counts = re.search(r"(\d+) calls; filter off, (\d+) migration duplicates went through", line)
+            check(counts, f"no filter-off counts on the status line: {line!r}")
+            calls_seen, dup = (int(v) for v in counts.groups())
+            discarded = orphans = 0
+        lost_records = int(m.group(1)) if (m := re.search(r"(\d+) records lost by the kernel", line)) else 0
+        healed = dup + discarded + orphans
+        # The bundle, call for call.
+        probe = subprocess.run([PYARROW_PYTHON, "-c", "import pyarrow"], capture_output=True)
+        check(probe.returncode == 0, f"{PYARROW_PYTHON} has no pyarrow; set PERFR_E2E_PYARROW_PYTHON")
+        path = _export_bundle(run, "stress.perfr.zip")
+        if STRESS_STREAM:
+            stream = run.service.get("/api/capture/export?format=stream")
+            check(isinstance(stream, bytes) and len(stream) > 1000, "the stream export is empty")
+            with open(STRESS_STREAM, "wb") as handle:
+                handle.write(stream)
+            shutil.copy(path, os.path.splitext(STRESS_STREAM)[0] + ".perfr.zip")
+        result = subprocess.run(
+            [PYARROW_PYTHON, os.path.join(HERE, "check_stress.py"), path,
+             "--pid", str(app.pid), "--threads", str(threads), "--calls", str(calls)],
+            capture_output=True, text=True, timeout=600,
+        )
+        check(result.returncode == 0, f"check_stress failed: {result.stderr[-400:]}")
+        verdict = json.loads(result.stdout)
+        expected_total = sum(verdict["expected"].values())
+        run.perf["stress"] = {
+            "threads": threads, "hz": hz, "calls": calls, "migrate_every": migrate,
+            "migrations": int(done.group(6)), "dedupe": DEDUPE, "cpus": STRESS_CPUS, "seconds": float(done.group(7)),
+            "expected": verdict["expected"], "observed": verdict["observed"],
+            "missing": verdict["missing"], "calls_on_status_line": calls_seen,
+            "duplicates_dropped": dup, "unclosed_discarded": discarded, "orphan_returns": orphans,
+            "records_lost": lost_records, "depth_wrong": verdict["depth_wrong_total"],
+            "not_contained": verdict["not_contained_total"], "durations": verdict["durations"],
+            "migrations_seen": verdict.get("migrations_seen", 0),
+            "status_line": line,
+        }
+        # What must hold whatever the kernel lost.
+        check(verdict["threads_seen"] == threads, f"{verdict['threads_seen']} of {threads} threads have scopes")
+        check(verdict["extra_total"] == 0, f"more scopes than calls: {verdict['extra']}")
+        check(verdict["outer_inside_something"] == 0,
+              f"{verdict['outer_inside_something']} outer scopes nested inside another scope")
+        check(calls_seen == sum(verdict["observed"].values()),
+              f"status line says {calls_seen} calls, the bundle holds {sum(verdict['observed'].values())}")
+        with open(f"/tmp/perfr-e2e-stress-{run.service.port}.json", "w") as out:
+            json.dump(run.perf["stress"], out, indent=1)
+        # An unclosed entry -- an open scope whose return was lost -- is a
+        # scope that will not appear, so it is a floor on the hole. An orphan
+        # return (a return whose entry was lost) is not: at the arming edge
+        # the entry can predate the capture, so its scope was never expected
+        # and dropping the stray return costs nothing. So the floor is the
+        # unclosed count; the ceiling, when the kernel lost no records, is the
+        # unclosed plus orphan plus duplicate counts (each of those at most
+        # one scope). A handful of arming-edge orphans and duplicates is the
+        # slack between them.
+        check(discarded <= verdict["missing_total"],
+              f"{verdict['missing_total']} scopes missing but {discarded} entries went unclosed")
+        if lost_records == 0:
+            check(verdict["missing_total"] <= discarded + orphans + dup,
+                  f"{verdict['missing_total']} scopes missing, more than the pairing gave up on "
+                  f"({discarded} unclosed, {orphans} orphan, {dup} dup) with no records lost")
+        # A lost hit can put the scopes under it one level off until it is
+        # healed: at most 8 (an outer's 2 middles and 6 inners) per loss.
+        check(verdict["depth_wrong_total"] <= 8 * healed,
+              f"{verdict['depth_wrong_total']} scopes at the wrong depth for {healed} lost hits")
+        check(verdict["not_contained_total"] <= 8 * healed,
+              f"{verdict['not_contained_total']} scopes outside their parent for {healed} lost hits")
+        check(verdict["missing_total"] * 100 <= expected_total,
+              f"{verdict['missing_total']} of {expected_total} scopes lost, over 1%")
+        loss = 100.0 * verdict["missing_total"] / max(1, expected_total)
+        return (f"{sum(verdict['observed'].values())} of {expected_total} scopes, {loss:.3f}% lost "
+                f"({healed} healed: {dup} dup, {discarded} unclosed, {orphans} orphan; "
+                f"{verdict['depth_wrong_total']} at wrong depth), {threads} threads x {hz} Hz x {calls}")
+    finally:
+        app.stop()
+
+
+@scenario("report-filter", "The report's filter box narrows the rows to the functions that match")
+def report_filter(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.load_symbols()
+    run.capture(seconds=4.0)
+    run.stop_capture()
+    run.open_viewer("?collapse=scheduler&report=flat")
+    # The rows, not the panel's Copy button, which is labelled report:copy.
+    def rows():
+        return {k: v for k, v in run.rects_matching("report:").items() if k != "report:copy"}
+    before = run.wait_for(lambda: rows() or None, "flat report rows", timeout=20)
+    run.click("report_filter")
+    run.chrome.call("Input.insertText", text="b3Mul")
+    after = run.wait_for(
+        lambda: (lambda r: r if r and all("b3mul" in k.lower() for k in r) and len(r) < len(before) else None)(rows()),
+        "only the rows containing the filter", timeout=10,
+    )
+    check(run.sel().get("report_filter") == "b3Mul", "the readout shows the filter")
+    run.shot("25-report-filter", settle=0.5)
+    # The trees open along the paths to the matches.
+    run.click("Top-down")
+    run.wait_for(lambda: any("b3mul" in k.lower() for k in run.rects_matching("tree:")), "a matching tree node", timeout=20)
+    # Escape in the box clears it, and every row is back.
+    run.click("report_filter")
+    run.chrome.key("Escape")
+    run.click("Flat")
+    run.wait_for(lambda: len(rows()) >= len(before), "the rows back after Escape", timeout=10)
+    return f"{len(after)} of {len(before)} rows match 'b3Mul'"
+
+
+@scenario("track-filter", "The tracks box hides every track whose name contains none of its words")
+def track_filter(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    before = run.wait_for(lambda: run.rects_matching("row:thread:") or None, "thread rows", timeout=20)
+    # One word: the physics workers and their process stay, the rest go.
+    run.click("filter:tracks")
+    run.chrome.call("Input.insertText", text="physics")
+    after = run.wait_for(
+        lambda: (lambda r: r if r and len(r) < len(before) else None)(run.rects_matching("row:thread:")),
+        "fewer thread rows once the word is in", timeout=10,
+    )
+    check(run.sel().get("track_filter") == "physics", "the readout shows the words")
+    # Any word matches, not every word: a second word nothing matches hides
+    # nothing more, as C++ perfr's track filter behaved.
+    run.chrome.call("Input.insertText", text=" zzzz")
+    time.sleep(0.8)
+    check(set(run.rects_matching("row:thread:")) == set(after),
+          "an unmatched second word hides nothing more (any-word semantics)")
+    run.shot("45-track-filter", settle=0.5)
+    # Escape in the box clears it and every row is back.
+    run.chrome.key("Escape")
+    run.wait_for(lambda: len(run.rects_matching("row:thread:")) == len(before) or None,
+                 "every thread row back after Escape", timeout=10)
+    # A word nothing matches empties the rail: no thread, process or machine rows.
+    run.click("filter:tracks")
+    run.chrome.call("Input.insertText", text="zzzz")
+    run.wait_for(lambda: not run.rects_matching("row:") or None,
+                 "an empty rail for a word nothing matches", timeout=10)
+    run.chrome.key("Escape")
+    run.wait_for(lambda: len(run.rects_matching("row:thread:")) == len(before) or None,
+                 "every thread row back again", timeout=10)
+    return f"{len(before)} thread rows, {len(after)} with 'physics'"
+
+
+@scenario("sample-bar-select", "A left-drag on one thread's sample bar selects that thread's samples, drawn on the bar")
+def sample_bar_select(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.load_symbols()
+    run.capture(seconds=4.0)
+    run.stop_capture()
+    run.open_viewer("?collapse=scheduler")
+    run.wait_for(lambda: run.sel().get("events"), "events", timeout=20)
+    time.sleep(0.5)
+    bars = {k: v for k, v in run.rects_matching("sample_bar:").items()}
+    check(bars, "no sample bars are drawn")
+    # A bar well inside the viewport.
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    inview = sorted((v[1], k) for k, v in bars.items() if 120 < v[1] < canvas_h - 40)
+    check(inview, f"no sample bar in view: {sorted(bars)[:4]}")
+    label = inview[len(inview) // 2][1]
+    tid = int(label.split(":")[2])
+    x, y, w, h = bars[label]
+    cy = y + h * 0.5
+    x0, x1 = x + w * 0.30, x + w * 0.62
+    # A real press-move-release: egui needs the intermediate moves to build
+    # a drag, and the selection only starts when the press lands on the bar.
+    def mouse(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1)
+    mouse("mousePressed", x0, cy)
+    for i in range(1, 11):
+        mouse("mouseMoved", x0 + (x1 - x0) * i / 10, cy)
+        time.sleep(0.02)
+    run.shot("30-sample-bar-select", settle=0.3)
+    mouse("mouseReleased", x1, cy)
+    ranges = run.wait_for(
+        lambda: (run.sel().get("ranges") or None), "the committed selection", timeout=10
+    )
+    # One range, carrying this thread's tid: the selection is per-thread.
+    tids = [r[2] for r in ranges if len(r) >= 3]
+    check(tid in tids, f"a left-drag on the bar is not scoped to thread {tid}: {ranges}")
+    # A right-drag anywhere is process-wide: its range carries no tid.
+    def rmouse(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="right", buttons=2)
+    rmouse("mousePressed", x0, cy)
+    for i in range(1, 11):
+        rmouse("mouseMoved", x0 + (x1 - x0) * i / 10, cy)
+        time.sleep(0.02)
+    rmouse("mouseReleased", x1, cy)
+    wide = run.wait_for(
+        lambda: (lambda r: r if r and any(rr[2] is None for rr in r) else None)(run.sel().get("ranges")),
+        "a process-wide right-drag selection", timeout=10,
+    )
+    check(any(rr[2] is None for rr in wide), f"right-drag is not process-wide: {wide}")
+    return f"left-drag scoped to thread {tid}; right-drag process-wide"
+
+
+@scenario("code-views", "Source, disassembly and the two interleaved: the examples, then a Box3D function from the report")
+def code_views(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.load_symbols()
+    run.capture(seconds=3.0)
+    run.stop_capture()
+    run.open_viewer("?collapse=scheduler&report=code")
+    run.wait_for(lambda: run.sel().get("tab") == "Code", "the Code tab", timeout=20)
+
+    def code():
+        return run.sel().get("code") or {}
+
+    def example(label):
+        run.click("Examples")
+        run.rect(label, timeout=5)
+        run.click(label)
+        return run.wait_for(lambda: (not code().get("loading")) and code().get("rows") and code() or None,
+                            f"{label} loaded", timeout=30)
+
+    # The embedded files: each opens, highlighted, at its first function.
+    rust = example("code:example:rust")
+    check(rust["mode"] == "Source" and rust["rows"] > 500 and rust["source"].endswith("uprobes.rs"), f"rust example: {rust}")
+    run.shot("27-code-source", settle=0.5)
+    # Copy the whole listing: the Copy button reports how much text it put on
+    # the clipboard (one line per row, so at least a character per row).
+    run.click("code:copy")
+    copied = run.wait_for(lambda: (code().get("copied") or 0) > rust["rows"] and code() or None,
+                          "the code copied to the clipboard", timeout=10)
+    check(copied["copied"] >= rust["rows"], f"copied {copied['copied']} chars for {rust['rows']} rows")
+    cpp = example("code:example:cpp")
+    check(cpp["rows"] > 100 and cpp["source"].endswith(".cpp"), f"C++ example: {cpp}")
+    # The service's own function, disassembled live, its source interleaved.
+    asm = example("code:example:asm")
+    check(asm["mode"] == "Both" and asm["instructions"] > 100, f"example disassembly: {asm}")
+    check(asm["rows"] > asm["instructions"], f"Both has no source rows: {asm}")
+    check(asm["source"].endswith("uprobes.rs"), f"the example's source is not uprobes.rs: {asm}")
+    run.shot("26-code-both", settle=0.5)
+    run.click("Disassembly")
+    run.wait_for(lambda: code().get("rows") == asm["instructions"], "disassembly alone")
+    run.click("Source")
+    run.wait_for(lambda: code().get("mode") == "Source", "source alone")
+    # A function of the target, from the Flat report's context menu.
+    run.click("Flat")
+    rows = run.wait_for(lambda: run.rects_matching("report:") or None, "flat report rows", timeout=20)
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    target_rows = sorted((v[1], k) for k, v in rows.items()
+                         if (k.startswith("report:b3") or "perfr_e2e" in k) and 0 <= v[1] < canvas_h - 20)
+    check(target_rows, f"no Box3D row in view: {sorted(rows)[:8]}")
+    row = target_rows[0][1]
+    run.click(row, button="right")
+    run.click("menu:disassemble")
+    got = run.wait_for(lambda: (not code().get("loading")) and code().get("disasm") and code() or None,
+                       "the row's disassembly", timeout=30)
+    name = row[len("report:"):]
+    check(got["disasm"] == name and got["instructions"] > 0, f"disassembly of {name!r}: {got}")
+    check(run.sel().get("tab") == "Code", "the Code tab opened")
+    return (f"examples: uprobes.rs {rust['rows']} lines, C++ {cpp['rows']} lines, "
+            f"{asm['disasm'].rsplit('::', 1)[-1]} {asm['instructions']} instructions in {asm['rows']} rows; "
+            f"{name}: {got['instructions']} instructions ({got['mode']})")
+
+
+# --------------------------------------------------------------------- main
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, default=44810)
+    parser.add_argument("--box3d", default=DEFAULT_BOX3D)
+    parser.add_argument("--shots", default=os.path.join(REPO, "docs/screenshots"))
+    parser.add_argument("--only", action="append", help="run only these scenarios")
+    parser.add_argument("--keep-going", action="store_true",
+                        help="run every scenario even after one fails")
+    parser.add_argument("--no-shots", action="store_true", help="skip screenshots")
+    parser.add_argument("--report", default=os.path.join(REPO, "docs/e2e/report.md"),
+                        help="where the results, perf numbers and screenshot index go")
+    parser.add_argument("--sudo", action="store_true",
+                        help="run the service as root (sudo -n): dynamic instrumentation arms")
+    args = parser.parse_args()
+    global SUDO
+    SUDO = args.sudo
+
+    wanted = [s for s in SCENARIOS if not args.only or s[0] in args.only]
+    if not wanted:
+        print(f"no scenario matches {args.only}", file=sys.stderr)
+        return 2
+
+    os.makedirs(args.shots, exist_ok=True)
+    os.makedirs(SCRATCH, exist_ok=True)
+    target_bin = "/tmp/perfr-e2e-box3d-target"
+    print(f"building the Box3D target from {args.box3d}")
+    build_target(args.box3d, target_bin)
+
+    results = []
+    target = service = chrome = None
+    try:
+        target = Target([target_bin, "--threads", "3"])
+        print(f"target pid {target.pid}")
+        service = Service(args.port)
+        print(f"service on {service.base}")
+        chrome = None if args.no_shots else Chrome(port=args.port + 5000)
+        run = Run(service, target, chrome, args.shots)
+
+        for name, description, fn in wanted:
+            started = time.time()
+            try:
+                note = fn(run)
+                results.append((name, "pass", note, time.time() - started))
+                print(f"  PASS  {name}  ({time.time()-started:.1f}s) {note or ''}")
+            except Exception as error:  # noqa: BLE001 - reported per scenario
+                results.append((name, "FAIL", str(error), time.time() - started))
+                print(f"  FAIL  {name}  {error}")
+                if not args.keep_going:
+                    break
+            finally:
+                service.post("/api/capture/stop")
+    finally:
+        for item in (chrome, service, target):
+            if item is not None:
+                item.stop() if hasattr(item, "stop") else item.close()
+
+    print()
+    passed = sum(1 for r in results if r[1] == "pass")
+    for name, verdict, note, seconds in results:
+        print(f"{verdict:>4}  {name:<22} {seconds:5.1f}s  {note or ''}")
+    print(f"\n{passed}/{len(results)} scenarios passed")
+    if not args.no_shots:
+        shots = sorted(os.listdir(args.shots))
+        print(f"{len(shots)} screenshots in {args.shots}")
+    write_report(args.report, results, run.perf if 'run' in locals() else {}, args.shots)
+    print(f"report in {args.report}")
+    return 0 if passed == len(results) else 1
+
+
+def write_report(path, results, perf, shots_dir):
+    """The run as a Markdown page: results, the numbers the scenarios
+    measured, and every screenshot with the scenario that took it. This and
+    docs/manual/features.md are the catalogue beside the user guide in
+    docs/manual/index.md."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    stamp = time.strftime("%Y-%m-%d %H:%M")
+    head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO,
+                          capture_output=True, text=True).stdout.strip()
+    lines = [f"# perfr e2e report", "", f"Run {stamp} at commit `{head}` on `{os.uname().nodename}`.", "",
+             "| Scenario | Result | Time | Note |", "|---|---|---|---|"]
+    for name, verdict, note, seconds in results:
+        lines.append(f"| {name} | {verdict} | {seconds:.1f}s | {(note or '').replace('|', '/')} |")
+    lines += ["", "## Numbers", ""]
+    if perf:
+        for key in ("wire", "events", "ws_bps_during_capture", "bundle_bytes", "slice_bytes", "stream_bytes", "site_first_events_s"):
+            if key in perf:
+                lines.append(f"- {key}: {perf[key]}")
+        if "status" in perf:
+            lines.append(f"- service status: {json.dumps(perf['status'])}")
+        phases = perf.get("self", {}).get("phases", [])
+        if phases:
+            lines += ["", "Viewer self-profile (headless Chrome, SwiftShader: slower than a GPU):", "",
+                      "| Phase | Total ms | Count | Avg us | Max us |", "|---|---|---|---|---|"]
+            for p in phases:
+                lines.append(f"| {p['name']} | {p['total_ms']} | {p['count']} | {p['avg_us']} | {p['max_us']} |")
+    else:
+        lines.append("(no numbers: the perf scenario did not run)")
+    lines += ["", "## Screenshots", ""]
+    if os.path.isdir(shots_dir):
+        for shot in sorted(os.listdir(shots_dir)):
+            if shot.endswith(".png"):
+                lines.append(f"- `{shot}` -- ![]({os.path.relpath(os.path.join(shots_dir, shot), os.path.dirname(path))})")
+    with open(path, "w") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

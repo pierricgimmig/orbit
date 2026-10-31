@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-"""Checks a capture of `OrbitTestRust --stress-*` call for call.
+"""Checks a capture of `PerfrTestRust --stress-*` call for call.
 
-The program's tree is known: each thread makes K `orbit_stress_outer` calls,
-each outer two `orbit_stress_middle`, each middle three `orbit_stress_inner`.
+The program's tree is known: each thread makes K `perfr_stress_outer` calls,
+each outer two `perfr_stress_middle`, each middle three `perfr_stress_inner`.
 Given the exported bundle, this counts what the capture holds, per function
 and per thread, checks every scope's depth against its place in the tree and
 its containment in its parent, and prints one JSON object the e2e scenario
-asserts on. Needs pyarrow; run it with ORBIT_E2E_PYARROW_PYTHON.
+asserts on. Needs pyarrow; run it with PERFR_E2E_PYARROW_PYTHON.
 
     check_stress.py bundle.zip --pid N --threads T --calls K
     check_stress.py --self-test
@@ -22,7 +22,7 @@ import zipfile
 
 SCHEDULING_SLICE = 3
 API_SCOPE = 1
-TREE = [("orbit_stress_outer", 0, 1), ("orbit_stress_middle", 1, 2), ("orbit_stress_inner", 2, 6)]
+TREE = [("perfr_stress_outer", 0, 1), ("perfr_stress_middle", 1, 2), ("perfr_stress_inner", 2, 6)]
 NAMES = {name: (depth, per_outer) for name, depth, per_outer in TREE}
 
 
@@ -53,8 +53,8 @@ def analyse(rows, threads, calls):
             durations[name].append(end - start)
             if depth != expected_depth:
                 depth_wrong[name] += 1
-            parent = {"orbit_stress_outer": None, "orbit_stress_middle": "orbit_stress_outer",
-                      "orbit_stress_inner": "orbit_stress_middle"}[name]
+            parent = {"perfr_stress_outer": None, "perfr_stress_middle": "perfr_stress_outer",
+                      "perfr_stress_inner": "perfr_stress_middle"}[name]
             if parent is not None:
                 if not stack or stack[-1][1] != parent or stack[-1][0] < end:
                     not_contained[name] += 1
@@ -117,7 +117,7 @@ def rows_from_bundle(path, pid):
 def self_test():
     # One thread, two outer calls, the second with a lost inner (missing)
     # and a middle at the wrong depth.
-    o, m, i = "orbit_stress_outer", "orbit_stress_middle", "orbit_stress_inner"
+    o, m, i = "perfr_stress_outer", "perfr_stress_middle", "perfr_stress_inner"
     rows = []
     t = 0
     for call in range(2):

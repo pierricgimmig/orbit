@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2026 The Orbit Authors. All rights reserved.
+Copyright (c) 2026 The perfr Authors. All rights reserved.
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
@@ -13,7 +13,7 @@ One viewer can show the processes of several machines on one timeline. The servi
 On the machine you will watch from, start the service as usual and open its page. On every other machine, start the service pointed at the hub:
 
 ```sh
-orbit-service --join <hub-host>:44766
+perfr --join <hub-host>:44766
 ```
 
 The remote dials the hub, so it works from a container, a CI runner or anything behind a firewall that allows nothing inbound. It still serves its own viewer on its own port.
@@ -21,7 +21,7 @@ The remote dials the hub, so it works from a container, a CI runner or anything 
 The other way round, when the hub can reach the machines, is `--connect`:
 
 ```sh
-orbit-service --connect render-01,build-mac:44766
+perfr --connect render-01,build-mac:44766
 ```
 
 or, with the hub already running, one request per machine:

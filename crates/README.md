@@ -1,6 +1,6 @@
-# Orbit's service-side Rust
+# perfr's service-side Rust
 
-Rust implementations of parts of Orbit's capture backend, ported one module at
+Rust implementations of parts of perfr's capture backend, ported one module at
 a time. As of Phase 2, **`ObjectUtils` runs entirely on Rust**: ELF, PE/COFF
 and PDB are read by the crates here, and LLVM is no longer a dependency of the
 tree at all.
@@ -8,6 +8,9 @@ tree at all.
 - Plan: [`docs/rust-port-plan.html`](../docs/rust-port-plan.html)
 - Log:  [`docs/blog/`](../docs/blog/index.html)
 - Why:  [`docs/rust-service-port.html`](../docs/rust-service-port.html)
+- Run:  `./run.sh` at the repository root builds the service with the Frida
+  helper and agent beside it and serves the viewer; `./run.sh --help` lists
+  the flags.
 
 ## Sampling in the viewer
 
@@ -23,17 +26,17 @@ Two binaries, and only one of them is ever required.
 
 | Binary | Build | Size | Needs on the target | Required? |
 |---|---|---|---|---|
-| `orbit-service` | `./build-service-musl.sh` | ~12 MB | nothing (static, 0 `DT_NEEDED`) | always |
-| `orbit-gpu-helper` | `cargo build --release -p orbit-gpu-helper` | 361 KB | glibc >= 2.34, libgcc_s; NVIDIA driver at runtime | only for NVIDIA GPU telemetry |
+| `perfr` | `tools/build/build-service-musl.sh` | ~12 MB | nothing (static, 0 `DT_NEEDED`) | always |
+| `perfr-gpu-helper` | `cargo build --release -p perfr-gpu-helper` | 361 KB | glibc >= 2.34, libgcc_s; NVIDIA driver at runtime | only for NVIDIA GPU telemetry |
 
-`orbit-service` is statically linked and runs on any x86-64 Linux with no
+`perfr` is statically linked and runs on any x86-64 Linux with no
 runtime dependencies at all. It was ~865 KB before it grew the ability to
 serve the viewer UI; embedding the wasm pack and linking the axum/tokio HTTP
 stack is what takes it to ~12 MB. Still one self-contained file, but the
 "under a megabyte" figure in earlier posts predates serve mode. It never links or loads a GPU library, so it
 behaves identically on NVIDIA, AMD, and machines with no GPU.
 
-`orbit-gpu-helper` is dynamically linked *on purpose*: static musl cannot
+`perfr-gpu-helper` is dynamically linked *on purpose*: static musl cannot
 `dlopen`, and NVML must be loaded at runtime. It does **not** link
 `libnvidia-ml` at build time (it `dlopen`s it), so the same helper binary runs
 on machines without an NVIDIA driver -- it just exits quietly and the capture
@@ -50,24 +53,24 @@ Running:
 
 ```
 # no arguments: serve the WASM live viewer and drive captures from the UI
-orbit-service                      # -> http://127.0.0.1:44766/
-orbit-service --serve 44768        # a different port
+perfr                      # -> http://127.0.0.1:44766/
+perfr --serve 44768        # a different port
 
 
 # CPU sampling + scheduling only (no GPU library anywhere)
-orbit-service --pid <tid> --duration-ms 5000 --out capture.pod
+perfr --pid <tid> --duration-ms 5000 --out capture.pod
 
 # ...plus NVIDIA GPU telemetry
-orbit-service --pid <tid> --duration-ms 5000 \
-              --gpu-helper ./orbit-gpu-helper --out capture.pod
+perfr --pid <tid> --duration-ms 5000 \
+              --gpu-helper ./perfr-gpu-helper --out capture.pod
 
 # read the capture back
-orbit-pod-dump capture.pod            # machine, counts, hottest callstacks
-orbit-pod-dump capture.pod --top 20   # more stacks
-orbit-pod-dump capture.pod --events   # every event, for debugging
+perfr-pod-dump capture.pod            # machine, counts, hottest callstacks
+perfr-pod-dump capture.pod --top 20   # more stacks
+perfr-pod-dump capture.pod --events   # every event, for debugging
 ```
 
-`orbit-pod-dump` is how you inspect a capture: it prints the machine it was
+`perfr-pod-dump` is how you inspect a capture: it prints the machine it was
 taken on, the GPUs, the event counts and time span, and the hottest
 callstacks by sample count (addresses only -- symbolization is a later
 stage). With no `--pid`, the service profiles its own busy worker threads,
@@ -87,8 +90,8 @@ privileges at all.
 ## Logs
 
 Every run keeps a log, the way the C++ service and the Qt UI did with
-`ORBIT_LOG`: what goes to stderr also goes to
-`~/.orbitprofiler/logs/orbit-service-<utc time>-<pid>.log`, and files older
+`PERFR_LOG`: what goes to stderr also goes to
+`~/.perfr/logs/perfr-<utc time>-<pid>.log`, and files older
 than a week are removed when a new one opens. Under `sudo` the directory is
 the invoking user's and the file is chowned to them, so `./run.sh --sudo`
 leaves a log you can read and delete. The banner and `GET /api/status`
@@ -96,33 +99,33 @@ leaves a log you can read and delete. The banner and `GET /api/status`
 
 ```
 [2026-09-26T14:03:22.123456] [INFO ] [serve.rs:773] 3 sampling ring(s) at 1000 Hz, unwinder ready
-[2026-09-26T14:03:24.010775] [WARN ] [viewer 7c1e orbit_live_viewer::net] WebSocket closed
-[2026-09-26T14:03:24.100031] [INFO ] [orbit-frida-helper] agent injected into pid 4242
+[2026-09-26T14:03:24.010775] [WARN ] [viewer 7c1e perfr_live_viewer::net] WebSocket closed
+[2026-09-26T14:03:24.100031] [INFO ] [perfr-frida-helper] agent injected into pid 4242
 ```
 
 UTC time to the microsecond, the level, where the line came from, the
 message. The origin is `file:line` for the service's own lines, the helper's
-name for a line a child process (`orbit-frida-helper`, `orbit-gpu-helper`)
+name for a line a child process (`perfr-frida-helper`, `perfr-gpu-helper`)
 wrote to its stderr, and `viewer <page> <module>` for a line the browser
 viewer relayed through `POST /api/log` -- the viewer sends its own log
 (everything it prints to the console, and a panic) so one file has both
 ends of a session. Two open tabs get different page ids.
 
-`--log-dir <dir>` or `ORBIT_LOG_DIR` puts the file elsewhere; `ORBIT_LOG=debug`
+`--log-dir <dir>` or `PERFR_LOG_DIR` puts the file elsewhere; `PERFR_LOG=debug`
 (or `trace`) says more. `--help`, `--slice` and the other one-shot tools leave
 no log behind.
 
 ## Backends
 
-`ObjectUtils` has one implementation now; `ORBIT_OBJECT_BACKEND` is gone with
+`ObjectUtils` has one implementation now; `PERFR_OBJECT_BACKEND` is gone with
 the C++ it selected. `ParseMaps` still keeps its small C++ twin:
 
 | Variable                      | Values              | Default | Selects                                    |
 | ----------------------------- | ------------------- | ------- | ------------------------------------------ |
-| `ORBIT_MAPS_BACKEND`          | `rust` `cpp` `both` | `rust`  | `orbit_module_utils::ParseMaps`             |
-| `ORBIT_PERF_MERGE_BACKEND`    | `rust` `cpp` `both` | `rust`  | `PerfEventQueue`'s ordering                 |
-| `ORBIT_THREAD_STATES_BACKEND` | `rust` `cpp` `both` | `rust`  | `ThreadStateManager`                        |
-| `ORBIT_TRACING_STATE_BACKEND` | `rust` `cpp` `both` | `rust`  | `ContextSwitchManager`, `UprobesFunctionCallManager`, `UprobeAddressMap` |
+| `PERFR_MAPS_BACKEND`          | `rust` `cpp` `both` | `rust`  | `perfr_module_utils::ParseMaps`             |
+| `PERFR_PERF_MERGE_BACKEND`    | `rust` `cpp` `both` | `rust`  | `PerfEventQueue`'s ordering                 |
+| `PERFR_THREAD_STATES_BACKEND` | `rust` `cpp` `both` | `rust`  | `ThreadStateManager`                        |
+| `PERFR_TRACING_STATE_BACKEND` | `rust` `cpp` `both` | `rust`  | `ContextSwitchManager`, `UprobesFunctionCallManager`, `UprobeAddressMap` |
 
 The LinuxTracing defaults are rust by decision, with a measured per-event FFI
 toll accepted for now -- see `docs/blog/metrics/phase-3-reopened.txt` for the
@@ -144,54 +147,54 @@ cargo test --workspace
 The C++ test files were the specification during the port: every Rust unit
 test that mirrors one names it in a comment. Those files, the three-backend
 switch and the differential tools that compared the two implementations are
-on the `cpp` branch (`rust/tools/differential` there); `main` carries only
+on the `cpp` branch of the Orbit repository (`rust/tools/differential` there); `main` carries only
 the Rust.
 
 ## Layout
 
 One Cargo workspace at the repository root; every crate is a directory here.
-The `orbit-live-*` crates are the browser viewer and its server
-(`orbit-live-viewer/README.md`); the rest is the capture service and what
+The `perfr-live-*` crates are the browser viewer and its server
+(`perfr-live-viewer/README.md`); the rest is the capture service and what
 it is built from, one crate per concern. The `ffi/` adapters, the C++
-`shims/` and the differential `tools/` of the port are on the `cpp` branch.
+`shims/` and the differential `tools/` of the port are on the `cpp` branch of the Orbit repository.
 `docs/blog/26-where-everything-lives.html` draws the tree and the crate
 graph.
 
-`crates/orbit-maps` has no dependencies. `crates/orbit-object` replaces six
+`crates/perfr-maps` has no dependencies. `crates/perfr-object` replaces six
 LLVM libraries with five crates: `object`, `gimli`, `pdb`, `msvc-demangler`
 and `flate2` (for `SHF_COMPRESSED` debug sections).
 
-`crates/orbit-perf-records` is the wire layer of the Phase 4 collector: the
+`crates/perfr-perf-records` is the wire layer of the Phase 4 collector: the
 packed perf ring-buffer record layouts, zero dependencies, verified against
 the C++ structs field by field by
-`src/LinuxTracing/PerfEventRecordsLayoutParityTest.cpp` on the `cpp` branch.
+`src/LinuxTracing/PerfEventRecordsLayoutParityTest.cpp` on the `cpp` branch of the Orbit repository.
 
-`crates/orbit-perf-ring` owns the kernel interface: `perf_event_open`, the
+`crates/perfr-perf-ring` owns the kernel interface: `perf_event_open`, the
 attr construction, and the mmap ring-buffer protocol, with unsafe confined
 to its `sys` module and one dependency (`libc`). Verified against the C++
 path by `rust/tools/differential/perf_ring_differential.cpp`.
 
-`crates/orbit-collector` is the event loop: TracerImpl's round-robin and
+`crates/perfr-collector` is the event loop: TracerImpl's round-robin and
 delayed ordered processing, composing the ported crates natively -- the
 first FFI-free path from kernel bytes to ordered records.
 
-`crates/orbit-unwind` replaces libunwindstack with framehop + object for
+`crates/perfr-unwind` replaces libunwindstack with framehop + object for
 offline DWARF unwinding, adopting libunwindstack's adjusted-pc convention;
 `rust/tools/differential/stack_unwind_differential.cpp` holds the frames
 identical against the C++ on live samples. The two formerly
 libunwindstack-welded classes (`UprobesReturnAddressManager`,
-`LeafFunctionCallManager`) run their logic in `orbit-tracing-state` behind
+`LeafFunctionCallManager`) run their logic in `perfr-tracing-state` behind
 the shared backend switch, engines reached through callbacks.
 
-`crates/orbit-ptrace` is the ptrace substrate of user-space instrumentation:
+`crates/perfr-ptrace` is the ptrace substrate of user-space instrumentation:
 attach/detach a process, read and write a tracee's memory, find an
 executable region, back up and restore its registers, inject syscalls, and
 allocate/protect/free memory inside it (MemoryInTracee). Verified by live
 round trips and a behavioral differential against the C++ MemoryInTracee; it
-returns idiomatic io::Errors rather than reproducing OrbitBase's error
+returns idiomatic io::Errors rather than reproducing PerfrBase's error
 strings.
 
-`crates/orbit-trampoline` is the trampoline machinery: the taken-range map
+`crates/perfr-trampoline` is the trampoline machinery: the taken-range map
 and free-slot search (placement), the instruction relocation that rewrites
 RIP-relative operands and relative branches when moving a prologue
 (relocate, on iced-x86), and the fixed register-save/payload-call/restore
@@ -200,7 +203,7 @@ relocation is byte-for-byte identical with the C++ across 888,154 real
 instructions; whole trampolines are byte-identical across 93,696 real
 function starts.
 
-`crates/orbit-service` writes a metadata head into every capture
+`crates/perfr` writes a metadata head into every capture
 (`SystemInfo`: CPU model, cores/threads, RAM, kernel, hostname, both clocks;
 `GpuInfo`: one merged record per GPU with PCI ids, VRAM, model, driver). It
 is the all-Rust capture service entry point: sample a
@@ -212,7 +215,7 @@ embedded viewer that binary is about 12 MB (see Distributing above); `ldd`
 reports "statically linked", and the service itself has no shared-library
 dependencies. The older "756 KB" figure is from before the viewer was embedded.
 
-`crates/orbit-wire` is the pod capture wire format: a one-byte tag plus
+`crates/perfr-wire` is the pod capture wire format: a one-byte tag plus
 fixed little-endian fields per event, zero dependencies, ~4.8x faster to
 parse than protobuf (at ~1.7x the bytes -- a deliberate CPU-for-bandwidth
 trade on the hot path). Round-trip tested and size/speed-differentialed
@@ -233,7 +236,7 @@ PATH="$HOME/.cargo/bin:$PATH" cargo test --workspace
 
 ## The viewer crates
 
-The `orbit-live-*` crates share the workspace and its lockfile but not the
-service's build: `cargo build -p orbit-service` links `orbit-live-server`
+The `perfr-live-*` crates share the workspace and its lockfile but not the
+service's build: `cargo build -p perfr` links `perfr-live-server`
 and the event crates and never compiles the eframe/wgpu tree, which only
-`orbit-live-viewer` depends on.
+`perfr-live-viewer` depends on.

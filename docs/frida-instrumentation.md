@@ -12,14 +12,14 @@ On Linux, install Rust 1.88.0, a C compiler, curl and tar/xz, then:
 
 ```sh
 ./tools/frida/build.sh
-./dist/frida/orbit-service --host 127.0.0.1 --serve 3000
+./dist/frida/perfr --host 127.0.0.1 --serve 3000
 ```
 
-The package contains a native `orbit-frida-helper` linked to Frida Core and
-`liborbit_frida_agent.so` linked to Gum. No Python environment or JavaScript
+The package contains a native `perfr-frida-helper` linked to Frida Core and
+`libperfr_frida_agent.so` linked to Gum. No Python environment or JavaScript
 agent is needed. `tools/frida/devkits.sh` downloads Frida 17.17.0 native devkits,
 verifies their pinned SHA-256 checksums, and caches them under
-`target/frida-devkits`. Set `ORBIT_FRIDA_DEVKIT_ROOT` to use another cache.
+`target/frida-devkits`. Set `PERFR_FRIDA_DEVKIT_ROOT` to use another cache.
 Builds thereafter can use the cached devkits without downloading them again.
 
 On macOS, `tools/build/build-service-macos.sh` packages the helper and agent alongside the
@@ -30,12 +30,12 @@ For a development build:
 
 ```sh
 ./tools/frida/devkits.sh
-cargo +1.88.0 build --locked -p orbit-frida-helper
-cargo +1.88.0 build --locked -p orbit-frida-agent --features native
-cargo +1.88.0 build --locked -p orbit-service
-ORBIT_FRIDA_HELPER="$PWD/target/debug/orbit-frida-helper" \
-ORBIT_FRIDA_AGENT="$PWD/target/debug/liborbit_frida_agent.so" \
-  target/debug/orbit-service
+cargo +1.88.0 build --locked -p perfr-frida-helper
+cargo +1.88.0 build --locked -p perfr-frida-agent --features native
+cargo +1.88.0 build --locked -p perfr
+PERFR_FRIDA_HELPER="$PWD/target/debug/perfr-frida-helper" \
+PERFR_FRIDA_AGENT="$PWD/target/debug/libperfr_frida_agent.so" \
+  target/debug/perfr
 ```
 
 Use `.dylib` on macOS. The service otherwise finds both components beside its
@@ -55,14 +55,14 @@ still separate future work.
 ## Recording and lifecycle
 
 The Rust helper calls Frida Core's native injector to load the agent library
-and invoke `orbit_frida_main`. On Darwin, Core first injects a tiny C bootstrap
+and invoke `perfr_frida_main`. On Darwin, Core first injects a tiny C bootstrap
 embedded in the helper; it calls `dlopen` on the real agent so dyld owns its
 dependencies and native thread-local storage on every target thread. The
 bootstrap can unload after control ends, while the agent stays loaded.
 The helper does not create a Frida script/session or load
 a GumJS agent. Small C ABI adapters call Core and Gum directly; control and
-capture state remain in Rust. Gum listeners call `orbit_start_dynamic` and
-`orbit_stop` through the **same Orbit API instance** used by manual scopes.
+capture state remain in Rust. Gum listeners call `perfr_start_dynamic` and
+`perfr_stop` through the **same perfr API instance** used by manual scopes.
 Per-invocation Gum storage holds the scope handle and capture generation.
 
 The helper and agent exchange startup/stop messages over an AF_UNIX socket;
@@ -72,12 +72,12 @@ suppress SIGPIPE locally, preserving the target's process-wide signal policy.
 Gum keeps outstanding invocation data alive after detach, and the agent remains
 resident so late returns cannot jump into unloaded code.
 
-`orbit_init` publishes a versioned, process-local API descriptor in reserved
+`perfr_init` publishes a versioned, process-local API descriptor in reserved
 scope-header bytes. The injected agent uses that descriptor even when the SDK
 is statically linked and its symbols are stripped. A producer-held file lease
 prevents reuse of descriptor addresses after exit or exec. It does not replace the
 application's segment, TLS state or handle allocator. If the application has no
-Orbit API, the agent initializes its bundled API. Initialize an application's
+perfr API, the agent initializes its bundled API. Initialize an application's
 own SDK before attachment; loading/initializing another SDK instance afterward
 is not supported. Older manually instrumented binaries need the updated SDK
 for shared API discovery; attachment fails instead of replacing their segment.
@@ -101,7 +101,7 @@ counter. Stop closes the capture generation and detaches Gum before the shared s
 open at Stop are clipped to capture end, like manual scopes. Exceptions/longjmp
 that bypass return can leave scopes open; the API does not infer unwinding.
 
-The agent dylib stays loaded for reuse. Concurrent Orbit collectors for one
+The agent dylib stays loaded for reuse. Concurrent perfr collectors for one
 target and self-hooking the service are refused. Fork-child callbacks and manual
 API calls are disabled before touching inherited state; the child must exec
 before instrumentation can resume. The existing 16-function selection limit and
@@ -132,7 +132,7 @@ Gum's return interception can affect unwinding; no trampoline-aware callstack
 repair is implemented here. CPU sampling on macOS remains future work.
 
 The pinned upstream Core and Gum license texts are shipped under `licenses/`
-with the native package. Orbit's adapter, helper and transport use this
+with the native package. perfr's adapter, helper and transport use this
 repository's BSD license. Devkit archives remain build inputs, not runtime files.
 
 ## Self-profiling

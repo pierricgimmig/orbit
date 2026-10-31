@@ -4,7 +4,7 @@ import path from "path"; import { fileURLToPath } from "url"; import { execFileS
 import { reportOpen } from "./_common.mjs";
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export async function prep(H, ctx) {
-  ctx.state.trace = "/tmp/orbit-media-demo-trace.json";
+  ctx.state.trace = "/tmp/perfr-media-demo-trace.json";
   execFileSync("python3", [path.join(KIT, "assets/make_chrome_trace.py"), ctx.state.trace]);
   await H.key("Escape"); await reportOpen(H, false);   // the timeline needs the full width
   // Stop and Clear first: opened during a live capture, the trace is merged into the live session (and its

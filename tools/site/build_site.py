@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The perfr Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -8,11 +8,11 @@ capture it opens on the front page with no service behind it, the manual,
 the blog and the screenshots.
 
     python3 tools/site/build_site.py                      # captures Box3D for the front page
-    python3 tools/site/build_site.py --stream my.orbit.stream
-    python3 tools/site/build_site.py --bundle capture.orbit.zip
+    python3 tools/site/build_site.py --stream my.perfr.stream
+    python3 tools/site/build_site.py --bundle capture.perfr.zip
     python3 tools/site/serve.py --dir site --port 8081    # then open it
 
-The front-page capture is a `.orbit.stream`: the wire frames a connecting
+The front-page capture is a `.perfr.stream`: the wire frames a connecting
 viewer receives, saved as one file (`GET /api/capture/export?format=stream`).
 The viewer opens it with `?capture=<url>` and never talks to a service, so
 the site is plain files on any host. Standard library only, like the e2e
@@ -32,7 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "tools", "e2e"))
 
-VIEWER_DIST = os.path.join(REPO, "crates/orbit-live-viewer/viewer-dist")
+VIEWER_DIST = os.path.join(REPO, "crates/perfr-live-viewer/viewer-dist")
 
 # Blog posts link up out of docs/blog/ (../rust-port-plan.html and the
 # others). Copied to the site root, those relative links still resolve.
@@ -256,7 +256,7 @@ def page(title, body, root=".", nav=True):
             .replace("{{nav}}", NAV.replace("{{root}}", root) if nav else ""))
 
 
-NAV = ('<nav class="site" aria-label="Site"><a class="brand" href="{{root}}/index.html"><img src="{{root}}/logo.png" alt="Orbit"></a>'
+NAV = ('<nav class="site" aria-label="Site"><a class="brand" href="{{root}}/index.html"><img src="{{root}}/logo.png" alt="perfr"></a>'
        '<a href="{{root}}/index.html">Home</a>'
        '<a href="{{root}}/features.html">Features</a>'
        '<a href="{{root}}/manual/index.html">Manual</a>'
@@ -272,7 +272,7 @@ NAV = ('<nav class="site" aria-label="Site"><a class="brand" href="{{root}}/inde
 
 def capture_stream(bundle, port):
     """Produces a stream file from a bundle, or from a fresh Box3D capture."""
-    from orbit_e2e import DEFAULT_BOX3D, Service, Target, build_target  # noqa: E402
+    from perfr_e2e import DEFAULT_BOX3D, Service, Target, build_target  # noqa: E402
 
     service = Service(port)
     target = None
@@ -285,7 +285,7 @@ def capture_stream(bundle, port):
             while time.time() < deadline and service.get("/api/status")["events_live"] == 0:
                 time.sleep(0.2)
         else:
-            target_bin = "/tmp/orbit-site-box3d-target"
+            target_bin = "/tmp/perfr-site-box3d-target"
             build_target(DEFAULT_BOX3D, target_bin)
             target = Target([target_bin, "--threads", "3"])
             service.post("/api/capture/start", {"pid": target.pid})
@@ -308,7 +308,7 @@ def capture_stream(bundle, port):
 
 def site_href(page_path, out, filename):
     """A URL for a site-root file, relative to this page. Works under
-    /orbit/ and at a domain root; a root-relative /favicon.ico does not,
+    /perfr/ and at a domain root; a root-relative /favicon.ico does not,
     and without a link the browser asks the host root for one."""
     rel_dir = os.path.dirname(os.path.relpath(page_path, out))
     if rel_dir in ("", "."):
@@ -327,7 +327,7 @@ def inject_before_head_end(html, snippet):
 def stamp_coi(out):
     """Every document registers the isolation worker and names the site
     icon. Generated pages, the copied blog and essays, and the viewer all
-    get relative URLs, so they resolve under /orbit/ and at a domain root.
+    get relative URLs, so they resolve under /perfr/ and at a domain root.
     The icon link is what stops the browser requesting /favicon.ico from
     the host root (a 404 on a project site)."""
     has_icon = re.compile(r"""rel\s*=\s*["'](?:shortcut icon|icon|apple-touch-icon)["']""", re.IGNORECASE)
@@ -373,7 +373,7 @@ def assert_no_root_relative(out):
                     bad.append(f"{rel}:{i}: {line.strip()[:180]}")
     if bad:
         raise SystemExit(
-            "root-relative URLs in the site (they break /orbit/ and a domain root):\n"
+            "root-relative URLs in the site (they break /perfr/ and a domain root):\n"
             + "\n".join(bad)
         )
 
@@ -393,8 +393,10 @@ def build(out, stream_path, bundle, name, port, service=False):
     media_src = os.path.join(HERE, "media")
     if os.path.isdir(media_src):
         shutil.copytree(media_src, os.path.join(out, "media"), dirs_exist_ok=True)
-    # The curl installer, served at the site root: `curl .../install.sh | sh`.
-    shutil.copy(os.path.join(REPO, "tools/install/install.sh"), os.path.join(out, "install.sh"))
+    # The installers, served at the site root: `curl -fsSL https://perfr.dev/install.sh | sh`
+    # and `irm https://perfr.dev/install.ps1 | iex`.
+    for script in ("install.sh", "install.ps1"):
+        shutil.copy(os.path.join(REPO, "tools/install", script), os.path.join(out, script))
     # The front-page capture.
     captures = os.path.join(out, "captures")
     os.makedirs(captures, exist_ok=True)
@@ -403,7 +405,7 @@ def build(out, stream_path, bundle, name, port, service=False):
         data = open(stream_path, "rb").read()
     else:
         data, status = capture_stream(bundle, port)
-    capture_file = f"{name}.orbit.stream"
+    capture_file = f"{name}.perfr.stream"
     with open(os.path.join(captures, capture_file), "wb") as handle:
         handle.write(data)
     # Blog, screenshots, manual, test report.
@@ -416,21 +418,21 @@ def build(out, stream_path, bundle, name, port, service=False):
     os.makedirs(os.path.join(out, "manual"), exist_ok=True)
     os.makedirs(os.path.join(out, "e2e"), exist_ok=True)
     pages = [
-        ("docs/e2e/report.md", "e2e/report.html", "Orbit e2e report", ".."),
-        ("docs/TODO.md", "todo.html", "Orbit TODO", "."),
+        ("docs/e2e/report.md", "e2e/report.html", "perfr e2e report", ".."),
+        ("docs/TODO.md", "todo.html", "perfr TODO", "."),
     ]
     manual_pages = [
-        ("docs/manual/index.md", "index.html", "Quick start — Orbit manual"),
-        ("docs/manual/capture.md", "capture.html", "Capture — Orbit manual"),
-        ("docs/manual/timeline.md", "timeline.html", "Timeline — Orbit manual"),
-        ("docs/manual/time.md", "time.html", "Where time goes — Orbit manual"),
-        ("docs/manual/systems.md", "systems.html", "Systems — Orbit manual"),
-        ("docs/manual/everywhere.md", "everywhere.html", "Everywhere — Orbit manual"),
-        ("docs/manual/troubleshooting.md", "troubleshooting.html", "Troubleshooting — Orbit manual"),
-        ("docs/manual/keys.md", "keys.html", "Keys and mouse — Orbit manual"),
-        ("docs/manual/mcp.md", "mcp.html", "Agents — Orbit manual"),
-        ("docs/manual/machines.md", "machines.html", "Several machines — Orbit manual"),
-        ("docs/manual/live-viewer.md", "live-viewer.html", "Live viewer — Orbit manual"),
+        ("docs/manual/index.md", "index.html", "Quick start — perfr manual"),
+        ("docs/manual/capture.md", "capture.html", "Capture — perfr manual"),
+        ("docs/manual/timeline.md", "timeline.html", "Timeline — perfr manual"),
+        ("docs/manual/time.md", "time.html", "Where time goes — perfr manual"),
+        ("docs/manual/systems.md", "systems.html", "Systems — perfr manual"),
+        ("docs/manual/everywhere.md", "everywhere.html", "Everywhere — perfr manual"),
+        ("docs/manual/troubleshooting.md", "troubleshooting.html", "Troubleshooting — perfr manual"),
+        ("docs/manual/keys.md", "keys.html", "Keys and mouse — perfr manual"),
+        ("docs/manual/mcp.md", "mcp.html", "Agents — perfr manual"),
+        ("docs/manual/machines.md", "machines.html", "Several machines — perfr manual"),
+        ("docs/manual/live-viewer.md", "live-viewer.html", "Live viewer — perfr manual"),
     ]
     for src, dst, title, root in pages:
         path = os.path.join(REPO, src)
@@ -504,14 +506,14 @@ def _point_embeds_at_service(out):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", default=os.path.join(REPO, "site"))
-    parser.add_argument("--stream", help="an .orbit.stream file to put on the front page")
-    parser.add_argument("--bundle", help="an .orbit.zip to convert for the front page")
+    parser.add_argument("--stream", help="a .perfr.stream file to put on the front page")
+    parser.add_argument("--bundle", help="a .perfr.zip to convert for the front page")
     parser.add_argument("--name", default="box3d", help="the capture's file stem on the site")
     parser.add_argument("--port", type=int, default=44850, help="port for the throwaway service")
-    parser.add_argument("--service", action="store_true", help="build for embedding in orbit-service: no bundled viewer, embeds point at the service viewer at / (site served at /site)")
+    parser.add_argument("--service", action="store_true", help="build for embedding in perfr: no bundled viewer, embeds point at the service viewer at / (site served at /site)")
     args = parser.parse_args()
-    if not os.path.exists(os.path.join(VIEWER_DIST, "orbit_live_viewer_bg.wasm")):
-        raise SystemExit(f"no viewer pack in {VIEWER_DIST}: run crates/orbit-live-viewer/build_wasm.sh first")
+    if not os.path.exists(os.path.join(VIEWER_DIST, "perfr_live_viewer_bg.wasm")):
+        raise SystemExit(f"no viewer pack in {VIEWER_DIST}: run crates/perfr-live-viewer/build_wasm.sh first")
     capture_file, facts = build(args.out, args.stream, args.bundle, args.name, args.port, args.service)
     print(f"site in {args.out}: front page opens captures/{capture_file} ({facts})")
     print("isolation: coi-serviceworker.js adds COOP/COEP; sequential if it cannot")
