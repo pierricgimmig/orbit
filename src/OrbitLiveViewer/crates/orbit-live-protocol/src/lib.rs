@@ -297,18 +297,23 @@ fn unzigzag(v: u64) -> i64 {
 /// The packed payload of a batch: see [`WireFormat::Packed`].
 pub fn pack_events(events: &[LiveEvent]) -> Vec<u8> {
     // Per-batch thread table, in order of first appearance.
+    // A linear scan was fine for a handful of threads. A 72-core capture
+    // puts hundreds of threads in one batch, and the scan was most of the
+    // encode time (the largest per-event cost on the service side).
     let mut threads: Vec<(u32, u32)> = Vec::new();
+    let mut index_of: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
     let mut index: Vec<u32> = Vec::with_capacity(events.len());
     for e in events {
         let key = (e.pid, e.tid);
-        let i = match threads.iter().position(|t| *t == key) {
-            Some(i) => i,
-            None => {
-                threads.push(key);
-                threads.len() - 1
-            }
+        let i = if let Some(i) = index_of.get(&key) {
+            *i
+        } else {
+            let i = threads.len() as u32;
+            threads.push(key);
+            index_of.insert(key, i);
+            i
         };
-        index.push(i as u32);
+        index.push(i);
     }
     let mut out = Vec::with_capacity(events.len() * 12 + threads.len() * 8 + 8);
     put_varint(&mut out, events.len() as u64);
