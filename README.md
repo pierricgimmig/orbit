@@ -4,7 +4,7 @@ Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
 
-# perfr Profiler
+# perfr
 
 Profile a running program with no code change. The Rust service runs on Linux,
 macOS and Windows. The viewer is a web page, so any browser on any device can
