@@ -50,6 +50,7 @@ mod thread_state;
 mod uprobes;
 mod visible;
 mod mcp;
+mod live_bench;
 
 #[cfg(target_os = "linux")]
 use interner::CallstackInterner;
@@ -286,6 +287,11 @@ fn main() {
     // stream is the JSON-RPC channel. Handle it before the logger starts.
     if std::env::args().nth(1).as_deref() == Some("mcp") {
         std::process::exit(mcp::entry());
+    }
+    // The latency harness prints its own summary and must not open the
+    // service log (that file is for a real capture).
+    if std::env::args().nth(1).as_deref() == Some("live-bench") {
+        std::process::exit(live_bench::entry());
     }
     // stderr from here on, and the file once a real run begins (serve mode
     // or a file capture; --help and the one-shot tools leave no log behind).

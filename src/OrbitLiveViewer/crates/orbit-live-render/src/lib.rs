@@ -63,6 +63,10 @@ pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 pub struct Lane {
     events: Vec<LiveEvent>,
     ends_sorted: bool,
+    /// Longest `duration_ns` currently stored. `choose_lod` reads this
+    /// instead of scanning the lane: a 2 s window of context switches is
+    /// hundreds of thousands of events, and that scan ran every frame.
+    max_duration_ns: u64,
     /// Bumped by every insert and every retain that removed something: the
     /// listing cache's way to know a lane is exactly what it listed before.
     version: u64,
@@ -73,6 +77,7 @@ impl Default for Lane {
         Self {
             events: Vec::new(),
             ends_sorted: true,
+            max_duration_ns: 0,
             version: 0,
         }
     }
@@ -96,7 +101,13 @@ impl Lane {
         self.version
     }
 
+    /// Longest `duration_ns` on the lane. Zero when the lane is empty.
+    pub fn max_duration_ns(&self) -> u64 {
+        self.max_duration_ns
+    }
+
     pub fn insert(&mut self, event: LiveEvent) {
+        self.max_duration_ns = self.max_duration_ns.max(event.duration_ns);
         self.version = self.version.wrapping_add(1);
         let i = if self
             .events
@@ -138,7 +149,40 @@ impl Lane {
             // a lane that was already unsorted may now be sorted -- recheck so
             // it does not stay on the linear fallback forever.
             self.ends_sorted = self.ends_are_sorted();
+            self.recompute_max_duration();
         }
+    }
+
+    /// Drop events that ended before `cutoff_ns`. Returns how many went.
+    ///
+    /// A short aged prefix is left in place: shifting a multi-million-event
+    /// lane every frame cost more than it saved. Once the stale prefix is
+    /// half the lane, or at least 4096 events, the live suffix is kept and
+    /// the prefix is released.
+    pub fn drop_older_than(&mut self, cutoff_ns: u64) -> usize {
+        if self.events.is_empty() || cutoff_ns == 0 {
+            return 0;
+        }
+        let n = if self.ends_sorted {
+            self.events.partition_point(|e| e.end_ns() < cutoff_ns)
+        } else {
+            self.events.iter().position(|e| e.end_ns() >= cutoff_ns).unwrap_or(self.events.len())
+        };
+        if n == 0 || (n < self.events.len() / 2 && n < 4096) {
+            return 0;
+        }
+        if n >= self.events.len() / 2 {
+            self.events = self.events.split_off(n);
+        } else {
+            self.events.drain(..n);
+        }
+        self.version = self.version.wrapping_add(1);
+        self.recompute_max_duration();
+        n
+    }
+
+    fn recompute_max_duration(&mut self) {
+        self.max_duration_ns = self.events.iter().map(|e| e.duration_ns).max().unwrap_or(0);
     }
 
     /// First event with `end_ns > t`.
@@ -323,6 +367,25 @@ impl Default for Bounds {
     }
 }
 
+fn bounds_of_lanes<'a>(lanes: impl Iterator<Item = &'a Lane>) -> Bounds {
+    let mut b = Bounds::default();
+    for lane in lanes {
+        let ev = lane.events();
+        if ev.is_empty() {
+            continue;
+        }
+        b.add(&ev[0]);
+        b.add(ev.last().unwrap());
+        // A lane whose ends are not ordered can hide its max in the middle.
+        if !lane.ends_sorted {
+            for e in ev {
+                b.add(e);
+            }
+        }
+    }
+    b
+}
+
 impl Bounds {
     fn add(&mut self, e: &LiveEvent) {
         let start = e.start_ns;
@@ -374,6 +437,30 @@ impl TrackIndex {
         self.events = 0;
         self.bounds = Bounds::default();
         self.lane_gen = self.lane_gen.wrapping_add(1);
+    }
+
+    /// Forget events that ended before `cutoff_ns`. The live ring already
+    /// dropped them; keeping a second copy made the follow-latest frame
+    /// slower every second of a long capture.
+    pub fn drop_older_than(&mut self, cutoff_ns: u64) -> usize {
+        if cutoff_ns == 0 || self.events == 0 {
+            return 0;
+        }
+        let mut dropped = 0usize;
+        for lane in self.lanes.values_mut() {
+            dropped += lane.drop_older_than(cutoff_ns);
+        }
+        if dropped == 0 {
+            return 0;
+        }
+        let before = self.lanes.len();
+        self.lanes.retain(|_, lane| !lane.is_empty());
+        if self.lanes.len() != before {
+            self.lane_gen = self.lane_gen.wrapping_add(1);
+        }
+        self.events = self.events.saturating_sub(dropped);
+        self.bounds = bounds_of_lanes(self.lanes.values());
+        dropped
     }
 
     /// Drop every event the predicate rejects, and any lane left empty.

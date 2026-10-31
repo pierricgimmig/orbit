@@ -520,39 +520,37 @@ fn choose_lod_from_keys(
     if ns_per_px <= 0.0 {
         return TimelineLod::PixelColumns;
     }
-    // Fast path. A hit here is conclusive: one wide scope in view is enough.
+    // A hit here is conclusive: one wide scope is enough to draw instances.
+    // Width comes from the lane's stored max duration, not from walking the
+    // events. The old walk called `overlapping` on the whole window, which
+    // scans every event in view, and it ran every frame — on a core lane
+    // that is tens of thousands of context switches per second.
     for key in keys {
         if key.kind == kind::VALUE {
             continue;
         }
-        let Some(lane) = index.lane(*key) else {
-            continue;
-        };
-        if let Some(e) = lane.overlapping(t0, t1) {
-            if (e.duration_ns as f64 / ns_per_px) >= min_wide_px as f64 {
+        if let Some(lane) = index.lane(*key) {
+            if lane_wider_than(lane, ns_per_px, min_wide_px) {
                 return TimelineLod::Instanced;
             }
         }
     }
-    // A miss is not conclusive, so finish the question over every lane.
-    //
-    // Answering PixelColumns straight from a sample miss made the verdict
-    // depend on which lanes happened to be sampled, and the sample moves: it
-    // is ranked by lifetime event count and takes the hovered lane as a hint.
-    // Moving the cursor, changing nothing else, could flip instanced to blit.
-    // The cost is two binary searches per lane, paid only when the sample
-    // already failed to find anything wide.
+    // The sample can miss a wide scope sitting on a quieter lane. Checking
+    // every lane is a handful of integer compares, not a scan of the events.
     for (key, lane) in index.lanes() {
         if key.kind == kind::VALUE {
             continue;
         }
-        if let Some(e) = lane.overlapping(t0, t1) {
-            if (e.duration_ns as f64 / ns_per_px) >= min_wide_px as f64 {
-                return TimelineLod::Instanced;
-            }
+        if lane_wider_than(lane, ns_per_px, min_wide_px) {
+            return TimelineLod::Instanced;
         }
     }
     TimelineLod::PixelColumns
+}
+
+fn lane_wider_than(lane: &Lane, ns_per_px: f64, min_wide_px: f32) -> bool {
+    let d = lane.max_duration_ns();
+    d > 0 && (d as f64 / ns_per_px) >= min_wide_px as f64
 }
 
 #[cfg(test)]
@@ -580,6 +578,34 @@ mod value_lod_tests {
             choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX),
             TimelineLod::PixelColumns
         );
+    }
+
+    #[test]
+    fn short_slices_stay_pixel_columns_without_scanning_them() {
+        let mut idx = TrackIndex::default();
+        // 100 us slices across a 2 s window. Wider than nothing on a 1280px
+        // view (1.56 ms/px, 4 px threshold). The max-duration check must
+        // agree with the old per-event scan.
+        for i in 0..20_000u64 {
+            idx.insert(LiveEvent {
+                start_ns: i * 100_000,
+                duration_ns: 100_000,
+                tid: 1,
+                pid: 1,
+                kind: kind::SCHEDULING_SLICE,
+                depth: 0,
+                extra: 0,
+                _pad: 0,
+                name_id: 0,
+            });
+        }
+        assert_eq!(
+            choose_lod(&idx, 0, 2_000_000_000, 1280, INSTANCE_MIN_PX),
+            TimelineLod::PixelColumns
+        );
+        let dropped = idx.drop_older_than(1_000_000_000);
+        assert!(dropped > 8_000, "dropped {dropped}");
+        assert!(idx.event_count() < 12_000, "kept {}", idx.event_count());
     }
 
     fn scope(start: u64, dur: u64, tid: u32, name: u32) -> LiveEvent {
