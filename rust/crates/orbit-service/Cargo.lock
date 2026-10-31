@@ -985,6 +985,8 @@ dependencies = [
  "orbit-etw",
  "orbit-frida-transport",
  "orbit-live-event",
+ "orbit-live-protocol",
+ "orbit-live-render",
  "orbit-live-server",
  "orbit-maps",
  "orbit-object",

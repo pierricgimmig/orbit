@@ -11,6 +11,13 @@
 # profile included. Keep this in sync with the profile there: without it the
 # binary ships unstripped, unwinding and without cross-crate LTO, which cost
 # 1.7 MB when the split first happened.
+# Same optimisations as release, but incremental enough to iterate the
+# live-latency harness. Published before/after numbers use `--release`.
+[profile.livebench]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 [profile.release]
 opt-level = 3
 lto = "thin"
@@ -52,6 +59,8 @@ iced-x86 = { version = "1.21", default-features = false, features = ["std", "dec
 orbit-api = { path = "../orbit-api" }
 orbit-capture = { path = "../orbit-capture" }
 orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-event" }
+orbit-live-protocol = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-protocol" }
+orbit-live-render = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-render" }
 orbit-live-server = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-server" }
 # Rust's own demangler: std-only, one crate, no deps. C++ names stay mangled here (blog post 02).
 rustc-demangle = "0.1"

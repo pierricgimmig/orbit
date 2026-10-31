@@ -249,6 +249,10 @@ pub struct LiveService {
     dropped_before_start: AtomicU64,
     /// The pid the running (or last) capture targets; 0 when none.
     capture_pid: AtomicU64,
+    /// Per-batch time inside [`LiveService::push_events`], split into the
+    /// ring write and the encode-and-broadcast. The live-latency harness
+    /// reads these; they are atomics so the capture thread only adds.
+    meters: IngestMeterAtoms,
     index_cache: Mutex<Option<CachedIndex>>,
     pub(crate) timeline_cache: Mutex<Option<CachedTimeline>>,
     /// The machines linked to this service (`peers.rs`): empty on a
@@ -333,6 +337,37 @@ pub struct ViewerLogLine {
     pub message: String,
 }
 
+/// Cumulative nanoseconds spent inside [`LiveService::push_events`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IngestMeters {
+    pub ring_ns: u64,
+    pub encode_ns: u64,
+    pub batches: u64,
+    pub events: u64,
+    pub encode_bytes: u64,
+}
+
+#[derive(Default)]
+struct IngestMeterAtoms {
+    ring_ns: AtomicU64,
+    encode_ns: AtomicU64,
+    batches: AtomicU64,
+    events: AtomicU64,
+    encode_bytes: AtomicU64,
+}
+
+impl IngestMeterAtoms {
+    fn snapshot(&self) -> IngestMeters {
+        IngestMeters {
+            ring_ns: self.ring_ns.load(Ordering::Relaxed),
+            encode_ns: self.encode_ns.load(Ordering::Relaxed),
+            batches: self.batches.load(Ordering::Relaxed),
+            events: self.events.load(Ordering::Relaxed),
+            encode_bytes: self.encode_bytes.load(Ordering::Relaxed),
+        }
+    }
+}
+
 /// Thread and process names of the current capture.
 #[derive(Default)]
 struct CaptureNames {
@@ -386,6 +421,7 @@ impl LiveService {
             capture_start_ns: AtomicU64::new(0),
             dropped_before_start: AtomicU64::new(0),
             capture_pid: AtomicU64::new(0),
+            meters: IngestMeterAtoms::default(),
             index_cache: Mutex::new(None),
             timeline_cache: Mutex::new(None),
             peers: peers::Peers::default(),
@@ -681,14 +717,17 @@ impl LiveService {
     /// With nobody subscribed there is nothing to send, so nothing is encoded
     /// either -- a capture with no viewer attached should cost the ring push
     /// and no more.
-    fn broadcast_events(&self, events: &[LiveEvent]) {
+    fn broadcast_events(&self, events: &[LiveEvent]) -> usize {
         if self.live_tx.receiver_count() == 0 {
-            return;
+            return 0;
         }
         // Encoding is its own scope: the packed and deflate formats cost
         // CPU here, the sends cost it in every viewer's ws task.
         let _encode = crate::scope("encode events");
-        let _ = self.live_tx.send(encode_event_batch_with(events, self.wire()));
+        let bytes = encode_event_batch_with(events, self.wire());
+        let n = bytes.len();
+        let _ = self.live_tx.send(bytes);
+        n
     }
 
     /// The batch format this server sends.
@@ -712,7 +751,9 @@ impl LiveService {
         } else {
             events
         };
+        let ring_t0 = std::time::Instant::now();
         self.ring().push_many(events);
+        let ring_ns = ring_t0.elapsed().as_nanos() as u64;
         self.data_gen.fetch_add(1, Ordering::Relaxed);
         let mut end = 0u64;
         for e in events {
@@ -723,7 +764,19 @@ impl LiveService {
         if end > 0 {
             self.note_live_end(end);
         }
-        self.broadcast_events(events);
+        let encode_t0 = std::time::Instant::now();
+        let encoded = self.broadcast_events(events);
+        let encode_ns = encode_t0.elapsed().as_nanos() as u64;
+        self.meters.ring_ns.fetch_add(ring_ns, Ordering::Relaxed);
+        self.meters.encode_ns.fetch_add(encode_ns, Ordering::Relaxed);
+        self.meters.batches.fetch_add(1, Ordering::Relaxed);
+        self.meters.events.fetch_add(events.len() as u64, Ordering::Relaxed);
+        self.meters.encode_bytes.fetch_add(encoded as u64, Ordering::Relaxed);
+    }
+
+    /// Cumulative cost of [`LiveService::push_events`] since the service started.
+    pub fn ingest_meters(&self) -> IngestMeters {
+        self.meters.snapshot()
     }
 
     pub fn note_live_end(&self, end_ns: u64) {

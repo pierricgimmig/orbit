@@ -46,11 +46,9 @@ use orbit_unwind::ProcessUnwinder;
 use std::collections::HashMap;
 use orbit_live_server::{http, ControlHooks, LiveService, ServerConfig};
 #[cfg(target_os = "linux")]
-use orbit_perf_records::reader::parse_context_switch;
-#[cfg(target_os = "linux")]
 use orbit_perf_records::{record_type, ForkExit, PerfEventHeader};
 #[cfg(target_os = "linux")]
-use orbit_tracing_state::context_switches::{ContextSwitchManager, SwitchOut};
+use orbit_tracing_state::context_switches::ContextSwitchManager;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -476,6 +474,92 @@ pub(crate) fn scheduling_events(slice: &orbit_tracing_state::context_switches::S
     [base, on_thread]
 }
 
+/// Pair one perf context-switch record into viewer events.
+///
+/// The core lane event is pushed immediately. The per-thread RUNNING bar is
+/// returned so the caller can drop it (idle task, a thread outside the
+/// visible set, or a thread whose state already comes from tracepoints).
+/// Switch-ins only update `switches` and return `None`. This is the function
+/// the live-latency harness replays into, so a synthetic record and a kernel
+/// record take the same branch.
+pub(crate) fn push_switch_record(
+    record: &[u8],
+    switches: &mut orbit_tracing_state::context_switches::ContextSwitchManager,
+    batch: &mut Vec<LiveEvent>,
+) -> Option<LiveEvent> {
+    use orbit_perf_records::reader::parse_context_switch;
+    use orbit_perf_records::{record_type, PerfEventHeader};
+    use orbit_tracing_state::context_switches::SwitchOut;
+
+    let header = PerfEventHeader::parse(record)?;
+    if { header.kind } != record_type::SWITCH && { header.kind } != record_type::SWITCH_CPU_WIDE {
+        return None;
+    }
+    let switch = parse_context_switch(record)?;
+    if switch.is_switch_out {
+        let SwitchOut::Slice(slice) = switches.process_context_switch_out(
+            switch.pid,
+            switch.tid,
+            switch.core,
+            switch.timestamp_ns,
+        ) else {
+            return None;
+        };
+        // tid 0 is the per-core swapper: an empty gap, not a bar.
+        if slice.tid == 0 {
+            return None;
+        }
+        let [on_core, on_thread] = scheduling_events(&slice);
+        batch.push(on_core);
+        Some(on_thread)
+    } else {
+        switches.process_context_switch_in(
+            Some(switch.pid),
+            switch.tid,
+            switch.core,
+            switch.timestamp_ns,
+        );
+        None
+    }
+}
+
+/// One stack sample as the viewer draws it: a tick on the thread, plus the
+/// frames as sampled function calls with the outermost caller at depth 0.
+/// `frame_ids` is innermost-first, the unwinder's order.
+pub(crate) fn push_sample_events(
+    batch: &mut Vec<LiveEvent>,
+    time: u64,
+    tid: u32,
+    pid: u32,
+    period_ns: u64,
+    frame_ids: &[u32],
+) {
+    batch.push(LiveEvent {
+        start_ns: time,
+        duration_ns: period_ns,
+        tid,
+        pid,
+        kind: kind::SAMPLE,
+        depth: 0,
+        extra: 0,
+        _pad: 0,
+        name_id: frame_ids.first().copied().unwrap_or(0),
+    });
+    for (index, name_id) in frame_ids.iter().rev().copied().enumerate() {
+        batch.push(LiveEvent {
+            start_ns: time,
+            duration_ns: period_ns,
+            tid,
+            pid,
+            kind: kind::FUNCTION_CALL,
+            depth: index.min(u8::MAX as usize) as u8,
+            extra: orbit_live_event::extra::SAMPLED_FRAME,
+            _pad: 0,
+            name_id,
+        });
+    }
+}
+
 /// A closed thread-state interval as a bar segment on its thread's row.
 ///
 /// Returns `None` for threads outside the visible set, which is the same rule
@@ -883,33 +967,9 @@ fn push_sample(
             .map(|pc| *pc_ids.entry(*pc).or_insert_with(|| names.id_for_frame(&symbolizer.resolve_frame(*pc))))
             .collect()
     };
-    // One tick on the thread's sample bar, named by the leaf
-    // frame so hovering it says what was running without a
-    // lookup. Drawn as an instant: see LiveEvent::end_ns.
-    batch.push(LiveEvent {
-        start_ns: time,
-        duration_ns: period_ns,
-        tid,
-        pid: target_pid as u32,
-        kind: kind::SAMPLE,
-        depth: 0,
-        extra: 0,
-        _pad: 0,
-        name_id: frame_ids.first().copied().unwrap_or(0),
-    });
-    for (index, name_id) in frame_ids.iter().rev().copied().enumerate() {
-        batch.push(LiveEvent {
-            start_ns: time,
-            duration_ns: period_ns,
-            tid,
-            pid: target_pid as u32,
-            kind: kind::FUNCTION_CALL,
-            depth: index as u8,
-            extra: orbit_live_event::extra::SAMPLED_FRAME,
-            _pad: 0,
-            name_id,
-        });
-    }
+    // One tick on the thread's sample bar plus the frames under it.
+    // Drawn as an instant: see LiveEvent::end_ns.
+    push_sample_events(batch, time, tid, target_pid as u32, period_ns, &frame_ids);
     store.push(StoredSample { timestamp_ns: time, tid, frames: frame_ids });
 }
 
@@ -1674,54 +1734,19 @@ fn capture_loop(
         let _switches = orbit_api::scope("read context switches");
         for ring in switch_rings.iter_mut() {
             while let Ok(Some(record)) = ring.read_record() {
-                let Some(header) = PerfEventHeader::parse(&record) else { continue };
-                if { header.kind } != record_type::SWITCH
-                    && { header.kind } != record_type::SWITCH_CPU_WIDE
-                {
+                let Some(on_thread) = push_switch_record(&record, &mut switches, &mut batch) else {
                     continue;
-                }
-                let Some(switch) = parse_context_switch(&record) else { continue };
-                if switch.is_switch_out {
-                    if let SwitchOut::Slice(slice) = switches.process_context_switch_out(
-                        switch.pid,
-                        switch.tid,
-                        switch.core,
-                        switch.timestamp_ns,
-                    ) {
-                        // Skip the idle task. tid 0 is the per-core swapper, so
-                        // a slice for it is a core doing nothing -- which the
-                        // timeline should show as an empty gap, not a bar.
-                        // Emitting them filled every core lane wall to wall and
-                        // cost size and render time for no information.
-                        if slice.tid == 0 {
-                            continue;
-                        }
-                        // Every real slice reaches the core lanes: the
-                        // Scheduler track is system-wide, and a core row does
-                        // not care whose thread it was running.
-                        let [on_core, on_thread] = scheduling_events(&slice);
-                        batch.push(on_core);
-                        // The per-thread projection is the half that creates
-                        // rows, so it is the half that is filtered -- to the
-                        // shown processes, plus the service's own threads, so
-                        // orbit-service gets state bars like anything else.
-                        // Only needed when tracepoints are unavailable, which
-                        // report real states instead of RUNNING for everything.
-                        let shown = visible.contains(on_thread.pid) || on_thread.pid == self_pid;
-                        let traced = thread_states
-                            .as_ref()
-                            .is_some_and(|t| t.focus().contains_tid(on_thread.tid as i32));
-                        if shown && !traced {
-                            batch.push(on_thread);
-                        }
-                    }
-                } else {
-                    switches.process_context_switch_in(
-                        Some(switch.pid),
-                        switch.tid,
-                        switch.core,
-                        switch.timestamp_ns,
-                    );
+                };
+                // The per-thread projection is the half that creates rows, so
+                // it is the half that is filtered -- to the shown processes,
+                // plus the service's own threads. Only needed when tracepoints
+                // are unavailable; those report real states instead of RUNNING.
+                let shown = visible.contains(on_thread.pid) || on_thread.pid == self_pid;
+                let traced = thread_states
+                    .as_ref()
+                    .is_some_and(|t| t.focus().contains_tid(on_thread.tid as i32));
+                if shown && !traced {
+                    batch.push(on_thread);
                 }
             }
         }
